@@ -1,0 +1,18 @@
+*.csv
+*.log
+*.rs
+*.pid
+*.properties
+*.class
+*.pyc
+*.done
+*.dll
+dist/
+build/
+
+# toi muon tat cả files trong folder Ninja-School-Mobile-4.1.1 đều được đẩy lên git dù có file đuôi trong gitignore
+# !Ninja-School-Mobile-4.1.1/**
+# large file ;((
+Ninja-School-Mobile-4.1.1/
+!nbproject/**
+!proguard-7.6.0/**

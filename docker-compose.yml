@@ -1,0 +1,14 @@
+services:
+  nso-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./dist:/app/dist
+      - ./account.csv:/app/account.csv:ro
+      - ./delllllllllll.txt:/app/delllllllllll.txt:ro
+      # Always build the source currently on the host, even when Docker reuses
+      # an older image created by a previous `docker compose build`.
+      - ./src:/app/src:ro
+      - ./build-docker.xml:/app/build-docker.xml:ro
+    command: ant -f build-docker.xml docker-jar

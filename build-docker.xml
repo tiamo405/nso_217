@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="NSO_217" default="jar" basedir=".">
+    <description>Simplified build file for Docker - NSO Client 217</description>
+
+    <!-- Properties -->
+    <property name="src.dir" value="src"/>
+    <property name="build.dir" value="build"/>
+    <property name="build.classes.dir" value="${build.dir}/compiled"/>
+    <property name="dist.dir" value="dist"/>
+    <property name="dist.jar" value="${dist.dir}/client_217.jar"/>
+
+    <!-- Targets -->
+    <target name="init">
+        <mkdir dir="${build.classes.dir}"/>
+        <mkdir dir="${dist.dir}"/>
+    </target>
+
+    <target name="clean">
+        <delete dir="${build.dir}" failonerror="false"/>
+        <delete includeemptydirs="true" failonerror="false">
+            <fileset dir="${dist.dir}" includes="**/*"/>
+        </delete>
+    </target>
+
+    <!-- Recompile every source without deleting dist/workers and their logs/RMS. -->
+    <target name="clean-classes">
+        <delete dir="${build.classes.dir}" failonerror="false"/>
+    </target>
+
+    <target name="compile" depends="init">
+        <javac srcdir="${src.dir}"
+               destdir="${build.classes.dir}"
+               classpath="proguard-7.6.0/j2me.jar"
+               encoding="UTF-8"
+               source="1.8"
+               target="1.8"
+               includeantruntime="false"
+               debug="true">
+            <compilerarg value="-Xlint:none"/>
+        </javac>
+        <copy todir="${build.classes.dir}">
+            <fileset dir="${src.dir}" excludes="**/*.java"/>
+        </copy>
+        <copy file="account.csv" todir="${build.classes.dir}"/>
+        <copy file="delllllllllll.txt" todir="${build.classes.dir}"/>
+    </target>
+
+    <target name="jar" depends="compile">
+        <jar destfile="${dist.jar}"
+             basedir="${build.classes.dir}"
+             compress="true">
+            <manifest>
+                <attribute name="MIDlet-Name" value="NSO_217"/>
+                <attribute name="MIDlet-Version" value="1.0"/>
+                <attribute name="MIDlet-Vendor" value="NSO_217"/>
+                <attribute name="MIDlet-1" value="NSO_217,,GameMidlet"/>
+                <attribute name="MicroEdition-Profile" value="MIDP-2.0"/>
+                <attribute name="MicroEdition-Configuration" value="CLDC-1.1"/>
+            </manifest>
+        </jar>
+        <echo message="JAR created: ${dist.jar}"/>
+    </target>
+
+    <target name="all" depends="clean,jar"/>
+
+    <target name="docker-jar" depends="clean-classes,jar"/>
+</project>

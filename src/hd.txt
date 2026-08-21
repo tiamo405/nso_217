@@ -1,0 +1,13 @@
+(*) Chức năng:
+- Fix luyện đá ảo.
+- Auto hồi sinh lượng.
+- Thêm tùy chỉnh tốc độ nextmap.
+- Thêm tùy chỉnh màu nền background.
+- Khi chat "addn" sẽ tự động gửi lời mời kết bạn với nhân vật đang trỏ.
+- Tự động kết bạn với nhân vật gửi lời mời kết bạn.
+- Pt nhóm khác khu hoặc map.
+
+(*) Lệnh chat:
+- locdo: Bật/Tắt lọc đồ.
+- hsl: Bật/Tắt auto hồi sinh lượng.
+
