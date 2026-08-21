@@ -153,6 +153,18 @@ Chạy một lần, worker bị thoát sẽ không tự bật lại:
 ./scripts/start-workers.sh
 ```
 
+Chạy riêng một worker:
+
+```bash
+./scripts/start-workers.sh 3
+```
+
+Chạy riêng nhiều worker:
+
+```bash
+./scripts/start-workers.sh 3 8 10
+```
+
 Cách khuyến nghị là chạy supervisor. Worker bị thoát sẽ được kiểm tra và bật lại:
 
 ```bash

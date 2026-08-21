@@ -187,10 +187,22 @@ public final class AccountAutoManager implements Runnable {
             return;
         }
         waitingForGame = false;
-        System.out.println("AUTO NVHN: chuẩn bị nhân vật " + Char.getMyChar().cName);
+        Char me = Char.getMyChar();
+        if (me.clevel < 30) {
+            skipCurrentCharacter("nhân vật " + me.cName + " level=" + me.clevel + " < 30, bỏ qua");
+            return;
+        }
+        System.out.println("AUTO NVHN: chuẩn bị nhân vật " + me.cName);
         AutoPrepareNvhn prepare = new AutoPrepareNvhn();
         prepare.fieldAD();
         Code.fieldAA((Auto) prepare);
+    }
+
+    public static synchronized void onCharacterBelowLevel30(String message) {
+        if (!enabled || switching) {
+            return;
+        }
+        skipCurrentCharacter("NPC báo chưa đạt cấp 30, bỏ qua nhân vật. " + message);
     }
 
     public static synchronized void onDailyTasksFinished() {
@@ -223,8 +235,15 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || switching) {
             return;
         }
+        skipCurrentCharacter("đã xử lý hang động, chuyển nhân vật");
+    }
+
+    private static void skipCurrentCharacter(String reason) {
         switching = true;
+        waitingForGame = false;
         enteringCave = false;
+        Code.fieldAG();
+        System.out.println("AUTO NVHN: " + reason);
         (new Thread(new Runnable() {
             public void run() {
                 sleep(1500L);

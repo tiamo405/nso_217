@@ -4,6 +4,7 @@ public final class AutoEnterCave extends Auto {
     private int menuOption;
     private long lastRequestAt;
     private int requestCount;
+    private static final int MAX_REQUEST_COUNT = 8;
 
     public final void fieldAD() {
         int level = Char.getMyChar().clevel;
@@ -37,7 +38,7 @@ public final class AutoEnterCave extends Auto {
         if (TileMap.mapID == this.targetMap || TileMap.isHang(TileMap.mapID)) {
             System.out.println("AUTO NVHN HANG: đã vào hang map=" + TileMap.mapID
                     + "(" + TileMap.mapName + "), thoát nhân vật");
-            Code.fieldAC();
+            Code.fieldAG();
             AccountAutoManager.onCaveEntered();
             return;
         }
@@ -55,6 +56,13 @@ public final class AutoEnterCave extends Auto {
         }
         this.lastRequestAt = now;
         ++this.requestCount;
+        if (this.requestCount > MAX_REQUEST_COUNT) {
+            System.out.println("AUTO NVHN HANG: thử vào hang quá " + MAX_REQUEST_COUNT
+                    + " lần nhưng chưa vào được, bỏ qua hang và chuyển nhân vật");
+            Code.fieldAG();
+            AccountAutoManager.onCaveEntered();
+            return;
+        }
         if (this.requestCount == 1) {
             this.logKanataMenus();
         }

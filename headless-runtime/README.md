@@ -36,6 +36,12 @@ Compile rieng, khong tao JAR worker:
 headless-runtime/build-headless.sh
 ```
 
+Compile voi file account test:
+
+```bash
+HEADLESS_ACCOUNT_CSV=account-test.csv headless-runtime/build-headless.sh
+```
+
 Chay thu mot runtime:
 
 ```bash

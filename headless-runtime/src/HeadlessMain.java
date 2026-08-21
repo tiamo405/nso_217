@@ -3,6 +3,10 @@ public final class HeadlessMain {
     }
 
     public static void main(String[] args) throws Exception {
+        if (System.getProperty("microedition.platform") == null) {
+            System.setProperty("microedition.platform", "NSOHeadless");
+        }
+
         GameMidlet midlet = new GameMidlet();
         midlet.startApp();
 

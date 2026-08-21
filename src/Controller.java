@@ -38,6 +38,18 @@ public final class Controller {
         return me;
     }
 
+    private static boolean isCaveOutOfTurnsMessage(String message) {
+        if (message == null) {
+            return false;
+        }
+        String lower = message.toLowerCase();
+        return lower.indexOf("hang") >= 0
+                && (lower.indexOf("hết lượt") >= 0
+                || lower.indexOf("het luot") >= 0
+                || lower.indexOf("số lần") >= 0
+                || lower.indexOf("so lan") >= 0);
+    }
+
     public final void gameAB() {
         if (Char.ReConnect && Code.fieldAB != null) {
             Session_ME.gI().fieldAD();
@@ -1519,7 +1531,9 @@ public final class Controller {
                                 if (Code.fieldAB instanceof AutoEnterCave) {
                                     System.out.println("AUTO NVHN HANG NPC0: [" + utf13 + "]");
                                 }
-                                if (utf13.equals("Số lần vào trong hang hôm nay của con đã hết.")) {
+                                boolean autoNvhnCaveOutOfTurns = isCaveOutOfTurnsMessage(utf13);
+                                if (utf13.equals("Số lần vào trong hang hôm nay của con đã hết.")
+                                        || autoNvhnCaveOutOfTurns) {
                                     Stanima.fieldAZ = true;
                                     if (Code.fieldAB instanceof Stanima) {
                                         Stanima.fieldAY = true;
@@ -1528,8 +1542,8 @@ public final class Controller {
                                         Code.fieldAC();
                                     }
                                     if (Code.fieldAB instanceof AutoEnterCave) {
-                                        System.out.println("AUTO NVHN HANG: hôm nay đã hết lượt vào hang, chuyển nhân vật");
-                                        Code.fieldAC();
+                                        System.out.println("AUTO NVHN HANG: hôm nay đã hết lượt vào hang, chuyển nhân vật: " + utf13);
+                                        Code.fieldAG();
                                         AccountAutoManager.onCaveEntered();
                                     }
                                     TileMap.fieldAG();
@@ -1540,6 +1554,9 @@ public final class Controller {
                                 }
                             } else if (var78.template.npcTemplateId == 25) {
                                 System.out.println("AUTO NVHN NPC25: [" + utf13 + "]");
+                                if (AutoNvhn.isBelowLevel30Message(utf13)) {
+                                    AccountAutoManager.onCharacterBelowLevel30(utf13);
+                                }
                                 if (AutoNvhn.isDailyLimitMessage(utf13)) {
                                     AccountAutoManager.onDailyLimitReached();
                                 }
@@ -2752,6 +2769,9 @@ public final class Controller {
                     if ((var194 = fieldAB.reader().readByte()) == -1) {
                         GameScr.isUseitemAuto = true;
                         GameScr.gameAA(true);
+                        if (fieldAB.reader().available() < 4) {
+                            break;
+                        }
                         if ((GameScr.rangeSearch = fieldAB.reader().readInt()) > 360) {
                             GameScr.isAllmap = true;
                         } else {
@@ -2760,6 +2780,9 @@ public final class Controller {
                             GameScr.pointCenterY = Char.getMyChar().cy;
                         }
                     } else if (var194 == 0) {
+                        if (fieldAB.reader().available() < 8) {
+                            break;
+                        }
                         if ((var187 = GameScr.gameAE(fieldAB.reader().readInt())) != null) {
                             ServerEffect.gameAA(141, var187.cx, var187.cy, 2);
                             var190 = fieldAB.reader().readShort();

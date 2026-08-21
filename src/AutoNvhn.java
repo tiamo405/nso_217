@@ -42,6 +42,12 @@ public final class AutoNvhn extends Auto {
       return message != null && message.indexOf("Hôm nay con đã làm hết nhiệm vụ ta giao") >= 0;
    }
 
+   public static boolean isBelowLevel30Message(String message) {
+      return message != null
+              && message.indexOf("cấp 30") >= 0
+              && (message.indexOf("luyện tập") >= 0 || message.indexOf("quay lại đây") >= 0);
+   }
+
    public final void fieldAD() {
       fieldAX = 0;
       this.fieldAY = Char.fieldAM(0);

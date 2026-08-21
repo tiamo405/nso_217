@@ -91,28 +91,47 @@ public final class AutoPrepareNvhn extends Auto {
 
     private void selectLevelSkill() {
         Char me = Char.getMyChar();
-        if (me.clevel < 30 || me.nClass == null || me.nClass.skillTemplates == null
-                || me.nClass.skillTemplates.length <= COMBAT_SKILL_INDEX) {
-            System.out.println("AUTO NVHN SKILL: chưa dùng được skill thứ 5, charLv="
-                    + me.clevel + " templateCount="
-                    + (me.nClass == null || me.nClass.skillTemplates == null
-                    ? 0 : me.nClass.skillTemplates.length));
-            return;
-        }
-        SkillTemplate targetTemplate = me.nClass.skillTemplates[COMBAT_SKILL_INDEX];
-        Skill selected = me.gameAA(targetTemplate);
-        if (selected == null || selected.point <= 0) {
-            System.out.println("AUTO NVHN SKILL: skill thứ 5 trên bảng kỹ năng chưa học/cộng điểm"
-                    + " templateId=" + targetTemplate.id + " name=" + targetTemplate.name
+        if (me.nClass == null || me.nClass.skillTemplates == null || me.nClass.skillTemplates.length == 0) {
+            System.out.println("AUTO NVHN SKILL: không có bảng kỹ năng, dùng skill hiện tại nếu có"
                     + " charLv=" + me.clevel);
             return;
         }
+
+        if (me.clevel >= 30 && me.nClass.skillTemplates.length > COMBAT_SKILL_INDEX) {
+            SkillTemplate targetTemplate = me.nClass.skillTemplates[COMBAT_SKILL_INDEX];
+            Skill selected = me.gameAA(targetTemplate);
+            if (this.useCombatSkill(selected, "skill bảng index=4 (thứ 5)")) {
+                return;
+            }
+            System.out.println("AUTO NVHN SKILL: skill thứ 5 chưa học/cộng điểm, fallback skill thứ 1"
+                    + " templateId=" + targetTemplate.id + " name=" + targetTemplate.name
+                    + " charLv=" + me.clevel);
+        } else {
+            System.out.println("AUTO NVHN SKILL: không đủ điều kiện dùng skill thứ 5, fallback skill thứ 1"
+                    + " charLv=" + me.clevel + " templateCount=" + me.nClass.skillTemplates.length);
+        }
+
+        SkillTemplate targetTemplate = me.nClass.skillTemplates[0];
+        Skill selected = me.gameAA(targetTemplate);
+        if (!this.useCombatSkill(selected, "skill bảng index=0 (thứ 1)")) {
+            System.out.println("AUTO NVHN SKILL: skill thứ 1 cũng chưa học/cộng điểm, giữ skill hiện tại"
+                    + " templateId=" + targetTemplate.id + " name=" + targetTemplate.name
+                    + " charLv=" + me.clevel);
+        }
+    }
+
+    private boolean useCombatSkill(Skill selected, String label) {
+        if (selected == null || selected.point <= 0) {
+            return false;
+        }
+        Char me = Char.getMyChar();
         me.myskill = selected;
         Auto.fieldAL = selected;
         Service.gI().selectSkill(selected.template.id);
-        System.out.println("AUTO NVHN SKILL: dùng skill bảng index=4 (thứ 5) " + selected.template.name
+        System.out.println("AUTO NVHN SKILL: dùng " + label + " " + selected.template.name
                 + " skillId=" + selected.template.id + " unlockLv=" + selected.level
                 + " skillPoint=" + selected.point + " charLv=" + me.clevel);
+        return true;
     }
 
     private void configureFood() {

@@ -2,46 +2,27 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-REPO_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
-WORKERS_DIR=${WORKERS_DIR:-"$REPO_DIR/dist/workers"}
-MICROEMULATOR_JAR=${MICROEMULATOR_JAR:-"/home/namtp/Downloads/game-teamobi/Microemulator.jar"}
+HEADLESS_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+WORKERS_DIR=${HEADLESS_WORKERS_DIR:-"$HEADLESS_DIR/workers"}
+CLASSES_DIR=${HEADLESS_CLASSES_DIR:-"$HEADLESS_DIR/build/classes"}
 JAVA_BIN=${JAVA_BIN:-java}
-JAVA_XMS=${JAVA_XMS:-16m}
-JAVA_XMX=${JAVA_XMX:-96m}
+JAVA_XMS=${JAVA_XMS:-8m}
+JAVA_XMX=${JAVA_XMX:-48m}
 JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true"}
-RMS_TEMPLATE_DIR=${RMS_TEMPLATE_DIR:-"/home/namtp/.microemulator/suite-NSO_217"}
 START_DELAY=${START_DELAY:-3}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
 
-if [[ ! -f "$MICROEMULATOR_JAR" ]]; then
-    echo "Không tìm thấy MicroEmulator: $MICROEMULATOR_JAR" >&2
+if [[ ! -d "$CLASSES_DIR" ]]; then
+    echo "Chưa có headless classes. Chạy headless-runtime/scripts/build-workers.sh trước." >&2
     exit 1
 fi
 
 shopt -s nullglob
-worker_dirs=()
-if (( $# > 0 )); then
-    for number in "$@"; do
-        number=${number#worker-}
-        if ! [[ "$number" =~ ^[0-9]+$ ]]; then
-            echo "Worker không hợp lệ: $number" >&2
-            exit 1
-        fi
-        worker_name=$(printf 'worker-%02d' "$((10#$number))")
-        worker_dir="$WORKERS_DIR/$worker_name"
-        if [[ ! -d "$worker_dir" ]]; then
-            echo "Không tìm thấy $worker_name tại $WORKERS_DIR" >&2
-            exit 1
-        fi
-        worker_dirs+=("$worker_dir")
-    done
-else
-    worker_dirs=("$WORKERS_DIR"/worker-*)
-    if (( ${#worker_dirs[@]} == 0 )); then
-        echo "Chưa có worker. Chạy scripts/build-workers.sh trước." >&2
-        exit 1
-    fi
+worker_dirs=("$WORKERS_DIR"/worker-*)
+if (( ${#worker_dirs[@]} == 0 )); then
+    echo "Chưa có headless worker. Chạy headless-runtime/scripts/build-workers.sh trước." >&2
+    exit 1
 fi
 
 started=0
@@ -70,13 +51,6 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 
     mkdir -p "$worker_dir/home"
-    rms_dir="$worker_dir/home/.microemulator/nso-$worker_name/suite-NSO_217"
-    mkdir -p "$rms_dir"
-    if [[ -d "$RMS_TEMPLATE_DIR" ]]; then
-        cp -a -n "$RMS_TEMPLATE_DIR"/. "$rms_dir"/
-        # Tài khoản đăng nhập luôn do AccountAutoManager lấy từ CSV trong JAR.
-        rm -f -- "$rms_dir/vjacc.rs" "$rms_dir/vjpass.rs" "$rms_dir/vjabcdip.rs"
-    fi
     printf '\n===== START %s =====\n' "$(date '+%F %T')" >>"$worker_dir/stdout.log"
     printf '\n===== START %s =====\n' "$(date '+%F %T')" >>"$worker_dir/java-errors.log"
 
@@ -94,11 +68,8 @@ for worker_dir in "${worker_dirs[@]}"; do
         "-Xmx$JAVA_XMX" \
         "${java_opts_array[@]}" \
         "-Duser.home=$worker_dir/home" \
-        -cp "$MICROEMULATOR_JAR" \
-        org.microemu.app.Headless \
-        --id "nso-$worker_name" \
-        --rms file \
-        "$worker_dir/client_217.jar" \
+        -cp "$worker_dir:$CLASSES_DIR" \
+        HeadlessMain \
         >>"$worker_dir/stdout.log" \
         2>>"$worker_dir/java-errors.log" &
 
