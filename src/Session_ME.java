@@ -253,6 +253,9 @@ public final class Session_ME {
             }
 
             this.dos.flush();
+            if (var1.command == -101) {
+                System.out.println("AUTO LOGIN TRACE: đã gửi command=-101 ra socket");
+            }
         } catch (IOException var4) {
             var4.printStackTrace();
         }

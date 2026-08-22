@@ -15,6 +15,8 @@ public final class AccountAutoManager implements Runnable {
     private static boolean switching;
     private static boolean waitingForGame;
     private static boolean enteringCave;
+    private static boolean reconnecting;
+    private static int disconnectRetryCount;
 
     private AccountAutoManager() {
     }
@@ -34,6 +36,8 @@ public final class AccountAutoManager implements Runnable {
         accountIndex = 0;
         characterIndex = 0;
         switching = true;
+        reconnecting = false;
+        disconnectRetryCount = 0;
         (new Thread(new AccountAutoManager())).start();
     }
 
@@ -147,6 +151,8 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled) {
             return;
         }
+        reconnecting = false;
+        disconnectRetryCount = 0;
         characterNames = names;
         while (characterIndex < characterNames.length
                 && (characterNames[characterIndex] == null || characterNames[characterIndex].length() == 0)) {
@@ -186,6 +192,8 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || !waitingForGame) {
             return;
         }
+        reconnecting = false;
+        disconnectRetryCount = 0;
         waitingForGame = false;
         Char me = Char.getMyChar();
         if (me.clevel < 30) {
@@ -196,6 +204,39 @@ public final class AccountAutoManager implements Runnable {
         AutoPrepareNvhn prepare = new AutoPrepareNvhn();
         prepare.fieldAD();
         Code.fieldAA((Auto) prepare);
+    }
+
+    /** Reconnects the current account when an established socket is closed before/during play. */
+    public static synchronized boolean onDisconnected() {
+        if (!enabled) {
+            return false;
+        }
+        if (reconnecting) {
+            return true;
+        }
+
+        reconnecting = true;
+        waitingForGame = false;
+        enteringCave = false;
+        int retryNumber = ++disconnectRetryCount;
+        final long delay = Math.min(30000L, 5000L * retryNumber);
+        System.out.println("AUTO LOGIN: mất kết nối, đăng nhập lại tài khoản hiện tại sau "
+                + (delay / 1000L) + " giây (lần " + retryNumber + ")");
+
+        (new Thread(new Runnable() {
+            public void run() {
+                sleep(delay);
+                synchronized (AccountAutoManager.class) {
+                    if (!enabled) {
+                        reconnecting = false;
+                        return;
+                    }
+                    reconnecting = false;
+                }
+                loginCurrentAccount();
+            }
+        })).start();
+        return true;
     }
 
     public static synchronized void onCharacterBelowLevel30(String message) {
@@ -282,6 +323,7 @@ public final class AccountAutoManager implements Runnable {
     private static void finishAll() {
         enabled = false;
         switching = false;
+        reconnecting = false;
         System.out.println("AUTO NVHN: đã xử lý hết toàn bộ tài khoản và nhân vật, dừng worker.");
         markWorkerCompleted();
         Session_ME.gI().gameAC();

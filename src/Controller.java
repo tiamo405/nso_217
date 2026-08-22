@@ -61,6 +61,9 @@ public final class Controller {
     public final void fieldAD() {
         System.out.println("Disconnected");
         Code.fieldAB();
+        if (AccountAutoManager.onDisconnected()) {
+            return;
+        }
         if (Code.fieldAB instanceof Stanima && Res.fieldAB().get(11) == 3) {
             Stanima.fieldAY = true;
         }

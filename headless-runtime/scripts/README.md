@@ -138,7 +138,11 @@ LOG_FILTER='AUTO NVHN HANG' headless-runtime/scripts/logs-workers.sh
 ```bash
 headless-runtime/scripts/stop-workers.sh
 headless-runtime/scripts/restart-workers.sh
+headless-runtime/scripts/stop-workers.sh 37
+headless-runtime/scripts/restart-workers.sh 37
 ```
+
+Không truyền số worker thì dừng/restart tất cả. Truyền một hoặc nhiều số thì chỉ tác động các worker đó.
 
 ## Test 1 account
 

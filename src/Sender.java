@@ -12,20 +12,29 @@ final class Sender implements Runnable {
       while(this.gameAA.connected) {
          try {
             if (this.gameAA.getKeyComplete) {
-               while(Session_ME.gameAB(this.gameAA).size() > 0) {
+               while(true) {
+                  MyVector var1 = Session_ME.gameAB(this.gameAA);
+                  Message var2;
+                  synchronized(var1) {
+                     if (var1.size() == 0) {
+                        break;
+                     }
+
+                     var2 = (Message)var1.elementAt(0);
+                     var1.removeElementAt(0);
+                  }
+
                   GameScr.gI();
-                  Message var1 = (Message)Session_ME.gameAB(this.gameAA).elementAt(0);
-                  Session_ME.gameAB(this.gameAA).removeElementAt(0);
-                  Session_ME.gameAA(this.gameAA, var1);
+                  Session_ME.gameAA(this.gameAA, var2);
                }
             }
 
             try {
                Thread.sleep(10L);
-            } catch (InterruptedException var2) {
+            } catch (InterruptedException var3) {
             }
-         } catch (Exception var3) {
-            var3.printStackTrace();
+         } catch (Exception var4) {
+            var4.printStackTrace();
          }
       }
 

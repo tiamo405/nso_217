@@ -6,10 +6,33 @@ HEADLESS_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${HEADLESS_WORKERS_DIR:-"$HEADLESS_DIR/workers"}
 
 shopt -s nullglob
-pid_files=("$WORKERS_DIR"/worker-*/bot.pid)
+pid_files=()
+if (( $# > 0 )); then
+    for number in "$@"; do
+        number=${number#worker-}
+        if ! [[ "$number" =~ ^[0-9]+$ ]]; then
+            echo "Worker không hợp lệ: $number" >&2
+            exit 1
+        fi
+        worker_name=$(printf 'worker-%02d' "$((10#$number))")
+        worker_dir="$WORKERS_DIR/$worker_name"
+        if [[ ! -d "$worker_dir" ]]; then
+            echo "Không tìm thấy $worker_name tại $WORKERS_DIR" >&2
+            exit 1
+        fi
+        pid_files+=("$worker_dir/bot.pid")
+    done
+else
+    pid_files=("$WORKERS_DIR"/worker-*/bot.pid)
+fi
 stopped=0
 
 for pid_file in "${pid_files[@]}"; do
+    if [[ ! -f "$pid_file" ]]; then
+        worker_name=$(basename -- "$(dirname -- "$pid_file")")
+        echo "$worker_name không chạy"
+        continue
+    fi
     worker_dir=$(dirname -- "$pid_file")
     worker_name=$(basename -- "$worker_dir")
     pid=$(<"$pid_file")
