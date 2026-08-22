@@ -13,16 +13,76 @@ START_DELAY=${START_DELAY:-3}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
 
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [--delay seconds] [worker_number...]
+
+Examples:
+  $(basename "$0")                 # start all workers
+  $(basename "$0") 3               # start only worker-03
+  $(basename "$0") 3 8 10          # start worker-03, worker-08, worker-10
+  $(basename "$0") --delay 10      # start all, wait 10s between workers
+  START_DELAY=10 $(basename "$0") 3
+EOF
+}
+
+worker_args=()
+while (( $# > 0 )); do
+    case "$1" in
+        --delay|-d)
+            if (( $# < 2 )) || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                echo "Delay phải là số giây không âm." >&2
+                usage
+                exit 1
+            fi
+            START_DELAY=$2
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        *)
+            worker_args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if ! [[ "$START_DELAY" =~ ^[0-9]+$ ]]; then
+    echo "START_DELAY phải là số giây không âm." >&2
+    exit 1
+fi
+
 if [[ ! -d "$CLASSES_DIR" ]]; then
     echo "Chưa có headless classes. Chạy headless-runtime/scripts/build-workers.sh trước." >&2
     exit 1
 fi
 
 shopt -s nullglob
-worker_dirs=("$WORKERS_DIR"/worker-*)
-if (( ${#worker_dirs[@]} == 0 )); then
-    echo "Chưa có headless worker. Chạy headless-runtime/scripts/build-workers.sh trước." >&2
-    exit 1
+worker_dirs=()
+if (( ${#worker_args[@]} > 0 )); then
+    for number in "${worker_args[@]}"; do
+        number=${number#worker-}
+        if ! [[ "$number" =~ ^[0-9]+$ ]]; then
+            echo "Worker không hợp lệ: $number" >&2
+            usage
+            exit 1
+        fi
+        worker_name=$(printf 'worker-%02d' "$((10#$number))")
+        worker_dir="$WORKERS_DIR/$worker_name"
+        if [[ ! -d "$worker_dir" ]]; then
+            echo "Không tìm thấy $worker_name tại $WORKERS_DIR" >&2
+            exit 1
+        fi
+        worker_dirs+=("$worker_dir")
+    done
+else
+    worker_dirs=("$WORKERS_DIR"/worker-*)
+    if (( ${#worker_dirs[@]} == 0 )); then
+        echo "Chưa có headless worker. Chạy headless-runtime/scripts/build-workers.sh trước." >&2
+        exit 1
+    fi
 fi
 
 started=0

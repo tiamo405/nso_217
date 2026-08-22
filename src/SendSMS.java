@@ -3,7 +3,16 @@ public final class SendSMS {
       (new Thread(new SMS(var1, var0, var1, var2, var3))).start();
    }
 
-   public static void gameAA() {
-      Session_ME.instance.fieldAS.start();
+   public static synchronized void gameAA() {
+      Thread var0 = Session_ME.instance.fieldAS;
+      if (var0 == null) {
+         return;
+      }
+
+      try {
+         var0.start();
+      } catch (IllegalThreadStateException var1) {
+         System.out.println("AUTO LOGIN TRACE: connection thread đã chạy, bỏ qua start trùng");
+      }
    }
 }

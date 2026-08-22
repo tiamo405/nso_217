@@ -3,6 +3,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.Calendar;
 import java.util.Random;
@@ -129,7 +130,11 @@ public final class Code implements Runnable {
         fieldAJ = new MyVector();
 
         try {
-            ByteArrayInputStream var7 = new ByteArrayInputStream(RMS.gameAA("V6Group"));
+            byte[] var11 = RMS.gameAA("V6Group");
+            if (var11 == null || var11.length == 0) {
+                throw new IOException("V6Group RMS empty");
+            }
+            ByteArrayInputStream var7 = new ByteArrayInputStream(var11);
             DataInputStream var1;
             if ((fieldAH = (var1 = new DataInputStream(var7)).readUTF()).equals("")) {
                 fieldAH = null;
@@ -151,7 +156,9 @@ public final class Code implements Runnable {
             var1.close();
             var7.close();
         } catch (Exception var6) {
-            var6.printStackTrace();
+            fieldAH = null;
+            fieldAI.removeAllElements();
+            fieldAJ.removeAllElements();
         }
 
         try {

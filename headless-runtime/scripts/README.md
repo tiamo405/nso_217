@@ -47,6 +47,32 @@ BUILD_HEADLESS=0 headless-runtime/scripts/build-workers.sh 10
 headless-runtime/scripts/start-workers.sh
 ```
 
+Mặc định script start tất cả worker và cách nhau `START_DELAY=3` giây để tránh mở nhiều kết nối cùng lúc.
+
+Đổi thời gian chờ giữa mỗi worker:
+
+```bash
+START_DELAY=10 headless-runtime/scripts/start-workers.sh
+```
+
+Hoặc dùng tham số:
+
+```bash
+headless-runtime/scripts/start-workers.sh --delay 10
+```
+
+Chạy riêng một worker:
+
+```bash
+headless-runtime/scripts/start-workers.sh 3
+```
+
+Chạy riêng nhiều worker:
+
+```bash
+headless-runtime/scripts/start-workers.sh 3 8 10
+```
+
 Cấu hình RAM/CPU:
 
 ```bash
@@ -62,6 +88,36 @@ Pin CPU nếu muốn:
 ```bash
 WORKER_TASKSET=0-3 headless-runtime/scripts/start-workers.sh
 ```
+
+## Supervisor
+
+Chạy supervisor để worker nào thoát thì tự bật lại:
+
+```bash
+headless-runtime/scripts/supervise-workers.sh
+```
+
+Đổi thời gian kiểm tra và thời gian chờ giữa mỗi lần start worker:
+
+```bash
+CHECK_INTERVAL=30 \
+START_DELAY=10 \
+headless-runtime/scripts/supervise-workers.sh
+```
+
+Chỉ supervise một worker:
+
+```bash
+headless-runtime/scripts/supervise-workers.sh 3
+```
+
+Chỉ supervise nhiều worker:
+
+```bash
+headless-runtime/scripts/supervise-workers.sh 3 8 10
+```
+
+Giữ terminal supervisor mở. Nhấn `Ctrl+C` để dừng supervisor và các worker mà supervisor đang quản lý.
 
 ## Theo dõi
 

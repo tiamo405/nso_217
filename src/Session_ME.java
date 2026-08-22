@@ -162,7 +162,7 @@ public final class Session_ME {
         }
     }
 
-    public final void gameAA11(String var1, int var2) {
+    public synchronized final void gameAA11(String var1, int var2) {
         String var3 = new String(new char[]{'s', 'o', 'c', 'k', 'e', 't', ':', '/', '/'}) + var1 + new String(new char[]{':'}) + var2;
         if (GameCanvas.gameCE) {
             if (!GameCanvas.isGPRS) {
@@ -173,13 +173,15 @@ public final class Session_ME {
         }
         //System.out.println(new String(new char[]{'c', 'o', 'n', 'n', 'e', 'c', 't', ' ', 't', 'o', ' ', ' '}) + var3 + new String(new char[]{' ', ':', ' ', ' '}) + +GameMidlet.serverLogin);
         if (!this.connected && !this.connecting) {
+            this.connecting = true;
             this.getKeyComplete = false;
             this.fieldAE = null;
             fieldAM = var1;
             fieldAN = var2;
             fieldAO = GameMidlet.serverLogin;
-            this.fieldAS = new Thread(new NetworkConnector1(this, var3));
-            SendSMS.gameAA();
+            Thread var4 = new Thread(new NetworkConnector1(this, var3));
+            this.fieldAS = var4;
+            var4.start();
         }
 
     }
@@ -400,6 +402,9 @@ public final class Session_ME {
 
     static byte gameAA(Session_ME var0, byte var1) {
         byte[] var10000 = (var0 = var0).key;
+        if (var10000 == null || var10000.length == 0) {
+            throw new IllegalStateException("Encryption key is not ready");
+        }
         byte var10003 = var0.curR;
         var0.curR = (byte) (var10003 + 1);
         var1 = (byte) (var10000[var10003] & 255 ^ var1 & 255);
@@ -410,7 +415,7 @@ public final class Session_ME {
         return var1;
     }
 
-    public final void fieldAD() {
+    public synchronized final void fieldAD() {
         if (GameCanvas.currentScreen != GameCanvas.selectsvScr) {
             GameCanvas.instance.fieldAE();
         }

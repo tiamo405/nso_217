@@ -8,6 +8,7 @@ public final class AutoNvhn extends Auto {
    private int lastXu;
    private int lastLuong;
    private boolean waitingForNewTask;
+   private long lastReturnTaskLog;
 
    private static void fieldAM() {
       fieldAV = false;
@@ -57,6 +58,7 @@ public final class AutoNvhn extends Auto {
       this.lastXu = me.xu;
       this.lastLuong = me.luong;
       this.waitingForNewTask = false;
+      this.lastReturnTaskLog = 0L;
       super.fieldAD();
    }
 
@@ -122,7 +124,10 @@ public final class AutoNvhn extends Auto {
          }
 
          if (this.fieldAY.count >= this.fieldAY.maxCount) {
-            Auto.fieldAH();
+            int schoolMap = this.getCharacterSchoolMap();
+            GameScr.fieldAC("Về trường trả NV " + fieldAX + "/20");
+            this.logReturnToSchool(schoolMap);
+            this.fieldAA(schoolMap, -2, -1, -1);
             return;
          }
 
@@ -139,6 +144,22 @@ public final class AutoNvhn extends Auto {
          AccountAutoManager.onDailyTasksFinished();
       }
 
+   }
+
+   private int getCharacterSchoolMap() {
+      int classId = Char.getMyChar().nClass.classId;
+      return classId <= 2 ? 1 : (classId <= 4 ? 27 : 72);
+   }
+
+   private void logReturnToSchool(int schoolMap) {
+      long now = System.currentTimeMillis();
+      if (now - this.lastReturnTaskLog < 30000L) {
+         return;
+      }
+      this.lastReturnTaskLog = now;
+      System.out.println("AUTO NVHN: đã đủ mục tiêu "
+              + this.fieldAY.count + "/" + this.fieldAY.maxCount
+              + ", về trường map " + schoolMap + " để trả nhiệm vụ");
    }
 
    private void logStatus() {

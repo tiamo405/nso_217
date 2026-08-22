@@ -51,3 +51,26 @@ headless-runtime/run-one.sh
 ```
 
 Lenh chay thu se dung `account.csv` o repo root da duoc copy vao `build/classes`. Dung cho test nho truoc, chua thay the production worker.
+
+
+# User
+```sh
+sudo apt update
+sudo apt install -y \
+  openjdk-17-jdk \
+  ant \
+  unzip zip \
+  bash coreutils gawk grep sed findutils procps util-linux psmisc \
+  git curl ca-certificates tmux
+```
+
+```sh
+cd /duong-dan/toi/NSO_217
+chmod +x scripts/*.sh headless-runtime/*.sh headless-runtime/scripts/*.sh
+```
+
+```sh
+./headless-runtime/scripts/build-workers.sh 10
+JAVA_XMS=8m JAVA_XMX=48m ./headless-runtime/scripts/start-workers.sh
+./headless-runtime/scripts/status-workers.sh
+```

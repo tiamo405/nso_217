@@ -77,11 +77,24 @@ final class MessageCollector implements Runnable {
                     continue;
                 }
             } catch (Exception var9) {
-                System.out.println("AUTO LOGIN SOCKET ERROR: " + var9.toString());
-                var9.printStackTrace();
+                if (this.isNormalSocketClose(var9)) {
+                    System.out.println("AUTO LOGIN SOCKET CLOSED: " + var9.toString());
+                } else {
+                    System.out.println("AUTO LOGIN SOCKET ERROR: " + var9.toString());
+                    var9.printStackTrace();
+                }
             }
 
-            if (this.instance.connected) {
+            boolean var16 = false;
+            synchronized (this.instance) {
+                if (this.instance.connected) {
+                    this.instance.connected = false;
+                    this.instance.connecting = false;
+                    var16 = true;
+                }
+            }
+
+            if (var16) {
                 if (this.instance.messageHandler != null) {
                     if (System.currentTimeMillis() - this.instance.gameAN > 500L) {
                         Controller var1 = this.instance.messageHandler;
@@ -100,6 +113,14 @@ final class MessageCollector implements Runnable {
 
             return;
         }
+    }
+
+    private boolean isNormalSocketClose(Exception var1) {
+        String var2 = var1.toString();
+        return var1 instanceof IOException
+                || var2.indexOf("Socket closed") >= 0
+                || var2.indexOf("EOFException") >= 0
+                || var2.indexOf("Encryption key is not ready") >= 0;
     }
 
     private void gameAA(Message var1) {

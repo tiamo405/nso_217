@@ -17,6 +17,7 @@ public final class AutoPrepareNvhn extends Auto {
     private boolean basicConfigured;
     private boolean boxCleaned;
     private long nextBoxCleanupAt;
+    private long lastOkazaLogAt;
 
     public final void fieldAD() {
         this.saving = false;
@@ -24,6 +25,7 @@ public final class AutoPrepareNvhn extends Auto {
         this.basicConfigured = false;
         this.boxCleaned = false;
         this.nextBoxCleanupAt = 0L;
+        this.lastOkazaLogAt = 0L;
         super.fieldAD();
     }
 
@@ -48,7 +50,7 @@ public final class AutoPrepareNvhn extends Auto {
             }
             if (TileMap.mapID != OKAZA_MAP) {
                 GameScr.fieldAC("AUTO NVHN: đang tới trường Okaza");
-                System.out.println("AUTO NVHN PREP: đang tới Okaza để mua thức ăn và lật hình");
+                this.logOkazaMove();
                 this.fieldAA(OKAZA_MAP, -2, -1, -1);
                 return;
             }
@@ -82,6 +84,16 @@ public final class AutoPrepareNvhn extends Auto {
         GameScr.fieldAC("AUTO NVHN: bắt đầu nhiệm vụ hàng ngày");
         System.out.println("AUTO NVHN: lưu tọa độ xong, bắt đầu nhiệm vụ hàng ngày");
         Code.fieldAD();
+    }
+
+    private void logOkazaMove() {
+        long now = System.currentTimeMillis();
+        if (now - this.lastOkazaLogAt < 30000L) {
+            return;
+        }
+        this.lastOkazaLogAt = now;
+        System.out.println("AUTO NVHN PREP: đang tới Okaza để mua thức ăn và lật hình"
+                + " map=" + TileMap.mapID + "(" + TileMap.mapName + ")");
     }
 
     private int getCharacterSchoolMap() {

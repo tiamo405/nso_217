@@ -89,7 +89,14 @@ for worker_dir in "${worker_dirs[@]}"; do
         command_prefix+=(taskset -c "$WORKER_TASKSET")
     fi
 
-    nohup "${command_prefix[@]}" "$JAVA_BIN" \
+    launcher=()
+    if command -v setsid >/dev/null 2>&1; then
+        launcher+=(setsid)
+    else
+        launcher+=(nohup)
+    fi
+
+    "${launcher[@]}" "${command_prefix[@]}" "$JAVA_BIN" \
         "-Xms$JAVA_XMS" \
         "-Xmx$JAVA_XMX" \
         "${java_opts_array[@]}" \

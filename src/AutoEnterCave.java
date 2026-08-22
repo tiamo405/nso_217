@@ -4,7 +4,7 @@ public final class AutoEnterCave extends Auto {
     private int menuOption;
     private long lastRequestAt;
     private int requestCount;
-    private static final int MAX_REQUEST_COUNT = 8;
+    private static final int MAX_REQUEST_COUNT = 3;
 
     public final void fieldAD() {
         int level = Char.getMyChar().clevel;
