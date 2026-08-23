@@ -16,3 +16,6 @@ build/
 Ninja-School-Mobile-4.1.1/
 !nbproject/**
 !proguard-7.6.0/**
+
+.vscode/
+python-worker/dist_py/
