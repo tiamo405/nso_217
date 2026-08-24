@@ -52,6 +52,43 @@ fi
 HEADER=$(head -n 1 "$SOURCE_CSV" | tr -d '\r')
 STAGING_DIR=$(mktemp -d "$REPO_DIR/dist/.workers-build.XXXXXX")
 trap 'rm -rf -- "$STAGING_DIR"' EXIT
+BASE_JAR_SNAPSHOT="$STAGING_DIR/.base-client.jar"
+
+# `docker compose up -d` returns before the one-shot builder finishes. Wait until
+# the source JAR is unchanged for a short period, then work from one verified
+# snapshot so `jar uf` never reads a half-written ZIP file.
+JAR_STABLE_SECONDS=${JAR_STABLE_SECONDS:-3}
+if ! [[ "$JAR_STABLE_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "JAR_STABLE_SECONDS phải là số nguyên dương." >&2
+    exit 1
+fi
+
+snapshot_ready=false
+for ((check = 1; check <= 20; check++)); do
+    checksum_before=$(sha256sum "$SOURCE_JAR" 2>/dev/null | awk '{print $1}')
+    sleep "$JAR_STABLE_SECONDS"
+    checksum_after=$(sha256sum "$SOURCE_JAR" 2>/dev/null | awk '{print $1}')
+
+    if [[ -n "$checksum_before" && "$checksum_before" == "$checksum_after" ]] \
+            && jar tf "$SOURCE_JAR" >/dev/null 2>&1; then
+        cp -- "$SOURCE_JAR" "$BASE_JAR_SNAPSHOT"
+        snapshot_checksum=$(sha256sum "$BASE_JAR_SNAPSHOT" | awk '{print $1}')
+        current_checksum=$(sha256sum "$SOURCE_JAR" | awk '{print $1}')
+        if [[ "$snapshot_checksum" == "$current_checksum" ]] \
+                && jar tf "$BASE_JAR_SNAPSHOT" >/dev/null 2>&1; then
+            snapshot_ready=true
+            break
+        fi
+    fi
+
+    echo "JAR gốc đang được build hoặc chưa hoàn chỉnh, chờ kiểm tra lại ($check/20)..."
+done
+
+if [[ "$snapshot_ready" != true ]]; then
+    echo "JAR gốc chưa ổn định sau 20 lần kiểm tra: $SOURCE_JAR" >&2
+    echo "Hãy kiểm tra log builder rồi chạy lại." >&2
+    exit 1
+fi
 
 BASE_SIZE=$((TOTAL / WORKER_COUNT))
 EXTRA=$((TOTAL % WORKER_COUNT))
@@ -73,7 +110,7 @@ for ((index = 1; index <= WORKER_COUNT; index++)); do
     done
     OFFSET=$((OFFSET + count))
 
-    cp -- "$SOURCE_JAR" "$worker_dir/client_217.jar"
+    cp -- "$BASE_JAR_SNAPSHOT" "$worker_dir/client_217.jar"
     jar uf "$worker_dir/client_217.jar" -C "$worker_dir" account.csv
 
     embedded_count=$(unzip -p "$worker_dir/client_217.jar" account.csv | awk 'NR > 1 && $0 !~ /^[[:space:]]*$/ { count++ } END { print count + 0 }')
@@ -84,6 +121,8 @@ for ((index = 1; index <= WORKER_COUNT; index++)); do
 
     echo "Đã tạo $worker_name: $count tài khoản"
 done
+
+rm -f -- "$BASE_JAR_SNAPSHOT"
 
 if [[ -d "$WORKERS_DIR" ]]; then
     backup_dir="$REPO_DIR/dist/.workers-old.$$"

@@ -5,6 +5,8 @@ import java.util.Vector;
 
 /** Sequential account/character runner for daily missions. */
 public final class AccountAutoManager implements Runnable {
+    private static final int MAX_CONNECT_RETRIES = 3;
+    private static final long CONNECT_RETRY_DELAY = 10000L;
     private static final Vector usernames = new Vector();
     private static final Vector passwords = new Vector();
     private static int accountIndex;
@@ -17,6 +19,7 @@ public final class AccountAutoManager implements Runnable {
     private static boolean enteringCave;
     private static boolean reconnecting;
     private static int disconnectRetryCount;
+    private static int connectRetryCount;
 
     private AccountAutoManager() {
     }
@@ -38,6 +41,7 @@ public final class AccountAutoManager implements Runnable {
         switching = true;
         reconnecting = false;
         disconnectRetryCount = 0;
+        connectRetryCount = 0;
         (new Thread(new AccountAutoManager())).start();
     }
 
@@ -138,12 +142,23 @@ public final class AccountAutoManager implements Runnable {
             sleep(100L);
         }
         if (!session.connected || !session.getKeyComplete) {
-            System.out.println("AUTO NVHN: kết nối thất bại, chuyển tài khoản tiếp theo.");
-            accountIndex++;
-            characterIndex = 0;
-            loginCurrentAccount();
+            session.gameAC();
+            int retryNumber = ++connectRetryCount;
+            if (retryNumber <= MAX_CONNECT_RETRIES) {
+                System.out.println("AUTO NVHN: kết nối thất bại, thử lại tài khoản " + username
+                        + " sau " + (CONNECT_RETRY_DELAY / 1000L) + " giây (lần "
+                        + retryNumber + "/" + MAX_CONNECT_RETRIES + ").");
+                sleep(CONNECT_RETRY_DELAY);
+                loginCurrentAccount();
+                return;
+            }
+            System.out.println("AUTO NVHN: kết nối tài khoản " + username + " vẫn thất bại sau "
+                    + MAX_CONNECT_RETRIES + " lần thử lại, chuyển tài khoản tiếp theo.");
+            connectRetryCount = 0;
+            nextAccount();
             return;
         }
+        connectRetryCount = 0;
         Service.gI().login(username, password, "2.1.7");
     }
 
@@ -316,6 +331,7 @@ public final class AccountAutoManager implements Runnable {
     private static void nextAccount() {
         accountIndex++;
         characterIndex = 0;
+        connectRetryCount = 0;
         switching = true;
         loginCurrentAccount();
     }
