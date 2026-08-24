@@ -12,14 +12,23 @@ fi
 
 echo "=== Khởi động các NSO Python Workers ==="
 
-WORKER_DIRS=("$DIST_DIR"/worker-*)
-if [[ ! -e "${WORKER_DIRS[0]}" ]]; then
-    echo "Không tìm thấy worker nào trong $DIST_DIR. Vui lòng chạy build-workers.sh trước!"
-    exit 1
+# Filter worker targets if arguments are passed
+TARGET_WORKERS=()
+if (( $# > 0 )); then
+    for arg in "$@"; do
+        num=${arg#worker-}
+        if [[ "$num" =~ ^[0-9]+$ ]]; then
+            wname=$(printf 'worker-%02d' "$((10#$num))")
+            TARGET_WORKERS+=("$DIST_DIR/$wname")
+        fi
+    done
+else
+    TARGET_WORKERS=("$DIST_DIR"/worker-*)
 fi
 
 STARTED=0
-for WDIR in "${WORKER_DIRS[@]}"; do
+for WDIR in "${TARGET_WORKERS[@]}"; do
+    [[ -d "$WDIR" ]] || continue
     WNAME="$(basename "$WDIR")"
     PID_FILE="$WDIR/bot.pid"
     LOG_FILE="$WDIR/stdout.log"
@@ -29,8 +38,11 @@ for WDIR in "${WORKER_DIRS[@]}"; do
         continue
     fi
 
+    # Remove completion marker if restarting worker manually
+    rm -f "$WDIR/completed.marker"
+
     # Start worker process in background, ensure PID file is written
-    nohup python3 -u "$PYTHON_WORKER_DIR/worker/worker_main.py" --worker-dir "$WDIR" >> "$LOG_FILE" 2>&1 &
+    PYTHONPATH="$PYTHON_WORKER_DIR" nohup python3 -u "$PYTHON_WORKER_DIR/worker/worker_main.py" --worker-dir "$WDIR" >> "$LOG_FILE" 2>&1 &
     PID=$!
     # Wait a moment to confirm the process is alive
     sleep 0.5
@@ -46,4 +58,5 @@ done
 disown -a 2>/dev/null || true
 
 echo "=== Đã khởi động $STARTED workers ==="
+
 

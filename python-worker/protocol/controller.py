@@ -247,19 +247,45 @@ class NSOController:
                 item = Item(type_ui=3, index_ui=i, template_id=template_id)
                 item.template = ItemTemplate(id=template_id)
                 item.is_lock = reader.read_boolean()
-                if item.is_type_body():
+                if item.is_type_body() or item.is_type_mounts() or item.is_type_ngoc_kham():
                     item.upgrade = reader.read_byte()
                 item.is_expires = reader.read_boolean()
                 item.quantity = reader.read_unsigned_short()
                 c.bag[i] = item
 
-        # Parse equipped body items
-        c.body = [None] * 32
+        # Parse equipped body items (16 items)
+        c.body = []
+        try:
+            for _ in range(16):
+                template_id = reader.read_short()
+                if template_id != -1:
+                    body_item = Item(type_ui=5, template_id=template_id)
+                    body_item.template = ItemTemplate(id=template_id)
+                    body_item.is_lock = True
+                    body_item.upgrade = reader.read_byte()
+                    body_item.sys = reader.read_byte()
+                    c.body.append(body_item)
+        except Exception as ex:
+            logger.debug(f"End of body items parsing: {ex}")
+
+        # Parse character human/nhanban & parts info
+        try:
+            c.is_human = reader.read_boolean()
+            c.is_nhanban = reader.read_boolean()
+            c.head_part = reader.read_short()
+            c.wp_part = reader.read_short()
+            c.body_part = reader.read_short()
+            c.leg_part = reader.read_short()
+            if c.head_part > -1:
+                c.mask_part = c.head_part
+        except Exception as ex:
+            logger.debug(f"End of part info parsing: {ex}")
 
         self.is_game_ready = True
-        logger.info(f"[GAME READY] Char={c.name} Lv={c.level} Class={c.n_class_id} HP={c.hp}/{c.max_hp} BagSlots={len(c.bag)} Free={c.count_bag_free_slots()}")
+        logger.info(f"[GAME READY] Char={c.name} Lv={c.level} Class={c.n_class_id} HP={c.hp}/{c.max_hp} MaskPart={c.mask_part} BagSlots={len(c.bag)} Free={c.count_bag_free_slots()}")
         if self.on_game_ready:
             self.on_game_ready()
+
 
     def _parse_box_items(self, reader: MessageReader):
         try:

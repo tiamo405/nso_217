@@ -12,35 +12,51 @@ fi
 
 echo "=== Đang dừng các NSO Python Workers ==="
 
+# Filter worker targets if arguments are passed
+TARGET_WORKERS=()
+if (( $# > 0 )); then
+    for arg in "$@"; do
+        num=${arg#worker-}
+        if [[ "$num" =~ ^[0-9]+$ ]]; then
+            wname=$(printf 'worker-%02d' "$((10#$num))")
+            TARGET_WORKERS+=("$DIST_DIR/$wname")
+        fi
+    done
+else
+    TARGET_WORKERS=("$DIST_DIR"/worker-*)
+fi
+
 STOPPED=0
-for WDIR in "$DIST_DIR"/worker-*; do
+for WDIR in "${TARGET_WORKERS[@]}"; do
     [[ -d "$WDIR" ]] || continue
     WNAME="$(basename "$WDIR")"
     PID_FILE="$WDIR/bot.pid"
 
-        if [[ -f "$PID_FILE" ]]; then
-            PID="$(cat "$PID_FILE" 2>/dev/null || echo "")"
-            if [[ -n "$PID" ]]; then
+    if [[ -f "$PID_FILE" ]]; then
+        PID="$(cat "$PID_FILE" 2>/dev/null || echo "")"
+        if [[ -n "$PID" ]]; then
+            if kill -0 "$PID" 2>/dev/null; then
+                echo "  [STOPPING] $WNAME (PID $PID)..."
+                kill "$PID" 2>/dev/null || true
+                for i in {1..10}; do
+                    if ! kill -0 "$PID" 2>/dev/null; then
+                        break
+                    fi
+                    sleep 0.5
+                done
                 if kill -0 "$PID" 2>/dev/null; then
-                    echo "  [STOPPING] $WNAME (PID $PID)..."
-                    kill "$PID" 2>/dev/null || true
-                    # Wait up to 5 seconds for process to exit
-                    for i in {1..10}; do
-                        if ! kill -0 "$PID" 2>/dev/null; then
-                            break
-                        fi
-                        sleep 0.5
-                    done
-                else
-                    echo "  [STOPPED] $WNAME (PID $PID) not running"
+                    kill -9 "$PID" 2>/dev/null || true
                 fi
+            else
+                echo "  [STOPPED] $WNAME (PID $PID) not running"
             fi
-            rm -f "$PID_FILE"
-            STOPPED=$((STOPPED + 1))
         fi
+        rm -f "$PID_FILE"
+        STOPPED=$((STOPPED + 1))
+    fi
 done
 
-# Wait briefly for shutdown
-sleep 1
+echo "=== Đã dừng $STOPPED workers ==="
+
 
 

@@ -188,7 +188,10 @@ class NSOService:
             mob_ids = [mob_ids]
         msg = NSOMessage(60)
         w = msg.writer()
+        for mob_id in mob_ids:
+            w.write_byte(mob_id)
         return self.client.send_message(msg)
+
 
     def pick_item(self, item_map_id: int) -> bool:
         """Picks dropped item from map (CMD -14)"""

@@ -38,6 +38,12 @@ class Character:
     type_pk: int = 0
     n_class_id: int = 0  # 1: Kiếm, 2: Phi Tiêu, 3: Kunai, 4: Cung, 5: Đao, 6: Quạt
     mask_part: int = -1
+    head_part: int = -1
+    wp_part: int = -1
+    body_part: int = -1
+    leg_part: int = -1
+    is_human: bool = True
+    is_nhanban: bool = False
     xu: int = 0
     yen: int = 0
     luong: int = 0
@@ -48,7 +54,17 @@ class Character:
     body: List[Optional[Item]] = field(default_factory=list)
     box: List[Optional[Item]] = field(default_factory=list)
 
+    def is_noel_mask_active(self, hat_id: int, hat_part: int = -1) -> bool:
+        if hat_part > -1 and self.mask_part == hat_part:
+            return True
+        for item in self.body:
+            if item and item.template_id == hat_id:
+                return True
+        return False
+
+
     def get_nvhn_task(self) -> Optional[TaskOrder]:
+
         for order in self.task_orders:
             if order.task_id == 0:
                 return order

@@ -26,35 +26,23 @@ NOEL_HAT_FEMALE_ID = 352
 class PreparerTask(BaseTask):
     def run(self) -> bool:
         char = self.controller.character
-        school_map = char.get_school_map_id()
 
-        # 1. Chuyển nhân vật về đúng trường theo class ngay từ đầu
-        if self.controller.map_state.map_id != school_map:
-            logger.info(f"AUTO NVHN: di chuyển về trường theo phái (map {school_map})")
-            self.move_to_map(school_map)
-
-        # 2. Lưu tọa độ tại Kamakura (NPC 5) ngay tại trường
-        if self.controller.map_state.map_id == school_map:
-            logger.info(f"AUTO NVHN: lưu tọa độ tại Kamakura NPC 5 (map {school_map})")
-            self.interact_npc(KAMAKURA_NPC, 1, 0)
-            self.sleep(config.ACTION_DELAY_NORMAL)
-
-        # 3. Chọn Skill chiến đấu
+        # 1. Chọn Skill chiến đấu
         self._select_combat_skill()
 
-        # 4. Mua thức ăn tại NPC 4 (Tabemono có ở cả 3 trường) và tự ăn
+        # 2. Mua thức ăn tại NPC 4 (Tabemono) và tự ăn
         self._configure_and_use_food()
 
-        # 5. Nếu trường là Ookaza (Map 72), thực hiện mua Mũ Noel & lật hình tại Goosho (NPC 30)
-        # Ensure Noel hat is equipped regardless of map
-        self._ensure_noel_hat()
-        # Ensure we are on Okaza map before flipping lucky tickets
+        # 3. Di chuyển tới Okaza (Map 72) để kiểm tra/mua Mũ Noel & lật hình tại Goosho (NPC 30)
         if self.controller.map_state.map_id != OKAZA_MAP:
-            logger.info(f"AUTO NVHN: di chuyển tới Okaza map {OKAZA_MAP} để lật hình")
+            logger.info(f"AUTO NVHN: di chuyển tới Okaza map {OKAZA_MAP} để lật hình & Mũ Noel")
             self.move_to_map(OKAZA_MAP)
+
+        self._ensure_noel_hat()
         self._buy_and_flip_lucky_tickets()
 
-        return True
+        # 4. Di chuyển về trường theo phái (Map 1 / 27 / 72) và lưu tọa độ tại Kamakura NPC 5
+        self._save_coordinates_at_school()
 
         return True
 
@@ -114,8 +102,8 @@ class PreparerTask(BaseTask):
         char = self.controller.character
         hat_id = NOEL_HAT_MALE_ID if char.gender == 0 else NOEL_HAT_FEMALE_ID
 
-        # Check if already equipped
-        if char.mask_part in (NOEL_HAT_MALE_ID, NOEL_HAT_FEMALE_ID):
+        # Check if already equipped or active
+        if char.is_noel_mask_active(hat_id):
             logger.info(f"AUTO NVHN NOEL: Mũ noel đang được sử dụng id={hat_id}")
             return
 
@@ -177,6 +165,8 @@ class PreparerTask(BaseTask):
             self.move_to_map(school_map)
 
         if self.controller.map_state.map_id == school_map:
-            logger.info("AUTO NVHN: đã tới trường, đang lưu tọa độ tại Kamakura")
+            logger.info("AUTO NVHN: đã tới trường, đang lưu tọa độ tại Kamakura (NPC 5)")
             self.interact_npc(KAMAKURA_NPC, 1, 0)
-            logger.info("AUTO NVHN: lưu tọa độ xong, bắt đầu nhiệm vụ hàng ngày")
+            self.sleep(config.ACTION_DELAY_NORMAL)
+            logger.info("AUTO NVHN: lưu tọa độ xong, chuẩn bị nhận nhiệm vụ hàng ngày")
+

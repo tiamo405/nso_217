@@ -40,3 +40,14 @@ class Item:
             return False
         return 0 <= self.template.type <= 15
 
+    def is_type_mounts(self) -> bool:
+        if not self.template:
+            return False
+        return 29 <= self.template.type <= 33
+
+    def is_type_ngoc_kham(self) -> bool:
+        if not self.template:
+            return False
+        return self.template.type == 34
+
+

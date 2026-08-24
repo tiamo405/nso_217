@@ -92,9 +92,18 @@ def main():
     # Determine CSV path
     csv_path = args.csv
     if not csv_path:
-        csv_path = os.path.join(worker_dir, "accounts.csv")
-        if not os.path.exists(csv_path):
-            csv_path = os.path.join(config.BASE_DIR, "accounts.csv")
+        for candidate in ["accounts.csv", "account.csv"]:
+            p = os.path.join(worker_dir, candidate)
+            if os.path.exists(p):
+                csv_path = p
+                break
+        if not csv_path:
+            for candidate in ["accounts.csv", "account.csv"]:
+                p = os.path.join(config.BASE_DIR, candidate)
+                if os.path.exists(p):
+                    csv_path = p
+                    break
+
 
     accounts = parse_accounts(csv_path)
     logger.info(f"AUTO NVHN: khởi động worker (PID {os.getpid()}), nạp {len(accounts)} tài khoản")
