@@ -31,6 +31,7 @@ class AccountRunner:
         self.client = NSOSocketClient(self.host, self.port, timeout=config.SOCKET_TIMEOUT)
         self.service = NSOService(self.client)
         self.controller = NSOController(service=self.service)
+        self.controller.current_username = username
         self.client.on_message_callback = self.controller.handle_message
 
     def run(self) -> bool:

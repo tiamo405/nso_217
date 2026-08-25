@@ -15,6 +15,14 @@ MAX_DAILY_TASKS = 20
 
 
 class NVHNTask(BaseTask):
+    def __init__(self, service, controller):
+        super().__init__(service, controller)
+        char = controller.character
+        self.last_status_log = 0.0
+        self.last_yen = char.yen
+        self.last_xu = char.xu
+        self.last_luong = char.luong
+
     def run(self) -> bool:
         school_map = self.controller.character.get_school_map_id()
         completed_count = self.controller.task_state.daily_task_count
@@ -26,6 +34,7 @@ class NVHNTask(BaseTask):
                 return False
 
             task = self.controller.character.get_nvhn_task()
+            self._log_status(task)
 
             # ─── BƯỚC 1: Chưa có bất kỳ nhiệm vụ nào -> Về trường gặp NPC Rikudo (25) nhận NV mới ───
             if task is None:
@@ -114,19 +123,14 @@ class NVHNTask(BaseTask):
 
     def _do_combat_for_task(self, task) -> bool:
         """Đánh quái và nhặt vật phẩm liên tục cho tới khi hoàn thành mục tiêu nhiệm vụ"""
-        logger.info(f"AUTO NVHN: đang đánh quái (id={task.kill_id}) tại map {self.controller.map_state.map_id} ({self.controller.map_state.map_name}), tiến độ: {task.count}/{task.max_count}")
         char = self.controller.character
         skill_id = char.selected_skill.skill_id if char.selected_skill else (char.skills[0].skill_id if char.skills else 0)
 
         max_combat_time = 300.0  # Tối đa 5 phút cho 1 nhiệm vụ
         start_time = time.time()
-        last_log_time = start_time
 
         while task.count < task.max_count and time.time() - start_time < max_combat_time:
-            now = time.time()
-            if now - last_log_time >= 10.0:
-                logger.info(f"AUTO NVHN TIẾN ĐỘ: đã tiêu diệt {task.count}/{task.max_count} ({task.name}) tại map {self.controller.map_state.map_id}")
-                last_log_time = now
+            self._log_status(task)
 
             # Kiểm tra kết nối
             if not self.service.client.connected:
@@ -164,3 +168,58 @@ class NVHNTask(BaseTask):
                 self.sleep(1.0)
 
         return True
+
+    def _log_status(self, task=None):
+        """Emit the same stable NVHN status fields used by the Java workers."""
+        now = time.time()
+        if now - self.last_status_log < 30.0:
+            return
+        self.last_status_log = now
+
+        char = self.controller.character
+        map_state = self.controller.map_state
+        task = task if task is not None else char.get_nvhn_task()
+
+        yen_delta = char.yen - self.last_yen
+        xu_delta = char.xu - self.last_xu
+        luong_delta = char.luong - self.last_luong
+        self.last_yen = char.yen
+        self.last_xu = char.xu
+        self.last_luong = char.luong
+
+        progress = "-"
+        if map_state.is_school():
+            if task is None:
+                state = "đang nhận nhiệm vụ"
+            elif task.count >= task.max_count:
+                state = "đang trả nhiệm vụ"
+            else:
+                state = "đang tới map nhiệm vụ"
+                progress = f"{task.count}/{task.max_count}"
+        elif task is None:
+            state = "đang về trường"
+        elif map_state.map_id != task.map_id:
+            state = f"đang di chuyển tới map {task.map_id}"
+            progress = f"{task.count}/{task.max_count}"
+        else:
+            state = f"đang đánh quái id={task.kill_id}"
+            progress = f"{task.count}/{task.max_count}"
+
+        daily_count = self.controller.task_state.daily_task_count
+        username = self.controller.current_username or "-"
+        logger.info(
+            f"AUTO NVHN STATUS: username={username} nv={char.name} level={char.level} "
+            f"map={map_state.map_id}({map_state.map_name}) state={state} "
+            f"nvhn={daily_count}/20 progress={progress} hp={char.hp}/{char.max_hp} "
+            f"yen={char.yen}{self._format_delta(yen_delta)} "
+            f"xu={char.xu}{self._format_delta(xu_delta)} "
+            f"luong={char.luong}{self._format_delta(luong_delta)}"
+        )
+
+    @staticmethod
+    def _format_delta(value: int) -> str:
+        if value > 0:
+            return f"(+{value})"
+        if value < 0:
+            return f"({value})"
+        return ""

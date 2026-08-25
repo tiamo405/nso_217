@@ -70,12 +70,10 @@ for ((i = 0; i < NUM_WORKERS; i++)); do
     END_IDX=$(( CUR_IDX + COUNT ))
     CUR_IDX=$END_IDX
 
-    # Write accounts.csv and account.csv for this worker
+    # Write accounts.csv for this worker
     echo "username,password" > "$WORKER_DIR/accounts.csv"
-    echo "username,password" > "$WORKER_DIR/account.csv"
     for ((j = START_IDX; j < END_IDX; j++)); do
         echo "${ALL_ACCOUNTS[j]}" >> "$WORKER_DIR/accounts.csv"
-        echo "${ALL_ACCOUNTS[j]}" >> "$WORKER_DIR/account.csv"
     done
 
     echo "  [OK] Tạo $WORKER_DIR ($COUNT tài khoản)"
@@ -84,4 +82,3 @@ done
 # Summary
 echo "Số tài khoản trung bình mỗi worker: $BASE_COUNT (có $REMAINDER worker nhận thêm 1 tài khoản)"
 echo "=== Hoàn tất build $NUM_WORKERS workers trong $DIST_DIR ==="
-

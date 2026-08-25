@@ -51,13 +51,25 @@ class BaseTask:
                         return True
                     current_map = self.controller.map_state.map_id
 
-        # 2. Nếu đang ở trường và mục tiêu là trường khác -> dùng Shinwa NPC 28
+        # 2. Nếu đang ở trường và mục tiêu là trường khác -> dùng NPC 8
         if current_map in (1, 27, 72) and target_map_id in (1, 27, 72):
             shinwa_idx = 0 if target_map_id == 1 else (1 if target_map_id == 27 else 2)
-            self.interact_npc(28, shinwa_idx, 0)
-            self.sleep(config.ACTION_DELAY_MAP_CHANGE)
-            if self.controller.map_state.map_id == target_map_id:
+            logger.info(
+                f"AUTO NVHN: chuyển trường qua NPC 8, map {current_map} -> {target_map_id} "
+                f"(menu={shinwa_idx}, option=0)"
+            )
+            if not self.interact_npc(8, shinwa_idx, 0):
+                logger.warning(f"AUTO NVHN: không tìm thấy NPC 8 tại map {current_map}")
+                return False
+            if self.wait_for_condition(
+                    lambda: self.controller.map_state.map_id == target_map_id,
+                    timeout=5.0):
                 return True
+            logger.warning(
+                f"AUTO NVHN: NPC 8 chưa chuyển tới map {target_map_id} "
+                f"(hiện tại map {self.controller.map_state.map_id})"
+            )
+            return False
 
         # 3. Nếu đang ở làng và mục tiêu là trường (1, 27, 72) -> dùng Kanata NPC 0 hoặc Xa phu NPC 13
         if target_map_id in (1, 27, 72):
@@ -91,9 +103,22 @@ class BaseTask:
             # Chuyển giữa các trường bằng Shinwa
             if cur in (1, 27, 72) and next_map in (1, 27, 72):
                 shinwa_idx = 0 if next_map == 1 else (1 if next_map == 27 else 2)
-                self.interact_npc(28, shinwa_idx, 0)
-                self.sleep(config.ACTION_DELAY_MAP_CHANGE)
-                continue
+                logger.info(
+                    f"AUTO NVHN: chuyển trường qua NPC 8, map {cur} -> {next_map} "
+                    f"(menu={shinwa_idx}, option=0)"
+                )
+                if not self.interact_npc(8, shinwa_idx, 0):
+                    logger.warning(f"AUTO NVHN: không tìm thấy NPC 8 tại map {cur}")
+                    return False
+                if self.wait_for_condition(
+                        lambda: self.controller.map_state.map_id == next_map,
+                        timeout=5.0):
+                    continue
+                logger.warning(
+                    f"AUTO NVHN: NPC 8 chưa chuyển tới map {next_map} "
+                    f"(hiện tại map {self.controller.map_state.map_id})"
+                )
+                return False
 
             # Di chuyển qua waypoint tương ứng
             waypoints = self.controller.map_state.waypoints

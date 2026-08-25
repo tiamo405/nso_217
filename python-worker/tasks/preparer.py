@@ -104,7 +104,10 @@ class PreparerTask(BaseTask):
 
         # Check if already equipped or active
         if char.is_noel_mask_active(hat_id):
-            logger.info(f"AUTO NVHN NOEL: Mũ noel đang được sử dụng id={hat_id}")
+            logger.info(
+                f"AUTO NVHN NOEL: Mũ noel đang được sử dụng id={hat_id} "
+                f"maskPart={char.mask_part}, không mua"
+            )
             return
 
         # Check in bag
@@ -121,18 +124,46 @@ class PreparerTask(BaseTask):
 
         # If still not found, buy at Goosho NPC
         if not hat_item:
-            logger.info(f"AUTO NVHN NOEL: mua Mũ noel id={hat_id} tại Goosho NPC 30")
+            logger.info(f"AUTO NVHN NOEL: đang mua Mũ noel id={hat_id} tại Goosho NPC 30")
             self.interact_npc(GOOSHO_NPC, -1, -1)
             self.service.request_item(32)  # Fashion shop
             self.sleep(config.ACTION_DELAY_NORMAL)
-            self.service.buy_item(32, 0, 1)
-            self.sleep(config.ACTION_DELAY_NORMAL)
+            buy_sent = self.service.buy_item(32, 0, 1)
+            if not buy_sent:
+                logger.warning(f"AUTO NVHN NOEL: không gửi được yêu cầu mua Mũ noel id={hat_id}")
+                return
+            self.wait_for_condition(lambda: char.find_bag_item(hat_id) is not None, timeout=4.0)
             hat_item = char.find_bag_item(hat_id)
+            if hat_item:
+                logger.info(
+                    f"AUTO NVHN NOEL: đã mua Mũ noel id={hat_id} "
+                    f"bagIndex={hat_item.index_ui} tại Goosho NPC 30"
+                )
+            else:
+                logger.warning(
+                    f"AUTO NVHN NOEL: chưa xác nhận mua thành công Mũ noel id={hat_id}"
+                )
 
         if hat_item:
-            logger.info(f"AUTO NVHN NOEL: sử dụng Mũ noel id={hat_id}")
-            self.service.use_item(hat_item.index_ui)
-            self.sleep(config.ACTION_DELAY_SHORT)
+            logger.info(
+                f"AUTO NVHN NOEL: đang sử dụng Mũ noel id={hat_id} "
+                f"bagIndex={hat_item.index_ui} maskPart={char.mask_part}"
+            )
+            use_sent = self.service.use_item(hat_item.index_ui)
+            if not use_sent:
+                logger.warning(f"AUTO NVHN NOEL: không gửi được yêu cầu sử dụng Mũ noel id={hat_id}")
+                return
+            used = self.wait_for_condition(lambda: char.is_noel_mask_active(hat_id), timeout=4.0)
+            if used:
+                logger.info(
+                    f"AUTO NVHN NOEL: đã dùng Mũ noel thành công id={hat_id} "
+                    f"maskPart={char.mask_part}"
+                )
+            else:
+                logger.warning(
+                    f"AUTO NVHN NOEL: chưa xác nhận sử dụng thành công Mũ noel id={hat_id} "
+                    f"maskPart={char.mask_part}"
+                )
 
     def _buy_and_flip_lucky_tickets(self):
         char = self.controller.character
@@ -169,4 +200,3 @@ class PreparerTask(BaseTask):
             self.interact_npc(KAMAKURA_NPC, 1, 0)
             self.sleep(config.ACTION_DELAY_NORMAL)
             logger.info("AUTO NVHN: lưu tọa độ xong, chuẩn bị nhận nhiệm vụ hàng ngày")
-

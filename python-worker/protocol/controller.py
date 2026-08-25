@@ -8,6 +8,7 @@ from network.message import NSOMessage, MessageReader
 from network.constants import (
     SERVER_CMD_SERVER_MESSAGE, SERVER_CMD_MAP_LOAD,
     SERVER_CMD_SUB_COMMAND, SERVER_CMD_NOT_MAP, SERVER_CMD_DIALOG,
+    SERVER_CMD_BAG_ITEM_ADD, SERVER_CMD_USE_ITEM,
     SERVER_CMD_TASK_ADD, SERVER_CMD_TASK_UPDATE, SERVER_CMD_TASK_REMOVE
 )
 from models.character import Character, CharSummary
@@ -31,6 +32,7 @@ class NSOController:
         self.is_in_character_select = False
         self.dialog_open = False
         self.menu_open = False
+        self.current_username = ""
 
         # Event Listeners
         self.on_character_list_received: Optional[Callable[[List[CharSummary]], None]] = None
@@ -64,6 +66,10 @@ class NSOController:
                 self._handle_map_load(reader)
             elif cmd == SERVER_CMD_DIALOG:
                 self._handle_dialog(reader)
+            elif cmd == SERVER_CMD_BAG_ITEM_ADD:
+                self._handle_bag_item_add(reader)
+            elif cmd == SERVER_CMD_USE_ITEM:
+                self._handle_use_item(reader)
             elif cmd == SERVER_CMD_TASK_ADD:
                 self._handle_task_add(reader)
             elif cmd == SERVER_CMD_TASK_UPDATE:
@@ -100,6 +106,51 @@ class NSOController:
         except Exception:
             pass
 
+    def _handle_bag_item_add(self, reader: MessageReader):
+        """Parse CMD 8: server added a newly bought/received item to the bag."""
+        try:
+            bag_index = reader.read_byte()
+            template_id = reader.read_short()
+            item = Item(type_ui=3, index_ui=bag_index, template_id=template_id)
+            item.template = ItemTemplate(id=template_id)
+            item.is_lock = reader.read_boolean()
+            if template_id in (351, 352):
+                item.upgrade = reader.read_byte()
+            item.is_expires = reader.read_boolean()
+            try:
+                item.quantity = reader.read_unsigned_short()
+            except Exception:
+                item.quantity = 1
+
+            if bag_index >= len(self.character.bag):
+                self.character.bag.extend([None] * (bag_index + 1 - len(self.character.bag)))
+            self.character.bag[bag_index] = item
+        except Exception as e:
+            logger.error(f"Error parsing bag item add (8): {e}")
+
+    def _handle_use_item(self, reader: MessageReader):
+        """Parse CMD 11: server confirmed an item was used/equipped."""
+        try:
+            bag_index = reader.read_byte()
+            item = self.character.bag[bag_index] if 0 <= bag_index < len(self.character.bag) else None
+            # This minimal state update is intentionally limited to the two Noel hats.
+            # Other consumables need their real template type/quantity semantics.
+            if item is not None and item.template_id in (351, 352):
+                self.character.bag[bag_index] = None
+                item.type_ui = 5
+                item.index_ui = len(self.character.body)
+                self.character.body = [body_item for body_item in self.character.body
+                                       if body_item is None or body_item.template_id != item.template_id]
+                self.character.body.append(item)
+
+            self.character.speed = reader.read_byte()
+            self.character.max_hp = reader.read_int()
+            self.character.max_mp = reader.read_int()
+            reader.read_short()  # eff5BuffHp
+            reader.read_short()  # eff5BuffMp
+        except Exception as e:
+            logger.error(f"Error parsing use item (11): {e}")
+
     def _handle_task_add(self, reader: MessageReader):
         """Parse CMD 96: Add TaskOrder"""
         try:
@@ -135,8 +186,6 @@ class NSOController:
             for order in self.character.task_orders:
                 if order.task_id == task_id:
                     order.count = new_count
-                    if task_id == 0:
-                        logger.info(f"AUTO NVHN: tiến độ nhiệm vụ={order.count}/{order.max_count}")
                     break
         except Exception as e:
             logger.error(f"Error parsing TaskOrder update (97): {e}")

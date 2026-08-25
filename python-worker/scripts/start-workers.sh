@@ -42,6 +42,7 @@ for WDIR in "${TARGET_WORKERS[@]}"; do
     rm -f "$WDIR/completed.marker"
 
     # Start worker process in background, ensure PID file is written
+    printf '\n===== START %s =====\n' "$(date '+%F %T')" >> "$LOG_FILE"
     PYTHONPATH="$PYTHON_WORKER_DIR" nohup python3 -u "$PYTHON_WORKER_DIR/worker/worker_main.py" --worker-dir "$WDIR" >> "$LOG_FILE" 2>&1 &
     PID=$!
     # Wait a moment to confirm the process is alive
@@ -58,5 +59,4 @@ done
 disown -a 2>/dev/null || true
 
 echo "=== Đã khởi động $STARTED workers ==="
-
 

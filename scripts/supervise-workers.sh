@@ -36,21 +36,49 @@ find_repeated_status() {
     [[ -f "$log_file" ]] || return 1
     awk -v limit="$REPEATED_STATUS_LIMIT" '
         /^===== START / {
-            last_status = ""
+            last_key = ""
             repeated = 0
             next
         }
-        /^AUTO NVHN STATUS:/ {
-            if ($0 == last_status) {
+        index($0, "AUTO NVHN PREP: đang tới Okaza để mua thức ăn và lật hình") > 0 {
+            prep = substr($0, index($0, "AUTO NVHN PREP:"))
+            key = "prep " prep
+            if (key == last_key) {
                 repeated++
             } else {
-                last_status = $0
+                last_key = key
                 repeated = 1
             }
+            last_status = prep
+            next
+        }
+        /^AUTO NVHN STATUS:/ {
+            nvhn = ""
+            progress = ""
+            if (match($0, /nvhn=[0-9]+\/20/)) {
+                nvhn = substr($0, RSTART, RLENGTH)
+            }
+            if (match($0, /progress=[0-9]+\/[0-9]+/)) {
+                progress = substr($0, RSTART, RLENGTH)
+            }
+            if (nvhn == "" || progress == "") {
+                last_key = ""
+                repeated = 0
+                next
+            }
+
+            key = nvhn " " progress
+            if (key == last_key) {
+                repeated++
+            } else {
+                last_key = key
+                repeated = 1
+            }
+            last_status = $0
         }
         END {
-            if (repeated > limit) {
-                print last_status
+            if (repeated >= limit) {
+                print last_key " | " last_status
                 exit 0
             }
             exit 1
@@ -113,7 +141,7 @@ while true; do
 
         if repeated_status=$(find_repeated_status "$worker_dir/stdout.log"); then
             worker_name=$(basename -- "$worker_dir")
-            echo "$worker_name có AUTO NVHN STATUS giống nhau quá $REPEATED_STATUS_LIMIT lần; đang restart."
+            echo "$worker_name có trạng thái AUTO NVHN bị lặp từ $REPEATED_STATUS_LIMIT lần liên tiếp; đang restart."
             echo "Trạng thái bị lặp: $repeated_status"
             restart_worker "$worker_dir" || true
         fi
