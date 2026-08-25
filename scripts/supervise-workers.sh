@@ -58,7 +58,7 @@ find_repeated_status() {
             if (match($0, /nvhn=[0-9]+\/20/)) {
                 nvhn = substr($0, RSTART, RLENGTH)
             }
-            if (match($0, /progress=[0-9]+\/[0-9]+/)) {
+            if (match($0, /progress=(-|[0-9]+\/[0-9]+)/)) {
                 progress = substr($0, RSTART, RLENGTH)
             }
             if (nvhn == "" || progress == "") {

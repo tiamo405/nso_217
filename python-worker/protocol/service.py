@@ -6,11 +6,12 @@ import logging
 from network.socket_client import NSOSocketClient
 from network.message import NSOMessage
 from network.constants import (
-    CMD_LOGIN, CMD_NOT_LOGIN, CMD_NOT_MAP, CMD_CHAR_MOVE, CMD_USE_ITEM, CMD_BUY_ITEM,
+    CMD_LOGIN, CMD_NOT_LOGIN, CMD_NOT_MAP, CMD_SUB_COMMAND, CMD_CHAR_MOVE, CMD_USE_ITEM, CMD_BUY_ITEM,
     CMD_SALE_ITEM, CMD_ITEM_BOX_TO_BAG, CMD_ITEM_BAG_TO_BOX,
     CMD_REQUEST_CHANGE_MAP, CMD_REQUEST_CHANGE_ZONE, CMD_MENU, CMD_OPEN_MENU,
     CMD_SELECT_SKILL, CMD_PICK_ITEM, CMD_ATTACK_MOB_FAST,
-    SUB_CMD_SET_CLIENT, SUB_CMD_LOGIN, SUB_CMD_SELECT_CARD, SUB_CMD_BUY_ITEM1, SUB_CMD_REQUEST_ITEM, SUB_CMD_SELECT_CHAR_PLAY
+    SUB_CMD_SET_CLIENT, SUB_CMD_LOGIN, SUB_CMD_SELECT_CARD, SUB_CMD_BUY_ITEM1,
+    SUB_CMD_REQUEST_ITEM, SUB_CMD_SELECT_CHAR_PLAY, SUB_CMD_UPDATE_ITEM
 )
 
 logger = logging.getLogger("NSOService")
@@ -63,6 +64,12 @@ class NSOService:
         w.write_byte(-101)
         return self.client.send_message(msg)
 
+    def request_item_templates(self) -> bool:
+        """Requests the ItemTemplate table (CMD -28, sub -119)."""
+        msg = NSOMessage(CMD_NOT_MAP)
+        msg.writer().write_byte(SUB_CMD_UPDATE_ITEM)
+        return self.client.send_message(msg)
+
     def select_character(self, name: str) -> bool:
         """Selects a character to play (CMD -28, sub -126)"""
         msg = NSOMessage(CMD_NOT_MAP)
@@ -89,8 +96,8 @@ class NSOService:
         return self.client.send_message(msg)
 
     def request_item(self, shop_or_box_type: int) -> bool:
-        """Requests store items or box items (CMD -28, sub 4)"""
-        msg = NSOMessage(CMD_NOT_MAP)
+        """Requests store items or box items (CMD -30, sub -103)."""
+        msg = NSOMessage(CMD_SUB_COMMAND)
         w = msg.writer()
         w.write_byte(SUB_CMD_REQUEST_ITEM)
         w.write_byte(shop_or_box_type)

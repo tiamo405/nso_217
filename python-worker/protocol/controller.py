@@ -8,7 +8,7 @@ from network.message import NSOMessage, MessageReader
 from network.constants import (
     SERVER_CMD_SERVER_MESSAGE, SERVER_CMD_MAP_LOAD,
     SERVER_CMD_SUB_COMMAND, SERVER_CMD_NOT_MAP, SERVER_CMD_DIALOG,
-    SERVER_CMD_BAG_ITEM_ADD, SERVER_CMD_USE_ITEM,
+    SERVER_CMD_BAG_ITEM_ADD, SERVER_CMD_USE_ITEM, SERVER_CMD_BOX_ITEMS,
     SERVER_CMD_TASK_ADD, SERVER_CMD_TASK_UPDATE, SERVER_CMD_TASK_REMOVE
 )
 from models.character import Character, CharSummary
@@ -18,6 +18,10 @@ from models.map_data import MapState, NPC, Mob, Waypoint, ItemMap
 from models.task import TaskState, TaskOrder
 
 logger = logging.getLogger("NSOController")
+
+# Item metadata is identical for every connection in the same process. Keeping
+# one shared table avoids downloading the large -119 resource on every character.
+_ITEM_TEMPLATES = {}
 
 
 class NSOController:
@@ -32,6 +36,7 @@ class NSOController:
         self.is_in_character_select = False
         self.dialog_open = False
         self.menu_open = False
+        self.box_loaded = False
         self.current_username = ""
 
         # Event Listeners
@@ -50,6 +55,7 @@ class NSOController:
         self.is_in_character_select = False
         self.dialog_open = False
         self.menu_open = False
+        self.box_loaded = False
 
     def handle_message(self, msg: NSOMessage):
         cmd = msg.command
@@ -70,6 +76,8 @@ class NSOController:
                 self._handle_bag_item_add(reader)
             elif cmd == SERVER_CMD_USE_ITEM:
                 self._handle_use_item(reader)
+            elif cmd == SERVER_CMD_BOX_ITEMS:
+                self._parse_box_items(reader)
             elif cmd == SERVER_CMD_TASK_ADD:
                 self._handle_task_add(reader)
             elif cmd == SERVER_CMD_TASK_UPDATE:
@@ -112,9 +120,9 @@ class NSOController:
             bag_index = reader.read_byte()
             template_id = reader.read_short()
             item = Item(type_ui=3, index_ui=bag_index, template_id=template_id)
-            item.template = ItemTemplate(id=template_id)
+            item.template = _ITEM_TEMPLATES.get(template_id, ItemTemplate(id=template_id))
             item.is_lock = reader.read_boolean()
-            if template_id in (351, 352):
+            if item.is_type_body() or item.is_type_ngoc_kham():
                 item.upgrade = reader.read_byte()
             item.is_expires = reader.read_boolean()
             try:
@@ -204,7 +212,16 @@ class NSOController:
         sub_cmd = reader.read_byte()
         if sub_cmd == -123:  # Template / Resource sync
             if self.service:
-                self.service.client_ok()
+                if _ITEM_TEMPLATES:
+                    self.service.client_ok()
+                elif not self.service.request_item_templates():
+                    self.service.client_ok()
+        elif sub_cmd == -119:  # ItemTemplate resource
+            try:
+                self._parse_item_templates(reader)
+            finally:
+                if self.service:
+                    self.service.client_ok()
         elif sub_cmd == -126:  # Character List
             char_count = reader.read_byte()
             self.character_list.clear()
@@ -233,12 +250,46 @@ class NSOController:
             if self.on_character_list_received:
                 self.on_character_list_received(self.character_list)
 
+    def _parse_item_templates(self, reader: MessageReader):
+        """Parse the same item resource layout as Controller.gameAA(DataInputStream)."""
+        reader.read_byte()  # item data version
+        option_count = reader.read_unsigned_byte()
+        for _ in range(option_count):
+            reader.read_utf()   # option name
+            reader.read_byte()  # option type
+
+        template_count = reader.read_short()
+        if template_count < 0:
+            raise ValueError(f"Invalid ItemTemplate count: {template_count}")
+
+        templates = {}
+        for template_id in range(template_count):
+            item_type = reader.read_byte()
+            gender = reader.read_byte()
+            name = reader.read_utf()
+            reader.read_utf()  # description
+            level = reader.read_byte()
+            reader.read_short()  # iconID
+            part = reader.read_short()
+            is_up_to_up = reader.read_boolean()
+            templates[template_id] = ItemTemplate(
+                id=template_id,
+                name=name,
+                type=item_type,
+                gender=gender,
+                level=level,
+                part=part,
+                is_up_to_up=is_up_to_up,
+            )
+
+        _ITEM_TEMPLATES.clear()
+        _ITEM_TEMPLATES.update(templates)
+        logger.info("[ITEM TEMPLATE] Received %s templates", len(_ITEM_TEMPLATES))
+
     def _handle_sub_command(self, reader: MessageReader):
         sub_cmd = reader.read_byte()
         if sub_cmd == -127:  # Main Character Info & Game Ready
             self._parse_character_info(reader)
-        elif sub_cmd == -109:  # Box items
-            self._parse_box_items(reader)
 
     def _parse_character_info(self, reader: MessageReader):
         c = self.character
@@ -294,9 +345,9 @@ class NSOController:
             template_id = reader.read_short()
             if template_id != -1:
                 item = Item(type_ui=3, index_ui=i, template_id=template_id)
-                item.template = ItemTemplate(id=template_id)
+                item.template = _ITEM_TEMPLATES.get(template_id, ItemTemplate(id=template_id))
                 item.is_lock = reader.read_boolean()
-                if item.is_type_body() or item.is_type_mounts() or item.is_type_ngoc_kham():
+                if item.is_type_body() or item.is_type_ngoc_kham():
                     item.upgrade = reader.read_byte()
                 item.is_expires = reader.read_boolean()
                 item.quantity = reader.read_unsigned_short()
@@ -338,19 +389,22 @@ class NSOController:
 
     def _parse_box_items(self, reader: MessageReader):
         try:
+            # Server sends xuInBox before the number of box slots.
+            self.character.xu_in_box = reader.read_int()
             box_len = reader.read_unsigned_byte()
             self.character.box = [None] * box_len
             for i in range(box_len):
                 template_id = reader.read_short()
                 if template_id != -1:
                     item = Item(type_ui=4, index_ui=i, template_id=template_id)
-                    item.template = ItemTemplate(id=template_id)
+                    item.template = _ITEM_TEMPLATES.get(template_id, ItemTemplate(id=template_id))
                     item.is_lock = reader.read_boolean()
-                    if item.is_type_body():
+                    if item.is_type_body() or item.is_type_ngoc_kham():
                         item.upgrade = reader.read_byte()
                     item.is_expires = reader.read_boolean()
                     item.quantity = reader.read_unsigned_short()
                     self.character.box[i] = item
+            self.box_loaded = True
             logger.info(f"[BOX] Received box items: {sum(1 for it in self.character.box if it is not None)} items")
         except Exception as e:
             logger.debug(f"Error parsing box items: {e}")
