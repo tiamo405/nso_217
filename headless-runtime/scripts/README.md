@@ -105,6 +105,14 @@ START_DELAY=10 \
 headless-runtime/scripts/supervise-workers.sh
 ```
 
+Supervisor mặc định restart worker đang chạy nếu `stdout.log` không có dữ liệu mới trong 5 phút:
+
+```bash
+STALE_LOG_SECONDS=300 headless-runtime/scripts/supervise-workers.sh
+```
+
+Đổi sang 10 phút bằng `STALE_LOG_SECONDS=600`. Đặt `STALE_LOG_SECONDS=0` để tắt riêng kiểm tra log im lặng; kiểm tra trạng thái AUTO NVHN bị lặp vẫn hoạt động.
+
 Chỉ supervise một worker:
 
 ```bash
@@ -123,9 +131,12 @@ Giữ terminal supervisor mở. Nhấn `Ctrl+C` để dừng supervisor và các
 
 ```bash
 headless-runtime/scripts/status-workers.sh
+headless-runtime/scripts/status-workers.sh --json
 headless-runtime/scripts/logs-workers.sh
 headless-runtime/scripts/logs-workers.sh 3
 ```
+
+`--json` dành cho FastAPI dashboard và công cụ tự động; output dạng bảng mặc định không thay đổi.
 
 Đổi bộ lọc log:
 

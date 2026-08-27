@@ -18,4 +18,6 @@ Ninja-School-Mobile-4.1.1/
 !proguard-7.6.0/**
 
 .vscode/
+.env
+.venv/
 python-worker/dist_py/

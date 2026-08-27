@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSO Headless Control</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="dashboard">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">NSO HEADLESS</p>
+          <h1>Worker Control</h1>
+        </div>
+        <div class="top-actions">
+          <span id="last-refresh" class="muted"></span>
+          <button id="refresh-button" class="secondary">Làm mới</button>
+        </div>
+      </header>
+
+      <div id="notice" class="notice hidden"></div>
+
+      <section class="summary-grid">
+        <article class="summary-card"><span>Supervisor</span><strong id="supervisor-state">—</strong></article>
+        <article class="summary-card"><span>Running</span><strong id="running-count">0</strong></article>
+        <article class="summary-card"><span>Stopped</span><strong id="stopped-count">0</strong></article>
+        <article class="summary-card"><span>Done</span><strong id="done-count">0</strong></article>
+        <article class="summary-card"><span>Accounts</span><strong id="account-count">0</strong></article>
+      </section>
+
+      <section class="control-grid">
+        <article class="panel">
+          <div class="panel-title">
+            <div><p class="eyebrow">RUNTIME</p><h2>Supervisor</h2></div>
+          </div>
+          <p id="supervisor-detail" class="muted">Đang tải trạng thái…</p>
+          <div class="button-row">
+            <button id="start-supervisor" class="primary">Start supervisor</button>
+            <button id="stop-supervisor" class="danger">Stop tất cả</button>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-title"><div><p class="eyebrow">ACCOUNT</p><h2>Thay account.csv</h2></div></div>
+          <p class="muted">File phải có header <code>username,password</code>.</p>
+          <form id="account-form">
+            <input id="account-file" type="file" accept=".csv,text/csv" required>
+            <button type="submit" class="secondary">Upload</button>
+          </form>
+        </article>
+
+        <article class="panel build-panel">
+          <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build headless</h2></div></div>
+          <form id="build-form" class="build-form">
+            <label for="worker-count">Số worker</label>
+            <input id="worker-count" type="number" min="1" max="500" value="10" required>
+            <label class="checkbox"><input id="start-after-build" type="checkbox" checked> Start supervisor sau build</label>
+            <button id="build-button" type="submit" class="primary">Build & Run</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="panel workers-panel">
+        <div class="panel-title">
+          <div><p class="eyebrow">LIVE STATUS</p><h2>Workers</h2></div>
+          <span id="active-job" class="badge hidden"></span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Worker</th><th>State</th><th>PID</th><th>CPU</th><th>RAM</th><th>Elapsed</th><th>Accounts</th><th>Log cuối</th><th>Actions</th></tr></thead>
+            <tbody id="workers-body"><tr><td colspan="9" class="empty">Đang tải…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="console-panel" class="panel console-panel hidden">
+        <div class="panel-title">
+          <div><p class="eyebrow">STREAM</p><h2 id="console-title">Output</h2></div>
+          <button id="close-console" class="ghost">Đóng</button>
+        </div>
+        <pre id="console-output"></pre>
+      </section>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

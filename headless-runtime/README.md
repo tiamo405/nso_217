@@ -52,6 +52,10 @@ headless-runtime/run-one.sh
 
 Lenh chay thu se dung `account.csv` o repo root da duoc copy vao `build/classes`. Dung cho test nho truoc, chua thay the production worker.
 
+## FastAPI dashboard
+
+Runtime headless nhiều worker có giao diện quản lý native tại `web_control/`, không dùng Docker. Xem hướng dẫn cài VPS và Tailscale trong [`web_control/README.md`](../web_control/README.md).
+
 
 # User
 ```sh

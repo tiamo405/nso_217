@@ -5,6 +5,19 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HEADLESS_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${HEADLESS_WORKERS_DIR:-"$HEADLESS_DIR/workers"}
 
+if [[ ${1:-} == "--json" ]]; then
+    if (( $# != 1 )); then
+        echo "Usage: $(basename "$0") [--json]" >&2
+        exit 2
+    fi
+    exec python3 "$SCRIPT_DIR/status_workers_json.py" "$WORKERS_DIR"
+fi
+
+if (( $# != 0 )); then
+    echo "Usage: $(basename "$0") [--json]" >&2
+    exit 2
+fi
+
 shopt -s nullglob
 worker_dirs=("$WORKERS_DIR"/worker-*)
 running=0

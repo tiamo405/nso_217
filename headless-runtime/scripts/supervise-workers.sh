@@ -6,6 +6,7 @@ HEADLESS_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${HEADLESS_WORKERS_DIR:-"$HEADLESS_DIR/workers"}
 CHECK_INTERVAL=${CHECK_INTERVAL:-20}
 REPEATED_STATUS_LIMIT=${REPEATED_STATUS_LIMIT:-5}
+STALE_LOG_SECONDS=${STALE_LOG_SECONDS:-300}
 SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
 
 usage() {
@@ -19,6 +20,7 @@ Examples:
   $(basename "$0") --delay 10      # wait 10s between worker starts
   CHECK_INTERVAL=30 $(basename "$0")
   REPEATED_STATUS_LIMIT=10 $(basename "$0")
+  STALE_LOG_SECONDS=300 $(basename "$0")  # restart nếu stdout im lặng 5 phút
 EOF
 }
 
@@ -59,6 +61,10 @@ if ! [[ "$CHECK_INTERVAL" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "$REPEATED_STATUS_LIMIT" =~ ^[0-9]+$ ]] || (( REPEATED_STATUS_LIMIT < 1 )); then
     echo "REPEATED_STATUS_LIMIT phải là số nguyên dương." >&2
+    exit 1
+fi
+if ! [[ "$STALE_LOG_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "STALE_LOG_SECONDS phải là số giây không âm." >&2
     exit 1
 fi
 
@@ -189,6 +195,25 @@ find_repeated_status() {
     ' "$log_file"
 }
 
+find_stale_log() {
+    local log_file=$1
+    local modified_at now age
+
+    (( STALE_LOG_SECONDS > 0 )) || return 1
+    if [[ ! -f "$log_file" ]]; then
+        echo "chưa có stdout.log"
+        return 0
+    fi
+    modified_at=$(stat -c %Y -- "$log_file" 2>/dev/null) || return 1
+    now=$(date +%s)
+    age=$((now - modified_at))
+    if (( age >= STALE_LOG_SECONDS )); then
+        echo "stdout.log không đổi ${age}s (ngưỡng ${STALE_LOG_SECONDS}s)"
+        return 0
+    fi
+    return 1
+}
+
 restart_worker() {
     local worker_dir=$1
     local worker_name pid_file pid cmdline
@@ -259,9 +284,16 @@ while true; do
             continue
         fi
 
+        worker_name=$(basename -- "$worker_dir")
+        if stale_reason=$(find_stale_log "$worker_dir/stdout.log"); then
+            echo "[$(date '+%F %T')] $worker_name không có log mới; đang restart."
+            echo "Lý do: $stale_reason"
+            restart_worker "$worker_dir" || true
+            continue
+        fi
+
         if repeated_status=$(find_repeated_status "$worker_dir/stdout.log"); then
-            worker_name=$(basename -- "$worker_dir")
-            echo "$worker_name có trạng thái AUTO NVHN bị lặp từ $REPEATED_STATUS_LIMIT lần liên tiếp; đang restart."
+            echo "[$(date '+%F %T')] $worker_name có trạng thái AUTO NVHN bị lặp từ $REPEATED_STATUS_LIMIT lần liên tiếp; đang restart."
             echo "Trạng thái bị lặp: $repeated_status"
             restart_worker "$worker_dir" || true
         fi
