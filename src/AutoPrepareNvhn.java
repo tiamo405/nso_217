@@ -33,6 +33,7 @@ public final class AutoPrepareNvhn extends Auto {
         if (!this.preparedAtOkaza) {
             if (!this.basicConfigured) {
                 this.basicConfigured = true;
+                this.configureAutoPointAllocation();
                 this.selectLevelSkill();
                 this.configureFood();
             }
@@ -99,6 +100,14 @@ public final class AutoPrepareNvhn extends Auto {
     private int getCharacterSchoolMap() {
         int classId = Char.getMyChar().nClass.classId;
         return classId <= 2 ? 1 : (classId <= 4 ? 27 : 72);
+    }
+
+    private void configureAutoPointAllocation() {
+        Char me = Char.getMyChar();
+        Char.fieldFG = true;
+        Char.fieldFH = true;
+        System.out.println("AUTO NVHN POINT: bật tự cộng tiềm năng và kỹ năng"
+                + " pPoint=" + me.pPoint + " sPoint=" + me.sPoint);
     }
 
     private void selectLevelSkill() {
