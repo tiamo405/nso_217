@@ -17,6 +17,7 @@ public final class AccountAutoManager implements Runnable {
     private static boolean switching;
     private static boolean waitingForGame;
     private static boolean enteringCave;
+    private static boolean postDailyProcessing;
     private static boolean reconnecting;
     private static int disconnectRetryCount;
     private static int connectRetryCount;
@@ -132,6 +133,7 @@ public final class AccountAutoManager implements Runnable {
         characterNames = null;
         waitingForGame = false;
         enteringCave = false;
+        postDailyProcessing = false;
 
         System.out.println("AUTO NVHN: đăng nhập tài khoản " + username + " (" + (accountIndex + 1) + "/" + usernames.size() + ")");
         Session_ME session = Session_ME.gI();
@@ -265,11 +267,34 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || switching) {
             return;
         }
-        startCaveEntry();
+        startPostDailyActions();
     }
 
     /** Called immediately when NPC 25 says today's daily-task limit is exhausted. */
     public static synchronized void onDailyLimitReached() {
+        if (!enabled || switching) {
+            return;
+        }
+        startPostDailyActions();
+    }
+
+    private static void startPostDailyActions() {
+        if (postDailyProcessing) {
+            return;
+        }
+        postDailyProcessing = true;
+        if (!Code.fieldAD.didDailyWorkThisRun()) {
+            System.out.println("AUTO NVHN LAT HINH: nhân vật không làm nhiệm vụ nào trong lượt chạy này, bỏ qua lật thẻ");
+            startCaveEntry();
+            return;
+        }
+        System.out.println("AUTO NVHN: đã hết nhiệm vụ, bắt đầu lật thẻ trước khi đi hang.");
+        AutoFlipNvhn flip = new AutoFlipNvhn();
+        flip.fieldAD();
+        Code.fieldAA((Auto) flip);
+    }
+
+    public static synchronized void onPostDailyFlipFinished() {
         if (!enabled || switching) {
             return;
         }
@@ -298,6 +323,7 @@ public final class AccountAutoManager implements Runnable {
         switching = true;
         waitingForGame = false;
         enteringCave = false;
+        postDailyProcessing = false;
         Code.fieldAG();
         System.out.println("AUTO NVHN: " + reason);
         (new Thread(new Runnable() {

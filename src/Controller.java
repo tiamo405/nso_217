@@ -1594,6 +1594,9 @@ public final class Controller {
 
                     return;
                 case 40:
+                    if (Code.fieldAB instanceof AutoEnterCave) {
+                        System.out.println("AUTO NVHN HANG SERVER COMMAND: 40 (menu NPC)");
+                    }
                     InfoDlg.gameAB();
                     GameCanvas.gameAI();
                     GameCanvas.gameAH();
@@ -1994,12 +1997,23 @@ public final class Controller {
                     }
                     break;
                 case 63:
+                    if (Code.fieldAB instanceof AutoEnterCave) {
+                        System.out.println("AUTO NVHN HANG SERVER COMMAND: 63 (menu động)");
+                    }
                     var195 = new MyVector();
 
                     while (true) {
                         try {
-                            var195.addElement(new Command(fieldAB.reader().readUTF(), GameCanvas.instance, 88817, (Object) null));
+                            String dynamicMenu = fieldAB.reader().readUTF();
+                            if (Code.fieldAB instanceof AutoEnterCave) {
+                                System.out.println("AUTO NVHN HANG SERVER DYNAMIC MENU["
+                                        + var195.size() + "]: " + dynamicMenu);
+                            }
+                            var195.addElement(new Command(dynamicMenu, GameCanvas.instance, 88817, (Object) null));
                         } catch (Exception var179) {
+                            if (Code.fieldAB instanceof AutoEnterCave) {
+                                AutoEnterCave.onServerDynamicMenu(var195);
+                            }
                             GameCanvas.menu.gameAA(var195);
                             return;
                         }
@@ -2652,6 +2666,9 @@ public final class Controller {
                     Char.getMyChar().gameAB(fieldAB);
                     break;
                 case 109:
+                    if (Code.fieldAB instanceof AutoEnterCave) {
+                        System.out.println("AUTO NVHN HANG SERVER COMMAND: 109 (menu nhiều cấp)");
+                    }
                     InfoDlg.gameAB();
                     GameCanvas.gameAI();
                     GameCanvas.gameAH();
@@ -2665,6 +2682,16 @@ public final class Controller {
 
                             for (int var65 = 0; var65 < var64.length; ++var65) {
                                 var64[var65] = fieldAB.reader().readUTF();
+                            }
+
+                            if (Code.fieldAB instanceof AutoEnterCave) {
+                                String dynamicMenu109 = "";
+                                for (int caveMenuIndex = 0; caveMenuIndex < var64.length; ++caveMenuIndex) {
+                                    dynamicMenu109 += (caveMenuIndex == 0 ? "" : " | ")
+                                            + var64[caveMenuIndex];
+                                }
+                                System.out.println("AUTO NVHN HANG SERVER MENU109["
+                                        + var195.size() + "]: " + dynamicMenu109);
                             }
 
                             var195.addElement(new Command(var64[0], GameCanvas.instance, 88820, var64));

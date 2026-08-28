@@ -1,37 +1,39 @@
 /** Enter the school cave through Kanata, then hand control back to the account runner. */
 public final class AutoEnterCave extends Auto {
     private int targetMap;
-    private int menuOption;
+    private int caveLevel;
     private long lastRequestAt;
     private int requestCount;
     private static final int MAX_REQUEST_COUNT = 3;
+    private static volatile int serverMenuSequence;
+    private static volatile String[] serverMenuEntries;
 
     public final void fieldAD() {
         int level = Char.getMyChar().clevel;
         if (level < 40) {
             this.targetMap = 91;
-            this.menuOption = 1;
+            this.caveLevel = 35;
         } else if (level < 50) {
             this.targetMap = 94;
-            this.menuOption = 2;
+            this.caveLevel = 45;
         } else if (level < 60) {
             this.targetMap = 105;
-            this.menuOption = 3;
+            this.caveLevel = 55;
         } else if (level < 70) {
             this.targetMap = 114;
-            this.menuOption = 4;
+            this.caveLevel = 65;
         } else if (level < 90) {
             this.targetMap = 125;
-            this.menuOption = 5;
+            this.caveLevel = 75;
         } else {
             this.targetMap = 157;
-            this.menuOption = 6;
+            this.caveLevel = 95;
         }
         super.fieldAD();
         this.lastRequestAt = 0L;
         this.requestCount = 0;
         System.out.println("AUTO NVHN HANG: chuẩn bị vào hang qua Kanata, charLv=" + level
-                + " menuOption=" + this.menuOption + " targetMap=" + this.targetMap);
+                + " caveLevel=" + this.caveLevel + " targetMap=" + this.targetMap);
     }
 
     public final void fieldAA() {
@@ -48,8 +50,9 @@ public final class AutoEnterCave extends Auto {
             this.fieldAA(schoolMap, -2, -1, -1);
             return;
         }
-        // Phải mở NPC và menu cha trước khi gửi lựa chọn cấp hang. Router map cũ
-        // chỉ gửi packet cuối nên Kanata hiển thị đúng nhưng không cho vào hang.
+        // Kanata trả menu cha qua command 63. Chọn "Hang động sau trường" sẽ làm
+        // server trả một menu 63 mới gồm "Nhận thưởng sớm" và cấp hang phù hợp.
+        // Phải đồng bộ theo từng response, không chỉ nhìn cờ showMenu phía client.
         long now = System.currentTimeMillis();
         if (now - this.lastRequestAt < 5000L) {
             return;
@@ -63,44 +66,72 @@ public final class AutoEnterCave extends Auto {
             AccountAutoManager.onCaveEntered();
             return;
         }
-        if (this.requestCount == 1) {
-            this.logKanataMenus();
-        }
-        System.out.println("AUTO NVHN HANG: mở Kanata -> Hang động sau trường -> nút cấp hang thứ 2"
-                + " targetMap=" + this.targetMap + " lần=" + this.requestCount);
+        System.out.println("AUTO NVHN HANG: mở Kanata -> Hang động sau trường -> Cấp "
+                + this.caveLevel + " targetMap=" + this.targetMap + " lần=" + this.requestCount);
         GameCanvas.menu.showMenu = false;
+        int menuSequenceBeforeOpen = serverMenuSequence;
         GameScr.fieldAH(0);
-        long menuDeadline = System.currentTimeMillis() + 3000L;
-        while (!GameCanvas.menu.showMenu && System.currentTimeMillis() < menuDeadline) {
-            Auto.fieldAA(100L);
-        }
-        System.out.println("AUTO NVHN HANG: menu Kanata đã mở=" + GameCanvas.menu.showMenu);
-        // Bước 1: chọn "Hang động sau trường" để server dựng menu động gồm
-        // "Nhận thưởng" và đúng một cấp phù hợp với level nhân vật.
-        GameCanvas.menu.showMenu = false;
-        Service.gI().menu((byte) 0, 0, 2, 0);
-        long caveMenuDeadline = System.currentTimeMillis() + 3000L;
-        while (!GameCanvas.menu.showMenu && System.currentTimeMillis() < caveMenuDeadline) {
-            Auto.fieldAA(100L);
-        }
-        System.out.println("AUTO NVHN HANG: menu 2 nút đã mở=" + GameCanvas.menu.showMenu);
-        // Bước 2: menu động là top-level; nút 0 nhận thưởng, nút 1 vào hang.
-        Service.gI().menu((byte) 0, 0, 1, 0);
-    }
-
-    private void logKanataMenus() {
-        Npc npc = GameScr.fieldAI(0);
-        if (npc == null || npc.template == null || npc.template.menu == null) {
-            System.out.println("AUTO NVHN HANG: không đọc được menu template Kanata");
+        if (Char.getMyChar().npcFocus == null
+                || Char.getMyChar().npcFocus.template.npcTemplateId != 0) {
+            System.out.println("AUTO NVHN HANG: chưa focus được NPC Kanata, sẽ thử lại");
             return;
         }
-        for (int i = 0; i < npc.template.menu.length; ++i) {
-            String[] menu = npc.template.menu[i];
-            String text = "";
-            for (int j = 0; menu != null && j < menu.length; ++j) {
-                text += (j == 0 ? "" : " | ") + menu[j];
-            }
-            System.out.println("AUTO NVHN HANG MENU[" + i + "]: " + text);
+        int caveTopMenuIndex = waitForServerMenu(menuSequenceBeforeOpen,
+                "Hang động sau trường", 3000L);
+        if (caveTopMenuIndex < 0) {
+            System.out.println("AUTO NVHN HANG: server chưa trả menu có nút Hang động sau trường");
+            return;
         }
+        // Đợi Controller hoàn tất xử lý menu trước khi gửi lựa chọn tiếp theo.
+        // Gửi ngay trong lúc command 63 còn đang được parse khiến server bỏ packet.
+        Auto.fieldAA(700L);
+
+        GameCanvas.menu.showMenu = false;
+        int menuSequenceBeforeCaveMenu = serverMenuSequence;
+        System.out.println("AUTO NVHN HANG PACKET: mở menu hang npcId=0 menuIndex="
+                + caveTopMenuIndex + " subMenuIndex=0");
+        Service.gI().menu((byte) 0, 0, caveTopMenuIndex, 0);
+
+        String caveButton = "Cấp " + this.caveLevel;
+        int caveButtonIndex = waitForServerMenu(menuSequenceBeforeCaveMenu,
+                caveButton, 3000L);
+        if (caveButtonIndex < 0) {
+            System.out.println("AUTO NVHN HANG: server chưa trả nút " + caveButton
+                    + ", sẽ thử lại");
+            return;
+        }
+        Auto.fieldAA(700L);
+
+        GameCanvas.menu.showMenu = false;
+        System.out.println("AUTO NVHN HANG PACKET: chọn " + caveButton
+                + " npcId=0 menuIndex=" + caveButtonIndex + " subMenuIndex=0");
+        Service.gI().menu((byte) 0, 0, caveButtonIndex, 0);
+    }
+
+    public static void onServerDynamicMenu(MyVector menuItems) {
+        String[] entries = new String[menuItems.size()];
+        for (int index = 0; index < entries.length; ++index) {
+            Command command = (Command) menuItems.elementAt(index);
+            entries[index] = command == null ? "" : command.caption;
+        }
+        serverMenuEntries = entries;
+        ++serverMenuSequence;
+    }
+
+    private static int waitForServerMenu(int previousSequence, String expectedCaption,
+            long timeoutMillis) {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            if (serverMenuSequence > previousSequence) {
+                String[] entries = serverMenuEntries;
+                for (int index = 0; entries != null && index < entries.length; ++index) {
+                    if (expectedCaption.equals(entries[index])) {
+                        return index;
+                    }
+                }
+            }
+            Auto.fieldAA(100L);
+        }
+        return -1;
     }
 }

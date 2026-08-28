@@ -9,6 +9,7 @@ public final class AutoNvhn extends Auto {
    private int lastLuong;
    private boolean waitingForNewTask;
    private long lastReturnTaskLog;
+   private boolean didDailyWorkThisRun;
 
    private static void fieldAM() {
       fieldAV = false;
@@ -59,7 +60,12 @@ public final class AutoNvhn extends Auto {
       this.lastLuong = me.luong;
       this.waitingForNewTask = false;
       this.lastReturnTaskLog = 0L;
+      this.didDailyWorkThisRun = this.fieldAY != null;
       super.fieldAD();
+   }
+
+   public final boolean didDailyWorkThisRun() {
+      return this.didDailyWorkThisRun;
    }
 
    public final void fieldAE() {
@@ -82,6 +88,7 @@ public final class AutoNvhn extends Auto {
                this.fieldAY = Char.fieldAM(0);
                if (this.waitingForNewTask && this.fieldAY != null
                        && this.fieldAY.count < this.fieldAY.maxCount) {
+                  this.didDailyWorkThisRun = true;
                   this.waitingForNewTask = false;
                   if (fieldAX < 20) {
                      ++fieldAX;
@@ -92,6 +99,7 @@ public final class AutoNvhn extends Auto {
             }
 
             if (this.fieldAY.count >= this.fieldAY.maxCount) {
+               this.didDailyWorkThisRun = true;
                if (Char.fieldBF() <= 0) {
                   GameScr.fieldAC("Hành trang đầy");
                   return;
@@ -132,6 +140,7 @@ public final class AutoNvhn extends Auto {
          }
 
          this.fieldAB(this.fieldAY.killId, 1);
+         this.didDailyWorkThisRun = true;
          this.fieldAC(-1);
          if (fieldAV) {
             GameScr.fieldAC("Nhiệm vụ " + fieldAX + "/20: " + this.fieldAY.count + "/" + this.fieldAY.maxCount + " " + Mob.arrMobTemplate[this.fieldAY.killId].name);
