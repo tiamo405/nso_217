@@ -9,7 +9,7 @@ JAVA_BIN=${JAVA_BIN:-java}
 JAVA_XMS=${JAVA_XMS:-8m}
 JAVA_XMX=${JAVA_XMX:-48m}
 JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true"}
-START_DELAY=${START_DELAY:-3}
+START_DELAY=${START_DELAY:-10}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
 
@@ -89,10 +89,17 @@ started=0
 running=0
 failed=0
 completed=0
+paused=0
 
 for worker_dir in "${worker_dirs[@]}"; do
     worker_name=$(basename -- "$worker_dir")
     pid_file="$worker_dir/bot.pid"
+
+    if [[ -f "$worker_dir/.paused" ]]; then
+        echo "$worker_name đang tạm dừng, không khởi động"
+        paused=$((paused + 1))
+        continue
+    fi
     worker_pass=1
 
     if [[ -f "$worker_dir/home/worker.first-pass.done" ]]; then
@@ -128,6 +135,13 @@ for worker_dir in "${worker_dirs[@]}"; do
         command_prefix+=(taskset -c "$WORKER_TASKSET")
     fi
 
+    # Recheck immediately before launch so a web Stop racing this loop wins.
+    if [[ -f "$worker_dir/.paused" ]]; then
+        echo "$worker_name vừa được tạm dừng, không khởi động"
+        paused=$((paused + 1))
+        continue
+    fi
+
     nohup "${command_prefix[@]}" "$JAVA_BIN" \
         "-Xms$JAVA_XMS" \
         "-Xmx$JAVA_XMX" \
@@ -140,6 +154,15 @@ for worker_dir in "${worker_dirs[@]}"; do
 
     pid=$!
     printf '%s\n' "$pid" >"$pid_file"
+
+    # If Stop arrived between the last check and PID creation, terminate the
+    # new process now instead of leaving a paused worker running unmanaged.
+    if [[ -f "$worker_dir/.paused" ]]; then
+        "$SCRIPT_DIR/stop-workers.sh" "$worker_name"
+        paused=$((paused + 1))
+        continue
+    fi
+
     sleep 0.3
 
     if kill -0 "$pid" 2>/dev/null; then
@@ -156,5 +179,5 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 done
 
-echo "Kết quả: mới chạy=$started, đã chạy=$running, hoàn tất=$completed, lỗi=$failed"
+echo "Kết quả: mới chạy=$started, đã chạy=$running, tạm dừng=$paused, hoàn tất=$completed, lỗi=$failed"
 (( failed == 0 ))

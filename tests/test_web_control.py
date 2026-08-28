@@ -74,6 +74,10 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         )
         write_script(scripts / "stop-workers.sh", "exit 0\n")
         write_script(
+            scripts / "start-workers.sh",
+            'number="${3:-${1:-1}}"\nprintf "started worker-%02d\\n" "$number"\n',
+        )
+        write_script(
             scripts / "restart-workers.sh", 'printf "restarted worker-%02d\\n" "$1"\n'
         )
         write_script(
@@ -219,6 +223,26 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         stopped = await manager.stop_supervisor()
         self.assertFalse(stopped["running"])
         self.assertFalse(manager.desired_supervisor())
+
+    async def test_worker_pause_start_and_restart_actions(self) -> None:
+        marker = self.settings.workers_dir / "worker-01" / ".paused"
+        transport = ASGITransport(app=create_app(self.settings))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            stopped = await client.post("/api/workers/worker-01/stop")
+            self.assertEqual(stopped.status_code, 200, stopped.text)
+            self.assertTrue(marker.is_file())
+            self.assertEqual(stat.S_IMODE(marker.stat().st_mode), 0o600)
+
+            started = await client.post("/api/workers/worker-01/start")
+            self.assertEqual(started.status_code, 200, started.text)
+            self.assertFalse(marker.exists())
+            self.assertIn("started worker-01", started.json()["output"])
+
+            marker.touch()
+            restarted = await client.post("/api/workers/worker-01/restart")
+            self.assertEqual(restarted.status_code, 200, restarted.text)
+            self.assertFalse(marker.exists())
+            self.assertIn("restarted worker-01", restarted.json()["output"])
 
     async def test_relative_manual_supervisor_is_recognized(self) -> None:
         relative_script = Path("headless-runtime/scripts/supervise-workers.sh")

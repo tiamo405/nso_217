@@ -278,6 +278,7 @@ while true; do
     # completion is archived atomically so start-workers can launch one audit
     # pass. A worker.done created while this archive exists is the final result.
     for worker_dir in "${worker_dirs[@]}"; do
+        [[ -f "$worker_dir/.paused" ]] && continue
         done_marker="$worker_dir/home/worker.done"
         first_pass_marker="$worker_dir/home/worker.first-pass.done"
         if [[ -f "$done_marker" && ! -f "$first_pass_marker" ]]; then
@@ -290,6 +291,7 @@ while true; do
     "$SCRIPT_DIR/start-workers.sh" "${start_args[@]}" || true
 
     for worker_dir in "${worker_dirs[@]}"; do
+        [[ -f "$worker_dir/.paused" ]] && continue
         [[ -f "$worker_dir/home/worker.done" ]] && continue
         pid_file="$worker_dir/bot.pid"
         [[ -f "$pid_file" ]] || continue

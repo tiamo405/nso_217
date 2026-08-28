@@ -10,6 +10,7 @@ headless-runtime/workers/worker-01/
 ├── home/
 ├── stdout.log
 ├── java-errors.log
+├── .paused        # chỉ có khi tạm dừng riêng worker từ dashboard
 └── bot.pid
 ```
 
@@ -47,7 +48,7 @@ BUILD_HEADLESS=0 headless-runtime/scripts/build-workers.sh 10
 headless-runtime/scripts/start-workers.sh
 ```
 
-Mặc định script start tất cả worker và cách nhau `START_DELAY=3` giây để tránh mở nhiều kết nối cùng lúc.
+Mặc định script start tất cả worker và cách nhau `START_DELAY=10` giây để tránh mở nhiều kết nối cùng lúc. Worker có marker `.paused` sẽ được bỏ qua.
 
 Đổi thời gian chờ giữa mỗi worker:
 
@@ -162,6 +163,11 @@ headless-runtime/scripts/restart-workers.sh 37
 ```
 
 Không truyền số worker thì dừng/restart tất cả. Truyền một hoặc nhiều số thì chỉ tác động các worker đó.
+
+Lưu ý: `stop-workers.sh` chỉ dừng process. Nếu supervisor vẫn chạy, worker sẽ
+được bật lại ở vòng sau. Trên dashboard, dùng nút `Stop` của worker để vừa tạo
+marker `.paused` vừa dừng process; dùng `Start` để bỏ pause và chạy lại.
+Nút `Stop tất cả` trên dashboard dừng cả supervisor và toàn bộ worker.
 
 ## Test 1 account
 

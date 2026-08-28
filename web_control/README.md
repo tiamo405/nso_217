@@ -44,8 +44,14 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 1. Upload `account.csv` có header `username,password`.
 2. Chọn số worker.
 3. Nhấn Build & Run.
-4. Xem status, live log hoặc restart từng worker.
+4. Xem status, live log; Stop, Start hoặc Restart từng worker.
 5. Stop tất cả sẽ dừng supervisor và worker, đồng thời ghi nhớ không tự bật lại sau reboot.
+
+`Stop` tại một worker tạo marker `.paused`, dừng Java và giữ supervisor chạy cho
+các worker còn lại. Supervisor không tự bật lại worker có trạng thái `PAUSED`.
+Nhấn `Start` worker đó để xóa marker và chạy lại; nút `Restart` dùng để khởi
+động lại một worker đang hoạt động. Trạng thái pause được giữ khi restart
+dashboard hoặc VPS; build lại danh sách worker sẽ xóa trạng thái pause cũ.
 
 Dashboard hiển thị thời điểm `stdout.log` cập nhật gần nhất trong bảng worker. Cửa sổ live log cũng thêm thời gian cho từng đợt dữ liệu mới nhận được.
 

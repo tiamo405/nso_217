@@ -21,6 +21,52 @@ def write_script(path: Path, body: str) -> None:
 
 
 class SupervisorWatchdogTest(unittest.TestCase):
+    def test_paused_worker_is_reported_and_not_started(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="nso-paused-worker-") as temporary:
+            headless = Path(temporary) / "headless-runtime"
+            workers = headless / "workers"
+            worker = workers / "worker-01"
+            (headless / "build" / "classes").mkdir(parents=True)
+            (worker / "home").mkdir(parents=True)
+            (worker / ".paused").touch()
+            (worker / "account.csv").write_text(
+                "username,password\nuser,secret\n", encoding="utf-8"
+            )
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HEADLESS_WORKERS_DIR": str(workers),
+                    "HEADLESS_CLASSES_DIR": str(headless / "build" / "classes"),
+                    "JAVA_BIN": "/bin/false",
+                }
+            )
+            start = subprocess.run(
+                [str(REPO_DIR / "headless-runtime/scripts/start-workers.sh"), "--delay", "0"],
+                cwd=REPO_DIR,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertIn("đang tạm dừng", start.stdout)
+            self.assertFalse((worker / "bot.pid").exists())
+
+            status = subprocess.run(
+                [str(REPO_DIR / "headless-runtime/scripts/status-workers.sh"), "--json"],
+                cwd=REPO_DIR,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            payload = json.loads(status.stdout)
+            self.assertEqual(payload["workers"][0]["state"], "PAUSED")
+            self.assertTrue(payload["workers"][0]["paused"])
+            self.assertEqual(payload["totals"]["paused"], 1)
+
     def test_status_json_contains_last_log_time(self) -> None:
         with tempfile.TemporaryDirectory(prefix="nso-status-time-") as temporary:
             workers = Path(temporary) / "workers"

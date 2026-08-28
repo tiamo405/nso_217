@@ -22,6 +22,7 @@ shopt -s nullglob
 worker_dirs=("$WORKERS_DIR"/worker-*)
 running=0
 stopped=0
+paused=0
 
 printf '%-11s %-8s %-8s %-6s %-7s %-7s %-10s %-9s %s\n' WORKER PID STATE PASS CPU RSS_MB ELAPSED ACCOUNTS LAST_AUTO_LOG
 for worker_dir in "${worker_dirs[@]}"; do
@@ -38,7 +39,10 @@ for worker_dir in "${worker_dirs[@]}"; do
         pass='2/2'
     fi
 
-    if [[ -f "$worker_dir/home/worker.done" ]]; then
+    if [[ -f "$worker_dir/.paused" ]]; then
+        state='PAUSED'
+        paused=$((paused + 1))
+    elif [[ -f "$worker_dir/home/worker.done" ]]; then
         state='DONE'
         stopped=$((stopped + 1))
     elif [[ -f "$pid_file" ]]; then
@@ -72,4 +76,4 @@ for worker_dir in "${worker_dirs[@]}"; do
     printf '%-11s %-8s %-8s %-6s %-7s %-7s %-10s %-9s %s\n' "$worker_name" "$pid" "$state" "$pass" "$cpu" "$rss" "$elapsed" "$accounts" "$last_log"
 done
 
-echo "Tổng: running=$running, stopped=$stopped"
+echo "Tổng: running=$running, paused=$paused, stopped=$stopped"

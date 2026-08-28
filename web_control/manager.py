@@ -243,14 +243,56 @@ class HeadlessManager:
             raise ControlError("Không tìm thấy worker")
         return number
 
-    async def restart_worker(self, worker_name: str) -> str:
+    def worker_pause_marker(self, worker_name: str) -> tuple[str, Path]:
         number = self.worker_number(worker_name)
-        code, output = await self._capture(
-            str(self._script("restart-workers.sh")), number, timeout=30
-        )
-        if code != 0:
-            raise ControlError(output.strip() or "Restart worker thất bại")
-        return output.strip()
+        marker = self.settings.workers_dir / f"worker-{int(number):02d}" / ".paused"
+        return number, marker
+
+    async def stop_worker(self, worker_name: str) -> str:
+        async with self.control_lock:
+            number, pause_marker = self.worker_pause_marker(worker_name)
+            pause_marker.touch(mode=0o600, exist_ok=True)
+            os.chmod(pause_marker, 0o600)
+            code, output = await self._capture(
+                str(self._script("stop-workers.sh")), number, timeout=30
+            )
+            if code != 0:
+                raise ControlError(output.strip() or "Dừng worker thất bại")
+            return output.strip()
+
+    async def start_worker(self, worker_name: str) -> str:
+        async with self.control_lock:
+            number, pause_marker = self.worker_pause_marker(worker_name)
+            was_paused = pause_marker.is_file()
+            pause_marker.unlink(missing_ok=True)
+            code, output = await self._capture(
+                str(self._script("start-workers.sh")),
+                "--delay",
+                "0",
+                number,
+                timeout=30,
+            )
+            if code != 0:
+                if was_paused:
+                    pause_marker.touch(mode=0o600, exist_ok=True)
+                    os.chmod(pause_marker, 0o600)
+                raise ControlError(output.strip() or "Khởi động worker thất bại")
+            return output.strip()
+
+    async def restart_worker(self, worker_name: str) -> str:
+        async with self.control_lock:
+            number, pause_marker = self.worker_pause_marker(worker_name)
+            was_paused = pause_marker.is_file()
+            pause_marker.unlink(missing_ok=True)
+            code, output = await self._capture(
+                str(self._script("restart-workers.sh")), number, timeout=30
+            )
+            if code != 0:
+                if was_paused:
+                    pause_marker.touch(mode=0o600, exist_ok=True)
+                    os.chmod(pause_marker, 0o600)
+                raise ControlError(output.strip() or "Restart worker thất bại")
+            return output.strip()
 
     def log_path(self, worker_name: str, kind: str) -> Path:
         number = self.worker_number(worker_name)

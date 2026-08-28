@@ -104,10 +104,13 @@ def log_time(log_file: Path) -> tuple[str | None, int | None]:
 def worker_status(worker_dir: Path) -> dict[str, object]:
     pid_file = worker_dir / "bot.pid"
     pid, pid_state = classify_pid(pid_file, worker_dir)
+    paused = (worker_dir / ".paused").is_file()
     done = (worker_dir / "home" / "worker.done").is_file()
     first_pass_done = (worker_dir / "home" / "worker.first-pass.done").is_file()
 
-    if done:
+    if paused:
+        state = "PAUSED"
+    elif done:
         state = "DONE"
     elif pid_state is not None:
         state = pid_state
@@ -125,6 +128,7 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
         "name": worker_dir.name,
         "pid": pid,
         "state": state,
+        "paused": paused,
         "run_pass": 2 if first_pass_done else 1,
         "run_pass_total": 2,
         "cpu_percent": cpu,
@@ -149,6 +153,7 @@ def main() -> int:
     totals = {
         "running": sum(worker["state"] == "RUNNING" for worker in workers),
         "stopped": sum(worker["state"] in {"STOPPED", "STALE_PID"} for worker in workers),
+        "paused": sum(worker["state"] == "PAUSED" for worker in workers),
         "done": sum(worker["state"] == "DONE" for worker in workers),
         "error": sum(worker["state"] == "ERROR" for worker in workers),
         "total": len(workers),

@@ -90,12 +90,18 @@ function renderWorkers(workers) {
     row.append(logCell(worker));
     const actions = document.createElement("td");
     const group = document.createElement("div"); group.className = "action-group";
-    for (const [label, action] of [["Restart", "restart"], ["Log", "stdout"], ["Errors", "error"]]) {
+    const workerActions = [];
+    if (worker.state === "PAUSED") workerActions.push(["Start", "start"]);
+    else if (worker.state !== "DONE") workerActions.push(["Stop", "stop"], ["Restart", "restart"]);
+    workerActions.push(["Log", "stdout"], ["Errors", "error"]);
+    for (const [label, action] of workerActions) {
       const button = document.createElement("button");
-      button.className = label === "Restart" ? "secondary" : "ghost";
+      button.className = action === "stop" ? "danger" : action === "start" ? "primary" : action === "restart" ? "secondary" : "ghost";
       button.textContent = label;
-      if (action === "restart") button.disabled = buildActive;
-      button.addEventListener("click", () => action === "restart" ? restartWorker(worker.name, button) : openLog(worker.name, action));
+      if (["start", "stop", "restart"].includes(action)) button.disabled = buildActive;
+      button.addEventListener("click", () => ["start", "stop", "restart"].includes(action)
+        ? workerAction(worker.name, action, button)
+        : openLog(worker.name, action));
       group.append(button);
     }
     actions.append(group); row.append(actions); body.append(row);
@@ -113,6 +119,7 @@ async function refreshStatus() {
       : `Đang dừng${supervisor.stale_pid ? " · có PID cũ" : ""} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`;
     $("#running-count").textContent = data.totals.running;
     $("#stopped-count").textContent = data.totals.stopped;
+    $("#paused-count").textContent = data.totals.paused ?? 0;
     $("#done-count").textContent = data.totals.done;
     $("#account-count").textContent = data.account.count;
     const active = $("#active-job");
@@ -142,11 +149,12 @@ async function supervisorAction(action, button) {
   finally { button.disabled = false; }
 }
 
-async function restartWorker(name, button) {
+async function workerAction(name, action, button) {
   button.disabled = true;
   try {
-    await api(`/api/workers/${encodeURIComponent(name)}/restart`, { method: "POST" });
-    notify(`Đã restart ${name}`); await refreshStatus();
+    await api(`/api/workers/${encodeURIComponent(name)}/${action}`, { method: "POST" });
+    const labels = { start: "Đã chạy", stop: "Đã tạm dừng", restart: "Đã restart" };
+    notify(`${labels[action]} ${name}`); await refreshStatus();
   } catch (error) { notify(error.message, true); }
   finally { button.disabled = false; }
 }

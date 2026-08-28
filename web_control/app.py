@@ -86,6 +86,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_idle()
         return {"output": await manager.restart_worker(worker_name)}
 
+    @app.post("/api/workers/{worker_name}/stop")
+    async def stop_worker(worker_name: str) -> dict[str, str]:
+        require_idle()
+        return {"output": await manager.stop_worker(worker_name)}
+
+    @app.post("/api/workers/{worker_name}/start")
+    async def start_worker(worker_name: str) -> dict[str, str]:
+        require_idle()
+        return {"output": await manager.start_worker(worker_name)}
+
     @app.get("/api/workers/{worker_name}/logs")
     async def worker_logs(
         worker_name: str,

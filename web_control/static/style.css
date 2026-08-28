@@ -35,7 +35,7 @@ input[type="number"], input[type="file"] { width: 100%; background: #0b111b; col
 .top-actions { flex-wrap: wrap; justify-content: flex-end; }
 .notice { border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; background: var(--accent-dark); border: 1px solid #28634f; }
 .notice.error-notice { background: #34171d; border-color: #6b2a35; color: #ffb4bb; }
-.summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 12px; }
+.summary-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 12px; }
 .summary-card, .panel { background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line); border-radius: 14px; }
 .summary-card { padding: 16px; }
 .summary-card span { display: block; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
@@ -59,6 +59,7 @@ td.log-cell { max-width: 420px; color: #b9c7d8; word-break: break-word; }
 .state-running { background: #133a30; color: #6ee7b7; }
 .state-done { background: #152f4c; color: #8ec5ff; }
 .state-stopped, .state-stale_pid { background: #3a311b; color: var(--warning); }
+.state-paused { background: #322447; color: #d6b4ff; }
 .state-error { background: #421d25; color: #ff9ba5; }
 .action-group { display: flex; gap: 5px; white-space: nowrap; }
 .action-group button { padding: .4rem .55rem; font-size: .72rem; }
