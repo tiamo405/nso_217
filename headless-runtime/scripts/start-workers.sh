@@ -93,6 +93,11 @@ completed=0
 for worker_dir in "${worker_dirs[@]}"; do
     worker_name=$(basename -- "$worker_dir")
     pid_file="$worker_dir/bot.pid"
+    worker_pass=1
+
+    if [[ -f "$worker_dir/home/worker.first-pass.done" ]]; then
+        worker_pass=2
+    fi
 
     if [[ -f "$worker_dir/home/worker.done" ]]; then
         echo "$worker_name đã hoàn tất toàn bộ account, không khởi động lại"
@@ -111,8 +116,8 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 
     mkdir -p "$worker_dir/home"
-    printf '\n===== START %s =====\n' "$(date '+%F %T')" >>"$worker_dir/stdout.log"
-    printf '\n===== START %s =====\n' "$(date '+%F %T')" >>"$worker_dir/java-errors.log"
+    printf '\n===== START %s PASS %s/2 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/stdout.log"
+    printf '\n===== START %s PASS %s/2 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/java-errors.log"
 
     read -r -a java_opts_array <<< "$JAVA_OPTS"
     command_prefix=()

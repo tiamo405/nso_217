@@ -72,7 +72,7 @@ function renderWorkers(workers) {
   if (!workers.length) {
     const row = document.createElement("tr");
     const empty = cell("Chưa có worker. Upload account rồi build.", "empty");
-    empty.colSpan = 9;
+    empty.colSpan = 10;
     row.append(empty);
     body.append(row);
     return;
@@ -81,6 +81,7 @@ function renderWorkers(workers) {
     const row = document.createElement("tr");
     row.append(cell(worker.name));
     const state = document.createElement("td"); state.append(stateBadge(worker.state)); row.append(state);
+    row.append(cell(`${worker.run_pass || 1}/${worker.run_pass_total || 2}`));
     row.append(cell(worker.pid));
     row.append(cell(worker.cpu_percent == null ? "—" : `${worker.cpu_percent}%`));
     row.append(cell(worker.rss_mb == null ? "—" : `${worker.rss_mb} MB`));

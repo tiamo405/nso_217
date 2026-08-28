@@ -23,7 +23,7 @@ worker_dirs=("$WORKERS_DIR"/worker-*)
 running=0
 stopped=0
 
-printf '%-11s %-8s %-8s %-7s %-7s %-10s %-9s %s\n' WORKER PID STATE CPU RSS_MB ELAPSED ACCOUNTS LAST_AUTO_LOG
+printf '%-11s %-8s %-8s %-6s %-7s %-7s %-10s %-9s %s\n' WORKER PID STATE PASS CPU RSS_MB ELAPSED ACCOUNTS LAST_AUTO_LOG
 for worker_dir in "${worker_dirs[@]}"; do
     worker_name=$(basename -- "$worker_dir")
     pid_file="$worker_dir/bot.pid"
@@ -32,6 +32,11 @@ for worker_dir in "${worker_dirs[@]}"; do
     cpu='-'
     rss='-'
     elapsed='-'
+    pass='1/2'
+
+    if [[ -f "$worker_dir/home/worker.first-pass.done" ]]; then
+        pass='2/2'
+    fi
 
     if [[ -f "$worker_dir/home/worker.done" ]]; then
         state='DONE'
@@ -64,7 +69,7 @@ for worker_dir in "${worker_dirs[@]}"; do
         [[ -n "$last_log" ]] || last_log='-'
     fi
 
-    printf '%-11s %-8s %-8s %-7s %-7s %-10s %-9s %s\n' "$worker_name" "$pid" "$state" "$cpu" "$rss" "$elapsed" "$accounts" "$last_log"
+    printf '%-11s %-8s %-8s %-6s %-7s %-7s %-10s %-9s %s\n' "$worker_name" "$pid" "$state" "$pass" "$cpu" "$rss" "$elapsed" "$accounts" "$last_log"
 done
 
 echo "Tổng: running=$running, stopped=$stopped"

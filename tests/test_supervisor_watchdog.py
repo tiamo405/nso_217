@@ -31,6 +31,7 @@ class SupervisorWatchdogTest(unittest.TestCase):
             )
             log_file = worker / "stdout.log"
             log_file.write_text("AUTO NVHN STATUS: timestamp-test\n", encoding="utf-8")
+            (worker / "home" / "worker.first-pass.done").touch()
             modified_at = time.time() - 12
             os.utime(log_file, (modified_at, modified_at))
 
@@ -50,6 +51,69 @@ class SupervisorWatchdogTest(unittest.TestCase):
             self.assertIsNotNone(status["last_log_at"])
             self.assertGreaterEqual(status["last_log_age_seconds"], 10)
             self.assertIn("timestamp-test", status["last_auto_log"])
+            self.assertEqual(status["run_pass"], 2)
+            self.assertEqual(status["run_pass_total"], 2)
+
+    def test_first_done_marker_is_promoted_to_second_pass_once(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="nso-second-pass-") as temporary:
+            headless = Path(temporary) / "headless-runtime"
+            scripts = headless / "scripts"
+            workers = headless / "workers"
+            worker = workers / "worker-01"
+            scripts.mkdir(parents=True)
+            (worker / "home").mkdir(parents=True)
+            (worker / "home" / "worker.done").touch()
+
+            shutil.copy2(
+                REPO_DIR / "headless-runtime/scripts/supervise-workers.sh",
+                scripts / "supervise-workers.sh",
+            )
+            write_script(scripts / "start-workers.sh", "exit 0\n")
+            write_script(scripts / "stop-workers.sh", "exit 0\n")
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "HEADLESS_WORKERS_DIR": str(workers),
+                    "CHECK_INTERVAL": "1",
+                    "START_DELAY": "0",
+                    "STALE_LOG_SECONDS": "0",
+                }
+            )
+            supervisor = subprocess.Popen(
+                [str(scripts / "supervise-workers.sh")],
+                cwd=Path(temporary),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output = ""
+            try:
+                first_pass = worker / "home" / "worker.first-pass.done"
+                deadline = time.time() + 4
+                while time.time() < deadline and not first_pass.is_file():
+                    time.sleep(0.05)
+                self.assertTrue(first_pass.is_file())
+                self.assertFalse((worker / "home" / "worker.done").exists())
+
+                # Simulate Java completing pass 2. Supervisor must retain this
+                # final marker instead of scheduling a third pass.
+                (worker / "home" / "worker.done").touch()
+                time.sleep(1.2)
+                self.assertTrue(first_pass.is_file())
+                self.assertTrue((worker / "home" / "worker.done").is_file())
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.terminate()
+                try:
+                    output, _ = supervisor.communicate(timeout=4)
+                except subprocess.TimeoutExpired:
+                    supervisor.kill()
+                    output, _ = supervisor.communicate(timeout=2)
+
+            self.assertIn("đã xong lượt 1/2", output)
 
     def test_stale_stdout_restarts_running_worker(self) -> None:
         with tempfile.TemporaryDirectory(prefix="nso-stale-watchdog-") as temporary:

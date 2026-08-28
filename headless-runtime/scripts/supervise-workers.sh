@@ -149,7 +149,7 @@ find_repeated_status() {
             repeated = 0
             next
         }
-        index($0, "AUTO NVHN PREP: đang tới Okaza để mua thức ăn và lật hình") > 0 {
+        index($0, "AUTO NVHN PREP: đang tới Okaza") > 0 {
             prep = substr($0, index($0, "AUTO NVHN PREP:"))
             key = "prep " prep
             if (key == last_key) {
@@ -260,8 +260,6 @@ else
 fi
 
 while true; do
-    "$SCRIPT_DIR/start-workers.sh" "${start_args[@]}" || true
-
     shopt -s nullglob
     worker_dirs=()
     if (( ${#worker_args[@]} == 0 )); then
@@ -276,7 +274,23 @@ while true; do
         done
     fi
 
+    # Java creates worker.done after it has processed every account. The first
+    # completion is archived atomically so start-workers can launch one audit
+    # pass. A worker.done created while this archive exists is the final result.
     for worker_dir in "${worker_dirs[@]}"; do
+        done_marker="$worker_dir/home/worker.done"
+        first_pass_marker="$worker_dir/home/worker.first-pass.done"
+        if [[ -f "$done_marker" && ! -f "$first_pass_marker" ]]; then
+            mv -- "$done_marker" "$first_pass_marker"
+            worker_name=$(basename -- "$worker_dir")
+            echo "[$(date '+%F %T')] $worker_name đã xong lượt 1/2; chuẩn bị chạy kiểm tra lượt 2/2."
+        fi
+    done
+
+    "$SCRIPT_DIR/start-workers.sh" "${start_args[@]}" || true
+
+    for worker_dir in "${worker_dirs[@]}"; do
+        [[ -f "$worker_dir/home/worker.done" ]] && continue
         pid_file="$worker_dir/bot.pid"
         [[ -f "$pid_file" ]] || continue
         pid=$(<"$pid_file")

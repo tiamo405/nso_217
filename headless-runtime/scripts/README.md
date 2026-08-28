@@ -97,6 +97,14 @@ Chạy supervisor để worker nào thoát thì tự bật lại:
 headless-runtime/scripts/supervise-workers.sh
 ```
 
+Mỗi worker được supervisor chạy đủ 2 lượt. Khi lượt đầu hoàn tất, marker
+`home/worker.done` được đổi thành `home/worker.first-pass.done` và worker tự
+chạy lượt kiểm tra thứ hai. Chỉ `home/worker.done` được tạo ở lượt thứ hai mới
+là trạng thái `DONE` cuối cùng. Trong lượt kiểm tra thứ hai, nhân vật được NPC
+báo đã hết NVHN ngay sẽ bỏ qua lật thẻ để không mua/lật trùng. Tài khoản từng
+lỗi ở lượt một nhưng sang lượt hai vẫn còn và làm được NVHN thì vẫn lật thẻ sau
+khi hoàn thành.
+
 Đổi thời gian kiểm tra và thời gian chờ giữa mỗi lần start worker:
 
 ```bash

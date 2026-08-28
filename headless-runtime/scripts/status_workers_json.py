@@ -105,6 +105,7 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
     pid_file = worker_dir / "bot.pid"
     pid, pid_state = classify_pid(pid_file, worker_dir)
     done = (worker_dir / "home" / "worker.done").is_file()
+    first_pass_done = (worker_dir / "home" / "worker.first-pass.done").is_file()
 
     if done:
         state = "DONE"
@@ -124,6 +125,8 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
         "name": worker_dir.name,
         "pid": pid,
         "state": state,
+        "run_pass": 2 if first_pass_done else 1,
+        "run_pass_total": 2,
         "cpu_percent": cpu,
         "rss_mb": rss_mb,
         "elapsed": elapsed,

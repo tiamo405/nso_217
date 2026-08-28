@@ -23,7 +23,7 @@ Auth key chỉ tồn tại trong environment của lần chạy, không được
 Sau khi Tailscale đã kết nối:
 
 ```bash
-sudo tailscale serve --bg http://127.0.0.1:8080
+sudo tailscale serve --bg http://127.0.0.1:8189
 tailscale serve status
 ```
 
