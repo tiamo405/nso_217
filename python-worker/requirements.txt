@@ -1,3 +1,0 @@
-# NSO Python Worker uses only Python 3 standard libraries.
-# No external package installations are required!
-
