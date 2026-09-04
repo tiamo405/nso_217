@@ -1,0 +1,14 @@
+--- a/src/Controller.java
++++ b/src/Controller.java
+@@ -3966,6 +3966,11 @@
+     }
+
+     private void gameAG(Message var1) {
++        // FIX: Kiểm tra null buffer trước khi xử lý
++        if (var1 == null || var1.reader() == null) {
++            System.out.println("WARN: gameAG nhận message null hoặc reader null, bỏ qua");
++            return;
++        }
+         try {
+             byte var42 = var1.reader().readByte();
+             boolean var2 = false;

@@ -1,0 +1,7 @@
+/build/
+/run/
+/workers/
+/.workers-build.*/
+/.workers-old.*/
+__pycache__/
+*.pyc
