@@ -1,0 +1,27 @@
+--- a/Controller.java
++++ b/Controller.java
+@@ -827,6 +827,7 @@
+                         }
+ 
+                         var9.charFocus = var9.attChars[0];
++                        TaThu.recordPlayerAttack(var9, var9.attChars);
+                     }
+                     break;
+                 case 5:
+@@ -1945,6 +1946,7 @@
+                         }
+ 
+                         var9.charFocus = var9.attChars[0];
++                        TaThu.recordPlayerAttack(var9, var9.attChars);
+                     }
+                     break;
+                 case 62:
+@@ -1968,7 +1970,7 @@
+                             GameScr.gameAA("-" + var186, var9.cx, var9.cy - var9.ch, 0, -2, 0);
+                         }
+                         if (Char.getMyChar().cHP < Char.getMyChar().cMaxHP / 2) {
+-                            System.out.println("Bi PK: " + var186);
++                            System.out.println("Nhan sat thuong: " + var186);
+                             break;
+                         }
+                     } else {

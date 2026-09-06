@@ -352,6 +352,10 @@ public abstract class Auto {
                 }
             }
 
+            if (this.fieldAC == var7 && TileMap.zoneID != var7) {
+                var7 = (var7 + 1) % var2.zones.length;
+            }
+
             Service.gI().requestChangeZone(var7, var4);
             this.fieldAC = var7;
             TileMap.fieldAF();
@@ -983,9 +987,17 @@ public abstract class Auto {
                             return;
                         }
 
-                        if ((var18.template.type == 1 || var18.template.type == 3) && (Res.abs(var3.cx - var6.xFirst) > var18.dx + 30 || Res.abs(var3.cy - var6.yFirst) > var18.dy + 30)) {
-                            var3.mobFocus = null;
-                            return;
+                        if (var18.template.type == 1 || var18.template.type == 3) {
+                            int targetX = (var6.levelBoss == 3 || this instanceof TaThu) ? var6.x : var6.xFirst;
+                            int targetY = (var6.levelBoss == 3 || this instanceof TaThu) ? var6.y : var6.yFirst;
+                            if (Res.abs(var3.cx - targetX) > var18.dx + 30 || Res.abs(var3.cy - targetY) > var18.dy + 30) {
+                                if (var6.levelBoss == 3 || this instanceof TaThu) {
+                                    Char.fieldAC(var6.x, var6.y);
+                                } else {
+                                    var3.mobFocus = null;
+                                }
+                                return;
+                            }
                         }
 
                         var21 = var18.dx;

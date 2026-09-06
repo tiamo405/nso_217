@@ -1,0 +1,38 @@
+--- a/Controller.java
++++ b/Controller.java
+@@ -3529,11 +3529,10 @@
+                         var1.reader().reset();
+                         byte[] var59 = new byte[var1.reader().available()];
+                         var1.reader().readFully(var59);
+-                        if (Char.getMyChar().gameBA()) {
+-                            RMS.gameAA("skill", var59);
+-                        } else {
+-                            RMS.gameAA("skillnhanban", var59);
+-                        }
++                        // Packet skill có thể đến trước khi isHuman được đồng bộ.
++                        // Lưu cả hai khóa để lần chọn nhân vật không đọc phải null.
++                        RMS.gameAA("skill", var59);
++                        RMS.gameAA("skillnhanban", var59);
+ 
+                         byte[] var61 = new byte[]{GameScr.vcSkill};
+                         RMS.gameAA("skillVersion", var61);
+@@ -4206,11 +4206,16 @@
+ 
+                     Char.getMyChar().statusMe = 4;
+                     GameScr.isViewClanInvite = RMS.gameAC(Char.getMyChar().cName + "vci") >= 1;
+-                    if (Char.getMyChar().gameBA()) {
+-                        gameAB(new DataInputStream(new ByteArrayInputStream(RMS.gameAA("skill"))));
+-                    } else {
+-                        gameAB(new DataInputStream(new ByteArrayInputStream(RMS.gameAA("skillnhanban"))));
++                    String skillRmsKey = Char.getMyChar().gameBA() ? "skill" : "skillnhanban";
++                    byte[] skillRmsData = RMS.gameAA(skillRmsKey);
++                    if (skillRmsData != null && skillRmsData.length > 0) {
++                        gameAB(new DataInputStream(new ByteArrayInputStream(skillRmsData)));
++                    } else {
++                        System.out.println("AUTO TA THU WARN: thiếu RMS " + skillRmsKey
++                                + ", yêu cầu tải lại skill thay vì parse buffer null");
++                        GameScr.vcSkill = -1;
++                        Service.gI().updateSkill();
+                     }
+ 
+                     Service.gI().loadRMS("KSkill");

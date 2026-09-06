@@ -50,9 +50,10 @@ if [[ -d "$RUNTIME_DIR/patches" ]]; then
     for patch in "$RUNTIME_DIR/patches"/*.patch; do
         if [[ -f "$patch" ]]; then
             echo "Applying patch: $(basename "$patch")"
-            patch -d "$WORK_SRC_DIR" -p1 < "$patch" || {
-                echo "Warning: patch $(basename "$patch") failed, continuing..." >&2
-            }
+            if ! patch --batch --forward -d "$WORK_SRC_DIR" -p1 < "$patch"; then
+                echo "Build lỗi: không áp dụng được patch $(basename "$patch")" >&2
+                exit 1
+            fi
         fi
     done
 fi

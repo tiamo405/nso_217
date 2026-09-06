@@ -214,20 +214,16 @@ public final class TaThuAccountManager implements Runnable {
             resumePostProcessing(savedState);
             return;
         }
-        if (!savedState.finished && savedState.mapId >= 0 && savedState.zoneId >= 0 && savedState.killId >= 0) {
-            System.out.println("AUTO TA THU: có nhiệm vụ dở, bỏ qua chuẩn bị và quay lại map="
-                    + savedState.mapId + " zone=" + savedState.zoneId + " killId=" + savedState.killId);
-            TaThuCombatSetup.configureForResume();
-            AutoTaThuDaily daily = new AutoTaThuDaily();
-            daily.fieldAD();
-            Code.fieldAA((Auto) daily);
-            return;
-        }
         if (isObserveStage() || isShopStage()) {
             AutoTaThuOrders observer = new AutoTaThuOrders(isObserveStage());
             observer.fieldAD();
             Code.fieldAA((Auto) observer);
             return;
+        }
+        if (!savedState.finished && savedState.mapId >= 0 && savedState.zoneId >= 0 && savedState.killId >= 0) {
+            System.out.println("AUTO TA THU: có nhiệm vụ dở map="
+                    + savedState.mapId + " zone=" + savedState.zoneId + " killId=" + savedState.killId
+                    + "; vẫn chạy chuẩn bị trước khi quay lại đánh");
         }
         AutoPrepareNvhn prepare = new AutoPrepareNvhn();
         prepare.fieldAD();
@@ -236,6 +232,17 @@ public final class TaThuAccountManager implements Runnable {
 
     public static synchronized void onPreparationFinished() {
         if (!enabled || switching) {
+            return;
+        }
+        TaskOrder task = Char.fieldAM(1);
+        TaThuDailyState state = TaThuDailyState.loadCurrent();
+        if (task != null || state.mapId >= 0 && state.zoneId >= 0 && state.killId >= 0) {
+            System.out.println("AUTO TA THU: chuẩn bị xong; tiếp tục nhiệm vụ dở"
+                    + (task == null ? " theo state đã lưu" : " TaskOrder map=" + task.mapId
+                    + " killId=" + task.killId + " count=" + task.count + "/" + task.maxCount));
+            AutoTaThuDaily daily = new AutoTaThuDaily();
+            daily.fieldAD();
+            Code.fieldAA((Auto) daily);
             return;
         }
         AutoTaThuOrders orders = new AutoTaThuOrders(false);

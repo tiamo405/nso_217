@@ -16,6 +16,10 @@ Tà Thú vào bản copy rồi compile cùng compatibility layer J2ME của
 6. Lấy lệnh có sẵn trong rương; chỉ mua phần thiếu; dùng tối đa hai lệnh/ngày.
 7. Nhận, đánh và trả nhiệm vụ tại NPC 25 cho tới khi server hết lượt hoặc đủ
    bốn nhiệm vụ.
+   Nếu hiệu ứng thức ăn hết và trong túi không còn đúng loại thức ăn đã cấu
+   hình, runtime tạm giữ khóa nhiệm vụ, về Okaza mua/dùng hai phần rồi quay lại
+   đúng `mapId + zoneId + killId`; khi tìm mục tiêu chỉ nhận boss
+   `levelBoss=3`.
 8. Lật hình bằng Phiếu may mắn và đi hang động.
 9. Chuyển nhân vật, sau đó chuyển tài khoản.
 

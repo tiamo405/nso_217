@@ -488,6 +488,20 @@ public final class AutoPrepareNvhn extends Auto {
         return free;
     }
 
+    /** Frees one bag slot for the Ta Thu emergency food-supply flow. */
+    public static boolean ensureEmergencyBagSlot() {
+        AutoPrepareNvhn helper = new AutoPrepareNvhn();
+        if (helper.countFreeBagSlots() > 0) {
+            return true;
+        }
+        Vector deleteIds = helper.loadDeleteIds();
+        if (deleteIds.size() == 0) {
+            return false;
+        }
+        helper.deleteConfiguredBagItems(deleteIds);
+        return helper.countFreeBagSlots() > 0;
+    }
+
     private Vector loadDeleteIds() {
         Vector ids = new Vector();
         InputStream input = null;

@@ -38,7 +38,10 @@ public final class TaThuCombatSetup {
             Service.gI().selectSkill(selected.template.id);
             System.out.println("AUTO TA THU RESUME SETUP: " + label
                     + " skillId=" + selected.template.id + " point=" + selected.point
-                    + " cooldown=" + selected.coolDown + " foodLevel=" + foodLevel);
+                    + " type=" + selected.template.type + " cooldown=" + selected.coolDown
+                    + " range=" + selected.dx + "x" + selected.dy
+                    + " maxFight=" + selected.maxFight + " mana=" + selected.manaUse
+                    + " foodLevel=" + foodLevel);
         } else {
             System.out.println("AUTO TA THU RESUME SETUP: không tìm thấy skill đã học; foodLevel="
                     + foodLevel);

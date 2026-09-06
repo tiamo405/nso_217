@@ -82,6 +82,10 @@ public final class Code implements Runnable {
     private static final Random fieldCT = new Random();
     private static long fieldCU = 0L;
 
+    public static boolean isHeadless() {
+        return "NSOHeadless".equals(System.getProperty("microedition.platform"));
+    }
+
     private static void fieldAR() {
         fieldAA = new Code();
         fieldCA = false;
@@ -106,7 +110,7 @@ public final class Code implements Runnable {
         fieldAU = new MyVector();
         fieldAV = false;
         fieldAX = new int[0];
-        speedGame = 30;
+        speedGame = isHeadless() ? 50 : 30;
         fieldCM = 0L;
         fieldCN = new MyVector();
         fieldCO = new MyVector();

@@ -146,6 +146,37 @@ public abstract class Auto {
     protected final void fieldAG() {
         switch (this.fieldBC) {
             case 60:
+            {
+                try {
+                    Char me = Char.getMyChar();
+                    int attackerId = this.fieldBE.readInt();
+                    int skillTemplateId = this.fieldBE.readUnsignedByte();
+                    int firstTargetMobId = -1;
+                    boolean missionTargetIncluded = false;
+                    while (this.fieldBE.available() > 0) {
+                        int targetMobId = this.fieldBE.readUnsignedByte();
+                        if (firstTargetMobId < 0) {
+                            firstTargetMobId = targetMobId;
+                        }
+                        if (Code.fieldAB instanceof TaThu
+                                && ((TaThu)Code.fieldAB).isMissionTargetMobId(targetMobId)) {
+                            missionTargetIncluded = true;
+                        }
+                    }
+                    if (me != null && me.charID == attackerId) {
+                        if (Code.fieldAB instanceof TaThu) {
+                            ((TaThu)Code.fieldAB).onServerMobAttackAck(
+                                    skillTemplateId, firstTargetMobId, missionTargetIncluded);
+                        }
+                        if (me.myskill != null && me.cMP > me.myskill.manaUse) {
+                            me.cMP -= me.myskill.manaUse;
+                        }
+                    }
+                } catch (IOException ex) {
+                    ex.printStackTrace();
+                }
+                break;
+            }
             case 61: {
                 try {
                     if (Char.getMyChar().myskill != null && Char.getMyChar().charID == this.fieldBE.readInt() && Char.getMyChar().cMP > Char.getMyChar().myskill.manaUse) {
@@ -155,6 +186,7 @@ public abstract class Auto {
                 } catch (IOException ex) {
                     ex.printStackTrace();
                 }
+                break;
             }
             default:
         }
@@ -408,8 +440,9 @@ public abstract class Auto {
 
     protected final void fieldAC(Mob var1) {
         if (var1 != null) {
-            int var2 = var1.xFirst;
-            int var3 = var1.yFirst;
+            // FIX: Boss Tà Thú (levelBoss=3) di chuyển — dùng x/y thực tế thay vì xFirst/yFirst
+            int var2 = (var1.levelBoss == 3 || this instanceof TaThu) ? var1.x : var1.xFirst;
+            int var3 = (var1.levelBoss == 3 || this instanceof TaThu) ? var1.y : var1.yFirst;
             Char var4 = Char.getMyChar();
             if (TileMap.mapID == 35) {
                 if (var1.xFirst == 1428 && var1.yFirst == 528) {
@@ -595,15 +628,38 @@ public abstract class Auto {
 
         int var7 = -1;
 
+        // Nếu TaThu đang lock boss level 3, chỉ chọn mob khớp với target đó
+        boolean lockingTaThuBoss = (TaThu.targetTaThuTemplateId >= 0 && TaThu.targetTaThuLevelBoss == 3);
+
+        // Debug: log khi được gọi
+        if (lockingTaThuBoss) {
+            System.out.println("AUTO TA THU FILTER: fieldAA called, targetTemplateId=" + TaThu.targetTaThuTemplateId
+                + " targetLevelBoss=" + TaThu.targetTaThuLevelBoss);
+        }
+
         for (int var8 = 0; var8 < GameScr.vMob.size(); ++var8) {
             Mob var9 = (Mob) GameScr.vMob.elementAt(var8);
             int var10 = Math.abs(var0 - var9.x);
             int var11 = Math.abs(var1 - var9.y);
             var10 = var10 > var11 ? var10 : var11;
+
+            // Skip mob nếu đang lock Tà Thú boss mà mob này không phải target đúng
+            if (lockingTaThuBoss && (var9.templateId != TaThu.targetTaThuTemplateId || var9.levelBoss != TaThu.targetTaThuLevelBoss)) {
+                if (var9.templateId == TaThu.targetTaThuTemplateId) {
+                    System.out.println("AUTO TA THU FILTER: skip mob templateId=" + var9.templateId
+                        + " levelBoss=" + var9.levelBoss + " (cần levelBoss=" + TaThu.targetTaThuLevelBoss + ")");
+                }
+                continue;
+            }
+
             if (var4 <= var9.x && var9.x <= var5 && var6 <= var9.y && var9.y <= var12 && var9.status != 0 && var9.status != 1 && (var7 == -1 || var10 < var7)) {
                 var2 = var9;
                 var7 = var10;
             }
+        }
+
+        if (lockingTaThuBoss) {
+            System.out.println("AUTO TA THU FILTER: return mob=" + (var2 == null ? "null" : "templateId=" + var2.templateId + " levelBoss=" + var2.levelBoss));
         }
 
         return var2;
@@ -821,8 +877,25 @@ public abstract class Auto {
                 var6 = null;
             }
 
-            if (var6 == null || var6.status == 0 || !fieldAA(var6, var1) || !fieldAC(var6.levelBoss, var2) || System.currentTimeMillis() - this.fieldAR > 5000L) {
+            // Khi đang lock boss Tà Thú: kiểm tra xem mobFocus hiện tại có
+            // phải đúng boss (levelBoss=3, templateId khớp) không. Nếu đúng,
+            // KHÔNG refresh qua selector chung dù đã quá 5s — tránh selector
+            // chọn quái thường cùng templateId (levelBoss=0).
+            boolean taThuBossLocked = this instanceof TaThu
+                    && ((TaThu)this).isMissionZoneLocked()
+                    && var6 != null && var6.hp > 0
+                    && var6.status != 0 && var6.status != 1
+                    && TaThu.targetTaThuTemplateId >= 0
+                    && var6.templateId == TaThu.targetTaThuTemplateId
+                    && var6.levelBoss == TaThu.targetTaThuLevelBoss;
+            if (!taThuBossLocked && (var6 == null || var6.status == 0 || !fieldAA(var6, var1) || !fieldAC(var6.levelBoss, var2) || System.currentTimeMillis() - this.fieldAR > 5000L)) {
                 var6 = this.fieldAA(var3, var1, var2, var4, var5);
+                // fieldAA(...) chỉ trả target qua biến cục bộ. Với Tà Thú phải
+                // đồng bộ lại mobFocus, nếu không packet/logic khác có thể để
+                // mobFocus trỏ vào quái thường cùng templateId.
+                if (this instanceof TaThu && ((TaThu)this).isMissionZoneLocked() && var6 != null) {
+                    var3.mobFocus = var6;
+                }
             }
 
             if (var6 == null && var16 && this.fieldAV > 0 && this.fieldAW > 0) {
@@ -984,9 +1057,36 @@ public abstract class Auto {
                             return;
                         }
 
-                        if ((var18.template.type == 1 || var18.template.type == 3) && (Res.abs(var3.cx - var6.xFirst) > var18.dx + 30 || Res.abs(var3.cy - var6.yFirst) > var18.dy + 30)) {
+                        // Khi đang lock boss Tà Thú (levelBoss=3), KHÔNG được đánh
+                        // quái thường cùng templateId (levelBoss=0) dù nó trong tầm.
+                        if (this instanceof TaThu && ((TaThu)this).isMissionZoneLocked()
+                                && TaThu.targetTaThuTemplateId >= 0
+                                && var6.templateId == TaThu.targetTaThuTemplateId
+                                && var6.levelBoss != TaThu.targetTaThuLevelBoss) {
                             var3.mobFocus = null;
                             return;
+                        }
+
+                        // FIX: Boss Tà Thú (levelBoss=3) di chuyển — dùng x/y thực tế
+                        int targetX = (var6.levelBoss == 3 || this instanceof TaThu) ? var6.x : var6.xFirst;
+                        int targetY = (var6.levelBoss == 3 || this instanceof TaThu) ? var6.y : var6.yFirst;
+                        // Khi đang lock boss Tà Thú: bỏ qua range check phía client
+                        // (boss di chuyển nhanh → client thường tính ngoài tầm sai).
+                        // Gửi attack ngay và để server validate range — server-side
+                        // tolerance thường rộng hơn và boss di chuyển ở phía server
+                        // có thể đã vào tầm rồi. Di chuyển song song để giảm lag.
+                        boolean taThuBossChase = this instanceof TaThu
+                                && ((TaThu)this).isMissionZoneLocked()
+                                && TaThu.targetTaThuTemplateId >= 0
+                                && var6.levelBoss == TaThu.targetTaThuLevelBoss;
+                        if (!taThuBossChase && (var18.template.type == 1 || var18.template.type == 3) && (Res.abs(var3.cx - targetX) > var18.dx + 30 || Res.abs(var3.cy - targetY) > var18.dy + 30)) {
+                            var3.mobFocus = null;
+                            return;
+                        }
+                        if (taThuBossChase && (Res.abs(var3.cx - targetX) > var18.dx + 30 || Res.abs(var3.cy - targetY) > var18.dy + 30)) {
+                            // Di chuyển về hướng boss để server-side attack có cơ hội hit
+                            Char.fieldAC(var6.x, var6.y);
+                            // Vẫn tiếp tục gửi attack (không return) — server tự validate
                         }
 
                         var21 = var18.dx;
@@ -1010,6 +1110,9 @@ public abstract class Auto {
                         if (System.currentTimeMillis() - var18.lastTimeUseThisSkill >= (long) (var18.coolDown)) {
                             var18.lastTimeUseThisSkill = System.currentTimeMillis();
                             Service.gI().selectSkill(var18.template.id);
+                            if (this instanceof TaThu) {
+                                ((TaThu)this).onMissionAttackSent(var6, var18);
+                            }
                             Service.gI().sendPlayerAttack((MyVector) fieldAP, (MyVector) fieldAQ, (int) 1);
                             if (!Code.fieldBF) {
                                 var3.gameAB(GameScr.sks[var18.template.id], 0);
