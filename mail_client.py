@@ -1,32 +1,31 @@
 #!/usr/bin/env python3
-"""
-NSO Mail Client - Test nhận thư và quà hàng ngày
-Dựa trên nso_client.py, thêm chức năng:
-  - Probe tìm mail command bytes
-  - Nhận thư (MailList, MailRead, MailClaimAttachment, MailDelete)
-  - Nhận quà hàng ngày (rewardPB cmd -82, rewardCT cmd -79)
-  - Log toàn bộ raw packets để debug
+"""NSO Mail Client cho giao thức mobile 4.1.1.
 
-Cách dùng:
-  python3 mail_client.py
+MailClient trong GameAssembly.dll dùng cmd -40, action byte 0/1/2/3.
+Tự động đọc account-hoatdong.csv, xử lý mọi nhân vật, nhận quà rồi xóa thư.
+Chạy: python3 mail_client.py [duong-dan.csv]
 """
+
+import argparse
+import csv
+from pathlib import Path
 
 import socket
 import struct
 import time
 import random
-import sys
 from io import BytesIO
 
 
 # ─────────────────────────────────────────────
 #  Config - SỬA ĐÂY
 # ─────────────────────────────────────────────
-HOST     = "Nsm1.ninjasm.net"
+# HOST     = "Nsm1.ninjasm.net"
+# HOST truyen ky
+HOST     = "Nsotk1.nsotk.online"
 PORT     = 14444
-USERNAME = "luongclone001"
-PASSWORD = "ngan2021"
-CHAR_IDX = 0          # index nhân vật muốn vào (0, 1, 2)
+DEFAULT_CSV = Path(__file__).resolve().parent / "account-hoatdong.csv"
+DEFAULT_DELAY = 11.0
 # ─────────────────────────────────────────────
 
 
@@ -46,7 +45,7 @@ class NSOMessage:
 
     def write_utf(self, text):
         b = text.encode('utf-8')
-        self.write_short(len(b))
+        self.buffer.write(struct.pack('>H', len(b)))
         self.buffer.write(b)
 
     def get_data(self):
@@ -57,7 +56,7 @@ class NSOMessage:
         data = self.get_data()
         pkt = BytesIO()
         pkt.write(struct.pack('b', self.command))
-        pkt.write(struct.pack('>h', len(data)))
+        pkt.write(struct.pack('>H', len(data)))
         pkt.write(data)
         return pkt.getvalue()
 
@@ -102,9 +101,11 @@ class NSOReader:
         return self.read_ubyte() != 0
 
     def read_utf(self):
-        length = self.read_short()
-        if length <= 0: return ""
-        return self.buf.read(length).decode('utf-8', errors='replace')
+        length = self.read_ushort()
+        data = self.buf.read(length)
+        if len(data) != length:
+            raise EOFError("UTF payload bị thiếu")
+        return data.decode('utf-8', errors='replace')
 
     def remaining(self):
         pos = self.buf.tell()
@@ -122,6 +123,11 @@ class NSOMailClient:
     CMD_NOT_MAP     = -28
     CMD_SUB_COMMAND = -30
     CMD_KEY_EXCHANGE= -27
+    CMD_MAIL_SYSTEM = -40
+    MAIL_LIST = 0
+    MAIL_READ = 1
+    MAIL_DELETE = 2
+    MAIL_CLAIM_ATTACHMENTS = 3
 
     # NOT_LOGIN sub-commands
     CMD_SET_CLIENT  = -125
@@ -130,7 +136,7 @@ class NSOMailClient:
     CMD_REGISTER    = -122
 
     # NOT_MAP sub-commands (gửi lên server)
-    CMD_REWARD_PB   = -82   # nhận quà hàng ngày (Phần Bổ)
+    CMD_REWARD_PB   = -82   # rewardPB, độc lập với hệ thống thư
     CMD_REWARD_CT   = -79   # nhận quà chiến trường
 
     def __init__(self, host, port):
@@ -143,6 +149,9 @@ class NSOMailClient:
         self.key_pos_w = 0
         self.characters = []
         self._pending = set()
+        self.mails = []
+        self._recv_buffer = bytearray()
+        self._bag_full = False
 
     # ─── Low-level ───────────────────────────
 
@@ -172,6 +181,12 @@ class NSOMailClient:
     def connect(self):
         print(f"🔌 Kết nối {self.host}:{self.port}...")
         try:
+            self.key = None
+            self.key_pos_r = self.key_pos_w = 0
+            self._recv_buffer.clear()
+            self.characters = []
+            self.mails = []
+            self._pending.clear()
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(15)
             self.sock.connect((self.host, self.port))
@@ -181,6 +196,7 @@ class NSOMailClient:
             return True
         except Exception as e:
             print(f"❌ Lỗi kết nối: {e}")
+            self.disconnect()
             return False
 
     def disconnect(self):
@@ -198,13 +214,14 @@ class NSOMailClient:
         cmd_b = self._recv_exact(1)
         cmd = struct.unpack('b', cmd_b)[0]
         if cmd != self.CMD_KEY_EXCHANGE:
-            print(f"⚠️  Unexpected cmd {cmd}")
-            return
+            raise ConnectionError(f"Key exchange trả cmd không hợp lệ: {cmd}")
 
         len_b = self._recv_exact(2)
         length = struct.unpack('>H', len_b)[0]
         payload = self._recv_exact(length)
 
+        if not payload or not 0 < payload[0] <= len(payload) - 1:
+            raise ConnectionError("Key exchange thiếu khóa hoặc khóa rỗng")
         key_len = payload[0]
         raw_key = list(payload[1:key_len + 1])
         # Chain XOR decode
@@ -224,35 +241,32 @@ class NSOMailClient:
         self.sock.sendall(pkt)
 
     def recv_packet(self, timeout=10):
-        """Nhận 1 packet, trả về (cmd, data_bytes)"""
-        self.sock.settimeout(timeout)
+        """Giữ frame dở dang qua timeout để không lệch luồng XOR/TCP."""
+        deadline = time.monotonic() + timeout
         try:
-            cmd_raw = self._recv_exact(1)[0]
-            cmd = self._dec(cmd_raw)
-            if cmd >= 128: cmd -= 256
-
-            if cmd == -32:
-                # Large packet: [real_cmd:1][len:4]
-                real_cmd_raw = self._recv_exact(1)[0]
-                cmd = self._dec(real_cmd_raw)
-                if cmd >= 128: cmd -= 256
-                len_bytes = [self._dec(b) for b in self._recv_exact(4)]
-                length = int.from_bytes(bytes(len_bytes), 'big')
-            else:
-                lb = self._recv_exact(2)
-                b1, b2 = self._dec(lb[0]), self._dec(lb[1])
-                length = ((b1 & 0xFF) << 8) | (b2 & 0xFF)
-
-            data = bytearray(self._recv_exact(length)) if length > 0 else bytearray()
-            if self.key:
-                data = bytearray(self._dec(b) for b in data)
-
-            return cmd, bytes(data)
-
+            while True:
+                buf = self._recv_buffer
+                header_size = 6 if buf and buf[0] == 224 else 3
+                if len(buf) >= header_size:
+                    cmd = buf[1] if header_size == 6 else buf[0]
+                    length = int.from_bytes(buf[2:6] if header_size == 6 else buf[1:3], 'big')
+                    if len(buf) >= header_size + length:
+                        data = bytes(buf[header_size:header_size + length])
+                        del buf[:header_size + length]
+                        return cmd if cmd < 128 else cmd - 256, data
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None, None
+                self.sock.settimeout(remaining)
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    raise ConnectionError("Socket closed")
+                buf.extend(self._dec(b) for b in chunk)
         except socket.timeout:
             return None, None
         except Exception as e:
             print(f"❌ recv error: {e}")
+            self.disconnect()
             return None, None
 
     def recv_all(self, timeout=3, max_pkts=50):
@@ -270,21 +284,22 @@ class NSOMailClient:
     # ─── Login flow ───────────────────────────
 
     def set_client_type(self):
+        """Gửi đúng layout Service.setClientType() của Unity mobile 4.1.1."""
         msg = NSOMessage(self.CMD_NOT_LOGIN)
         msg.write_byte(self.CMD_SET_CLIENT)
-        msg.write_byte(1)           # CLIENT_TYPE
-        msg.write_byte(1)           # zoomLevel
+        msg.write_byte(4)           # GameMidlet.CLIENT_TYPE mặc định mobile
+        msg.write_byte(1)           # zoomLevel; writeByte(int) vẫn chỉ ghi 1 byte
         msg.write_boolean(True)     # isGPRS
         msg.write_int(480)          # width
         msg.write_int(800)          # height
         msg.write_boolean(True)     # isQwerty
         msg.write_boolean(True)     # isTouch
-        msg.write_utf("Nokia6300/2.0 (06.01) Profile/MIDP-2.0 Configuration/CLDC-1.1")
+        msg.write_utf("Unity Mobile")
+        msg.write_int(0)
         msg.write_byte(0)
-        msg.write_int(0)
-        msg.write_byte(0)           # languageID
-        msg.write_int(0)
-        msg.write_utf("0")
+        msg.write_byte(0)
+        msg.write_int(0)            # languageID cũng được ghi bằng int32
+        msg.write_utf("0")          # client agent phụ
         self.send_raw(msg)
 
     def _send_not_map(self, sub_cmd):
@@ -292,7 +307,7 @@ class NSOMailClient:
         msg.write_byte(sub_cmd)
         self.send_raw(msg)
 
-    def login(self, username, password, version="2.1.7"):
+    def login(self, username, password, version="4.1.1"):
         print(f"\n🔐 Đăng nhập: {username}")
         self.set_client_type()
 
@@ -305,7 +320,6 @@ class NSOMailClient:
         msg.write_utf("")
         msg.write_utf("".join(str(random.randint(0, 8)) for _ in range(12)))
         msg.write_byte(0)
-        msg.write_utf("VALID_CLIENT_KEY")
         self.send_raw(msg)
 
         # Xử lý response login
@@ -344,7 +358,7 @@ class NSOMailClient:
                     count = r.read_byte()
                     self.characters = []
                     for _ in range(count):
-                        gender = r.read_byte()
+                        r.read_byte()  # gender
                         name   = r.read_utf()
                         school = r.read_utf()
                         level  = r.read_ubyte()
@@ -360,7 +374,7 @@ class NSOMailClient:
             return None
 
     def select_character(self, idx=0):
-        if idx >= len(self.characters):
+        if not 0 <= idx < len(self.characters):
             print(f"❌ Không có nhân vật index {idx}")
             return False
         name = self.characters[idx]
@@ -375,7 +389,10 @@ class NSOMailClient:
         deadline = time.time() + 20
         while time.time() < deadline:
             cmd, data = self.recv_packet(timeout=5)
-            if cmd is None: continue
+            if cmd is None:
+                if not self.connected:
+                    return False
+                continue
             if cmd == self.CMD_SUB_COMMAND:
                 try:
                     sub = NSOReader(data).read_byte()
@@ -393,8 +410,8 @@ class NSOMailClient:
     # ─── Reward ──────────────────────────────
 
     def request_reward_pb(self):
-        """Gửi yêu cầu nhận quà hàng ngày (rewardPB, cmd NOT_MAP -82)"""
-        print("\n🎁 Gửi request nhận quà hàng ngày (rewardPB -82)...")
+        """Gửi rewardPB qua NOT_MAP -82, không phải nhận quà thư."""
+        print("\n🎁 Gửi request rewardPB (-82)...")
         self._send_not_map(self.CMD_REWARD_PB)
 
     def request_reward_ct(self):
@@ -402,74 +419,235 @@ class NSOMailClient:
         print("\n🏆 Gửi request nhận quà chiến trường (rewardCT -79)...")
         self._send_not_map(self.CMD_REWARD_CT)
 
-    # ─── Mail probe ──────────────────────────
+    # ─── Mobile mail protocol ─────────────────
 
-    # Command bytes cần thử cho mail (NOT_MAP sub-commands chưa biết)
-    # Dựa trên Unity metadata: MailList, MailRead, MailClaim, MailDelete
-    # Các slot trống trong gameAE: -110, -107, -106, -105, -104, -103,
-    #   -102, -101 (clientOk), -100, -94, -92, -91, -89, -87, -85,
-    #   -82 (reward), -79 (reward), -78, -76, -75, -74, ...
-    MAIL_PROBE_CMDS = [
-        -110, -109, -108, -107, -106, -105, -104, -103,
-        -100, -96, -94, -93, -92, -91, -90, -89,
-        -88, -87, -86, -85, -84, -83, -81, -80,
-        -78, -77, -76, -75, -74, -73, -71, -70,
-        -69, -68, -67, -66, -65, -64, -63,
-    ]
+    def _send_mail_action(self, action, mail_id=None):
+        """Packet mobile: cmd -40, action byte, optional mailId int32.
 
-    def probe_mail_command(self, sub_cmd):
-        """Thử gửi 1 sub-command và log response"""
-        print(f"\n🔍 Probe NOT_MAP sub-cmd: {sub_cmd}")
-        self._send_not_map(sub_cmd)
-        pkts = self.recv_all(timeout=2)
-        for cmd, data in pkts:
-            _log_packet("  ← ", cmd, data)
-        return pkts
-
-    def probe_all_mail_commands(self):
-        """Probe tất cả cmd có thể là mail để tìm đúng byte"""
-        print("\n" + "=" * 60)
-        print("🔍 PROBE TÌM MAIL COMMAND BYTES")
-        print("=" * 60)
-        results = {}
-        for sc in self.MAIL_PROBE_CMDS:
-            pkts = self.probe_mail_command(sc)
-            if pkts:
-                results[sc] = pkts
-            time.sleep(0.3)
-        print("\n📊 Tóm tắt: các cmd có response:")
-        for sc, pkts in results.items():
-            cmds = [p[0] for p in pkts]
-            print(f"  sub-cmd {sc:4d} → response cmds: {cmds}")
-        return results
-
-    # ─── Mail actions (sau khi biết cmd) ─────
-
-    def request_mail_list(self, mail_cmd):
-        """Gửi yêu cầu danh sách thư với mail_cmd đã biết"""
-        print(f"\n📬 Yêu cầu danh sách thư (cmd {mail_cmd})...")
-        self._send_not_map(mail_cmd)
-        pkts = self.recv_all(timeout=5)
-        print(f"  Nhận {len(pkts)} packet(s):")
-        for cmd, data in pkts:
-            _log_packet("  ← ", cmd, data)
-        return pkts
-
-    def claim_mail_attachment(self, mail_cmd, mail_id=None):
+        Mã native gọi writeByte(int), nhưng implementation ép int xuống đúng
+        một byte trước khi ghi vào buffer.
         """
-        Gửi yêu cầu nhận quà đính kèm thư.
-        mail_id: int ID của thư, hoặc None để gửi không có param
-        """
-        print(f"\n📦 Claim mail attachment (cmd {mail_cmd}, id={mail_id})...")
-        msg = NSOMessage(self.CMD_NOT_MAP)
-        msg.write_byte(mail_cmd)
+        if action not in (self.MAIL_LIST, self.MAIL_READ, self.MAIL_DELETE,
+                          self.MAIL_CLAIM_ATTACHMENTS):
+            raise ValueError("Mail action không hợp lệ")
+        if (action == self.MAIL_LIST) != (mail_id is None):
+            raise ValueError("MAIL_LIST không có ID; đọc/nhận/xóa phải có ID thư")
+        msg = NSOMessage(self.CMD_MAIL_SYSTEM)
+        msg.write_byte(action)
         if mail_id is not None:
             msg.write_int(mail_id)
         self.send_raw(msg)
-        pkts = self.recv_all(timeout=5)
-        for cmd, data in pkts:
-            _log_packet("  ← ", cmd, data)
-        return pkts
+
+    def _parse_mail_list(self, data):
+        """Parse đúng layout HandleMailListResponse của mobile 4.1.1."""
+        r = NSOReader(data)
+        action = r.read_ubyte()
+        if action != self.MAIL_LIST:
+            raise ValueError(f"Không phải MAIL_LIST response: action={action}")
+        count = r.read_ubyte()
+        mails = []
+        for _ in range(count):
+            mails.append({
+                "mail_id": r.read_int(),
+                "sender": r.read_utf(),
+                "title": r.read_utf(),
+                "is_read": r.read_boolean(),
+                "is_received": r.read_boolean(),
+                "created_time": r.read_long(),
+                "expired_time": r.read_long(),
+                "has_attachments": r.read_boolean(),
+            })
+        return mails
+
+    def request_mail_list(self):
+        print("\n📬 Yêu cầu danh sách thư mobile (cmd -40, action byte=0)...")
+        self.mails = []
+        self._send_mail_action(self.MAIL_LIST)
+        data = self._wait_mail_packet(self.MAIL_LIST, timeout=12)
+        if data is None:
+            raise RuntimeError("Không nhận được danh sách thư (cmd -40/action 0)")
+        try:
+            self.mails = self._parse_mail_list(data)
+            print(f"✅ Có {len(self.mails)} thư:")
+            for mail in self.mails:
+                state = "đã nhận" if mail["is_received"] else "chưa nhận"
+                attach = "có quà" if mail["has_attachments"] else "không quà"
+                print(f"  id={mail['mail_id']} | {mail['title']} | {state}, {attach}")
+        except Exception as e:
+            raise RuntimeError(f"Không parse được danh sách thư: {e}") from e
+        return self.mails
+
+    def _wait_mail_packet(self, action, mail_id=None, timeout=12):
+        """Chờ đúng packet mail, bỏ qua packet map/chat chạy xen kẽ."""
+        deadline = time.time() + timeout
+        skipped = 0
+        while time.time() < deadline:
+            cmd, data = self.recv_packet(timeout=max(0.2, deadline - time.time()))
+            if cmd is None:
+                break
+            if cmd in (-26, -24):
+                try:
+                    msg_text = NSOReader(data).read_utf()
+                    print(f"  [mail] ← Server: {msg_text}")
+                    if "hành trang không đủ chỗ" in msg_text.lower():
+                        self._bag_full = True
+                        return None
+                    if any(k in msg_text.lower() for k in ["thư", "hành trang", "đính kèm", "vật phẩm"]):
+                        return None
+                except Exception:
+                    _log_packet("  [mail] ← ", cmd, data)
+                    return None
+                skipped += 1
+                continue
+            if cmd != self.CMD_MAIL_SYSTEM or not data or data[0] != action:
+                skipped += 1
+                continue
+            if mail_id is not None:
+                if len(data) < 5 or struct.unpack('>i', data[1:5])[0] != mail_id:
+                    skipped += 1
+                    continue
+            if skipped:
+                print(f"  ↪ Đã bỏ qua {skipped} packet game/chat để chờ mail")
+            return data
+        if skipped:
+            print(f"  ↪ Đã bỏ qua {skipped} packet game/chat nhưng chưa thấy response mail")
+        return None
+
+    def read_mail(self, mail_id):
+        print(f"📖 Đọc thư id={mail_id}")
+        self._send_mail_action(self.MAIL_READ, mail_id)
+
+    def claim_mail_attachment(self, mail_id):
+        print(f"📦 Nhận quà thư id={mail_id}")
+        self._send_mail_action(self.MAIL_CLAIM_ATTACHMENTS, mail_id)
+
+    def delete_mail(self, mail_id):
+        print(f"🗑️ Xóa thư id={mail_id}")
+        self._send_mail_action(self.MAIL_DELETE, mail_id)
+
+    def _parse_mail_read(self, data):
+        """W5.MailClient.HandleMailReadResponse, RVA 0x187FC80."""
+        r = NSOReader(data)
+        if r.read_ubyte() != self.MAIL_READ:
+            raise ValueError("Không phải phản hồi đọc thư")
+        mail = {
+            "mail_id": r.read_int(),
+            "sender": r.read_utf(),
+            "title": r.read_utf(),
+            "content": r.read_utf(),
+            "expired_time": r.read_long(),
+            "has_attachments": r.read_boolean(),
+        }
+        if mail["has_attachments"]:
+            mail.update(luong=r.read_int(), xu=r.read_int(), yen=r.read_int(),
+                        exp=r.read_long())
+            mail["items"] = [
+                {"template_id": r.read_short(), "quantity": r.read_int(),
+                 "is_lock": r.read_boolean()}
+                for _ in range(r.read_ubyte())
+            ]
+        return mail
+
+    def _parse_mail_action_result(self, data):
+        """Parse response theo từng handler native của mobile."""
+        if len(data) < 5:
+            return None
+        r = NSOReader(data)
+        action = r.read_ubyte()
+        if action not in (self.MAIL_READ, self.MAIL_DELETE,
+                          self.MAIL_CLAIM_ATTACHMENTS):
+            return None
+        mail_id = r.read_int()
+        if action == self.MAIL_READ:
+            self._parse_mail_read(data)
+            return action, mail_id, True
+        # HandleMailClaimResponse/HandleMailDeleteResponse: mailId + success.
+        # Lưu ý: Server trả gói xóa thư với 5 byte (action 1 byte + mail_id 4 byte)
+        # hoặc 6 byte kèm cờ boolean.
+        if r.remaining() < 1:
+            if action == self.MAIL_DELETE:
+                return action, mail_id, True
+            return None
+        return action, mail_id, r.read_boolean()
+
+    def receive_all_mail(self, delete_after_claim=False):
+        """Nhận từng thư; CHỈ XÓA khi quà trong thư đã được nhận thành công."""
+        mails = self.request_mail_list()
+        result = {"claimed": 0, "deleted": 0, "failed": 0}
+        deleted_ids = set()
+        for mail in mails:
+            mail_id = mail["mail_id"]
+            title = mail.get("title", f"id={mail_id}")
+            try:
+                if not mail["is_read"]:
+                    self.read_mail(mail_id)
+                    data = self._wait_mail_packet(self.MAIL_READ, mail_id)
+                    if data is None:
+                        raise RuntimeError("Không nhận được phản hồi đọc thư")
+                    self._parse_mail_read(data)
+
+                has_attachments = mail.get("has_attachments", False)
+                claimed_success = False
+
+                if has_attachments:
+                    # Nếu hành trang đã đầy, dừng claim các thư có quà tiếp theo
+                    if self._bag_full:
+                        print(f"  ⚠️ Hành trang đầy, bỏ qua thư {mail_id} ({title}) -> GIỮ LẠI THƯ")
+                        continue
+
+                    if not mail.get("is_received", False):
+                        self.claim_mail_attachment(mail_id)
+                        data = self._wait_mail_packet(self.MAIL_CLAIM_ATTACHMENTS,
+                                                      mail_id, timeout=15)
+                        parsed = self._parse_mail_action_result(data) if data else None
+                        if (parsed and parsed[0] == self.MAIL_CLAIM_ATTACHMENTS
+                                and parsed[1] == mail_id and parsed[2] is True):
+                            claimed_success = True
+                            result["claimed"] += 1
+                            print(f"  ✅ Đã nhận quà thư {mail_id} ({title})")
+                        else:
+                            if self._bag_full:
+                                print(f"  ⚠️ Hành trang đầy! Chưa nhận được quà thư {mail_id} ({title}) -> GIỮ LẠI THƯ, KHÔNG XÓA")
+                            else:
+                                print(f"  ⚠️ Nhận quà thư {mail_id} ({title}) không thành công -> GIỮ LẠI THƯ, KHÔNG XÓA")
+                            continue
+                    else:
+                        # Thư có quà nhưng server đánh dấu đã nhận từ trước -> KHÔNG tự ý xóa để tránh mất quà
+                        print(f"  ℹ️ Thư {mail_id} ({title}) đánh dấu đã nhận từ trước -> GIỮ NGUYÊN, KHÔNG XÓA")
+                        continue
+
+                # CHỈ XÓA KHI:
+                # 1. delete_after_claim == True
+                # 2. VÀ: Hoặc thư không có quà (thư tin nhắn/thông báo)
+                #        Hoặc thư có quà VÀ VỪA NHẬN THÀNH CÔNG trong phiên này
+                if delete_after_claim:
+                    can_delete = False
+                    if not has_attachments:
+                        can_delete = True
+                    elif claimed_success:
+                        can_delete = True
+
+                    if can_delete:
+                        self.delete_mail(mail_id)
+                        data = self._wait_mail_packet(self.MAIL_DELETE, mail_id)
+                        expected = (self.MAIL_DELETE, mail_id, True)
+                        if data is None or self._parse_mail_action_result(data) != expected:
+                            raise RuntimeError("Xóa thư chưa thành công")
+                        deleted_ids.add(mail_id)
+            except (RuntimeError, ValueError, EOFError, OSError) as exc:
+                result["failed"] += 1
+                print(f"  ❌ Thư {mail_id}: {exc}")
+
+        # Xác minh thư đã xóa không còn xuất hiện trong danh sách server.
+        if deleted_ids:
+            remaining_ids = {mail["mail_id"] for mail in self.request_mail_list()}
+            result["deleted"] = len(deleted_ids - remaining_ids)
+            result["failed"] += len(deleted_ids & remaining_ids)
+            for mail_id in sorted(deleted_ids & remaining_ids):
+                print(f"  ❌ Thư {mail_id} vẫn còn sau yêu cầu xóa")
+        print(f"  Kết quả: nhận={result['claimed']}, xóa={result['deleted']}, "
+              f"lỗi={result['failed']}")
+        return result
 
     def listen_all(self, duration=10):
         """Lắng nghe tất cả packet trong duration giây"""
@@ -485,6 +663,12 @@ class NSOMailClient:
 
 def _log_packet(prefix, cmd, data):
     """In thông tin packet ra màn hình"""
+    if cmd == -26:
+        try:
+            print(f"{prefix}Server: {NSOReader(data).read_utf()}")
+            return
+        except EOFError:
+            pass
     print(f"{prefix}cmd={cmd:4d}  len={len(data):5d}  hex={data[:32].hex()}", end="")
     # Thử parse nếu data có thể là UTF string
     if len(data) >= 3:
@@ -504,93 +688,121 @@ def _log_packet(prefix, cmd, data):
 
 # ─── Main ────────────────────────────────────
 
-def main():
-    print("=" * 60)
-    print("  NSO MAIL CLIENT - Test nhận thư & quà")
-    print("=" * 60)
+def read_accounts(csv_path):
+    """Cùng định dạng hoatdong.py: username,password, chấp nhận BOM/header."""
+    accounts = []
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for line, row in enumerate(csv.reader(handle), start=1):
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            if len(row) < 2:
+                raise ValueError(f"Dòng {line} thiếu username/password")
+            username, password = row[0].strip(), row[1].strip()
+            if username.lower() == "username" and password.lower() == "password":
+                continue
+            if not username or not password:
+                raise ValueError(f"Dòng {line} thiếu username/password")
+            accounts.append((username, password))
+    return accounts
 
-    client = NSOMailClient(HOST, PORT)
 
+def build_parser():
+    parser = argparse.ArgumentParser(description="Tự động nhận quà và xóa thư NSO từ CSV")
+    parser.add_argument("csv_file", nargs="?", type=Path, default=DEFAULT_CSV)
+    parser.add_argument("--host", default=HOST)
+    parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--character-index", type=int,
+                        help="Chỉ xử lý nhân vật ở index này; mặc định: tất cả")
+    parser.add_argument("--max-characters", type=int, default=0,
+                        help="Giới hạn số nhân vật mỗi tài khoản; 0: tất cả")
+    parser.add_argument("--character-delay", type=float, default=DEFAULT_DELAY)
+    parser.add_argument("--account-delay", type=float, default=DEFAULT_DELAY)
+    return parser
+
+
+def process_account(args, username, password):
+    totals = {"characters": 0, "claimed": 0, "deleted": 0, "failed": 0}
+    client = NSOMailClient(args.host, args.port)
     try:
-        # 1. Kết nối
-        if not client.connect():
-            return
-
-        # 2. Login
-        if not client.login(USERNAME, PASSWORD):
-            return
-
-        # 3. Chọn nhân vật
-        if not client.select_character(CHAR_IDX):
-            # Nếu không vào được game, vẫn thử probe ở màn chọn nhân vật
-            print("⚠️  Không vào được game, thử probe từ màn chọn nhân vật")
-
-        # Drain packet còn lại sau khi vào map
-        print("\n⏳ Drain packets ban đầu...")
-        pkts = client.recv_all(timeout=3)
-        print(f"  Drain {len(pkts)} packets")
-        for cmd, data in pkts:
-            _log_packet("  [init] ", cmd, data)
-
-        print("\n" + "=" * 60)
-        print("  MENU TEST")
-        print("=" * 60)
-        print("1. Thử nhận quà hàng ngày (rewardPB -82)")
-        print("2. Thử nhận quà chiến trường (rewardCT -79)")
-        print("3. Probe tất cả mail command bytes (tự động)")
-        print("4. Probe 1 command cụ thể")
-        print("5. Lắng nghe packets 15 giây")
-        print("6. Thoát")
-        print()
-
-        while True:
+        if not client.connect() or not client.login(username, password):
+            raise RuntimeError("Không kết nối/đăng nhập được")
+        names = list(client.characters)
+        indexes = list(range(len(names)))
+        if args.character_index is not None:
+            indexes = [args.character_index] if args.character_index < len(names) else []
+        if args.max_characters:
+            indexes = indexes[:args.max_characters]
+        if not indexes:
+            raise RuntimeError("Không có nhân vật phù hợp")
+        for position, index in enumerate(indexes):
             try:
-                choice = input("Chọn (1-6): ").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-
-            if choice == "1":
-                client.request_reward_pb()
-                pkts = client.recv_all(timeout=5)
-                print(f"  Nhận {len(pkts)} packet(s):")
-                for cmd, data in pkts:
-                    _log_packet("  ← ", cmd, data)
-
-            elif choice == "2":
-                client.request_reward_ct()
-                pkts = client.recv_all(timeout=5)
-                print(f"  Nhận {len(pkts)} packet(s):")
-                for cmd, data in pkts:
-                    _log_packet("  ← ", cmd, data)
-
-            elif choice == "3":
-                results = client.probe_all_mail_commands()
-                # Gợi ý cmd nào có vẻ là mail
-                print("\n💡 Gợi ý: xem hex data để xác định mail command")
-
-            elif choice == "4":
-                try:
-                    sc = int(input("Nhập sub-command (vd: -110): ").strip())
-                    client.probe_mail_command(sc)
-                except ValueError:
-                    print("❌ Số không hợp lệ")
-
-            elif choice == "5":
-                client.listen_all(duration=15)
-
-            elif choice == "6":
-                break
-            else:
-                print("❓ Chọn 1-6")
-
-    except KeyboardInterrupt:
-        print("\n⚠️  Bị ngắt")
-    except Exception as e:
-        print(f"❌ Lỗi: {e}")
-        import traceback; traceback.print_exc()
+                if position:
+                    time.sleep(args.character_delay)
+                    client = NSOMailClient(args.host, args.port)
+                    if not client.connect() or not client.login(username, password):
+                        raise RuntimeError("Không đăng nhập lại được")
+                # Tìm theo tên để không xử lý nhầm nếu danh sách đổi thứ tự.
+                name = names[index]
+                print(f"  Nhân vật [{index}] {name}")
+                if name not in client.characters:
+                    raise RuntimeError("Nhân vật không còn trong danh sách")
+                if not client.select_character(client.characters.index(name)):
+                    raise RuntimeError("Không vào được nhân vật")
+                totals["characters"] += 1
+                client.recv_all(timeout=3)
+                result = client.receive_all_mail(delete_after_claim=True)
+                for key, count in result.items():
+                    totals[key] += count
+            except Exception as exc:
+                print(f"  ❌ Nhân vật [{index}] {names[index]}: {exc}")
+                totals["failed"] += 1
+            finally:
+                client.disconnect()
+    except Exception as exc:
+        print(f"  ❌ Tài khoản {username}: {exc}")
+        totals["failed"] += 1
     finally:
-        client.disconnect()
+        if client.sock is not None:
+            client.disconnect()
+    return totals
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if (args.character_index is not None and args.character_index < 0
+            or args.max_characters < 0
+            or args.character_delay < 0 or args.account_delay < 0):
+        print("❌ Index, giới hạn nhân vật và thời gian chờ không được âm")
+        return 2
+    try:
+        accounts = read_accounts(args.csv_file)
+        if not accounts:
+            raise ValueError("CSV không có tài khoản")
+    except (OSError, ValueError, csv.Error) as exc:
+        print(f"❌ Không đọc được CSV: {exc}")
+        return 2
+    print(f"NSO MAIL: {len(accounts)} tài khoản — tự động nhận quà và xóa thư")
+    totals = {"characters": 0, "claimed": 0, "deleted": 0, "failed": 0}
+    retry_accounts = []
+    try:
+        for number, (username, password) in enumerate(accounts, start=1):
+            if number > 1:
+                time.sleep(args.account_delay)
+            print(f"\n[{number}/{len(accounts)}] Tài khoản {username}")
+            result = process_account(args, username, password)
+            for key, count in result.items():
+                totals[key] += count
+            if result["failed"]:
+                retry_accounts.append(username)
+    except KeyboardInterrupt:
+        print("\nĐã dừng theo yêu cầu")
+        return 130
+    print(f"\nTỔNG KẾT: nhân vật={totals['characters']}, nhận={totals['claimed']}, "
+          f"xóa={totals['deleted']}, lỗi={totals['failed']}")
+    if retry_accounts:
+        print("TÀI KHOẢN CẦN CHẠY LẠI: " + ", ".join(retry_accounts))
+    return 1 if totals["failed"] else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

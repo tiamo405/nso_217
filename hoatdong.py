@@ -27,7 +27,9 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-hoatdong.csv"
-DEFAULT_HOST = "Nsm1.ninjasm.net"
+# DEFAULT_HOST = "Nsm1.ninjasm.net"
+# truyen ky server
+DEFAULT_HOST = "Nsotk1.nsotk.online"
 DEFAULT_PORT = 14444
 DEFAULT_LOGIN_DELAY = 11.0  # Server chặn nếu đăng nhập lại trong vòng 10 giây
 
