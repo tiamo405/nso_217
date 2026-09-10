@@ -13,8 +13,8 @@ import java.util.Vector;
 public final class Code implements Runnable {
 
     public static Code fieldAA;
-    private static boolean fieldCA;
-    private static Thread fieldCB;
+    private static volatile boolean fieldCA;
+    private static volatile Thread fieldCB;
     public static Auto fieldAB;
     private static TanSat fieldCC;
     public static Stanima fieldAC;
@@ -424,7 +424,7 @@ public final class Code implements Runnable {
     public final void run() {
         try {
             long var1;
-            for (; fieldCA; Auto.fieldAA((var1 = System.currentTimeMillis() - var1) < 100L ? 100L - var1 : 0L)) {
+            for (; fieldCA && Thread.currentThread() == fieldCB; Auto.fieldAA((var1 = System.currentTimeMillis() - var1) < 100L ? 100L - var1 : 0L)) {
                 var1 = System.currentTimeMillis();
 
                 try {
@@ -465,6 +465,12 @@ public final class Code implements Runnable {
                         CodePhu.fieldAB();
                         CodePhu.fieldAD();
                         fieldAB.fieldAA();
+                        if (!fieldCA || Thread.currentThread() != fieldCB) {
+                            return;
+                        }
+                        if (var3 != Char.getMyChar() || fieldAB == null || Auto.fieldAL == null) {
+                            continue;
+                        }
                         if (var3.isHuman == Auto.fieldAK && (var3.myskill == null || var3.myskill.template.id != Auto.fieldAL.template.id)) {
                             var3.myskill = Auto.fieldAL;
                         }
@@ -514,7 +520,7 @@ public final class Code implements Runnable {
                             if (var5 > 0) {
                                 GameScr.fieldAC("Cộng skill " + var18.name + " " + var5 + " điểm");
                                 Service.gI().upSkill(var18.id, var5);
-                                if (LockGame.fieldAU()) {
+                                if (LockGame.fieldAU() && !AccountAutoManager.isRunning()) {
                                     Session_ME.gI().fieldAD();
                                 }
                             }
@@ -902,6 +908,7 @@ public final class Code implements Runnable {
                         fieldCM = System.currentTimeMillis();
                     }
                 } catch (Exception var15) {
+                    BotMetrics.event("error", "auto_loop:" + var15.getClass().getName(), 1);
                 }
 
                 if (Char.getMyChar().isCaptcha) {

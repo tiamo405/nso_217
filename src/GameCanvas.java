@@ -378,6 +378,7 @@ public final class GameCanvas extends GameGraphics implements IActionListener {
     }
 
     public static void setOffset() {
+        if (HeadlessTuning.SKIP_DECORATIONS) return;
         if (!lowGraphic) {
             if (gameCS != null) {
                 for (int var0 = 0; var0 < gameCU.length; ++var0) {

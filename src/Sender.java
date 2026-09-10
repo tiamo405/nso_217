@@ -2,6 +2,7 @@ import java.io.IOException;
 
 final class Sender implements Runnable {
    final Session_ME gameAA;
+   final OutboundQueue queue = new OutboundQueue();
 
    public Sender(Session_ME var1) {
       this.gameAA = var1;
@@ -38,5 +39,22 @@ final class Sender implements Runnable {
          }
       }
 
+   }
+
+   Runnable connection(final long token) {
+      return new Runnable() {
+         public void run() {
+            try {
+               OutboundQueue.Entry entry;
+               while ((entry = queue.take(token)) != null) {
+                  if (gameAA.sendQueued(entry.message, token)) queue.sent(entry);
+               }
+            } catch (InterruptedException ignored) {
+               Thread.currentThread().interrupt();
+            } catch (Exception ex) {
+               ex.printStackTrace();
+            }
+         }
+      };
    }
 }

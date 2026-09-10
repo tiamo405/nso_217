@@ -18,6 +18,8 @@ public final class EffectAuto extends Effect2 {
    private boolean isInfinite_loop;
 
    public static void gameAA(short var0, int var1, int var2, byte var3, short var4, int var5) {
+      // This class only animates downloaded artwork; combat state lives in Mob/Char.
+      if (HeadlessTuning.SKIP_DECORATIONS) return;
       EffectAuto var6;
       (var6 = new EffectAuto()).id = var0;
       var6.x = var1;
@@ -124,6 +126,7 @@ public final class EffectAuto extends Effect2 {
    }
 
    public static void gameAA(short var0, byte[] var1) {
+      if (HeadlessTuning.SKIP_DECORATIONS) return;
       if (((EffAtutoTemp) dataEffAuto.get(String.valueOf(var0))).frameRunning == null) {
          new EffAtutoTemp();
          EffAtutoTemp var2 = gameAC(var0, var1);
@@ -179,6 +182,7 @@ public final class EffectAuto extends Effect2 {
    }
 
    public static void gameAB(short var0, byte[] var1) {
+      if (HeadlessTuning.SKIP_DECORATIONS) return;
       MyImage var2;
       if ((var2 = (MyImage) imgEffAuto.get(String.valueOf(var0))) == null) {
          var2 = new MyImage();
@@ -193,6 +197,7 @@ public final class EffectAuto extends Effect2 {
    }
 
    public static void gameAB() {
+      if (HeadlessTuning.SKIP_DECORATIONS) return;
       try {
          Enumeration var0 = imgEffAuto.keys();
 
@@ -209,6 +214,7 @@ public final class EffectAuto extends Effect2 {
    }
 
    public static void gameAC() {
+      if (HeadlessTuning.SKIP_DECORATIONS) return;
       try {
          Enumeration var0 = dataEffAuto.keys();
 

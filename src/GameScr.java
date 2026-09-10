@@ -3898,7 +3898,7 @@ public final class GameScr extends mScreen implements IActionListener, IChatable
             TileMap.fieldAG();
         }
 
-        if (Char.getMyChar().statusMe == 1 && GameCanvas.gameTick % 100 == 0) {
+        if (!HeadlessTuning.SKIP_PERIODIC_GC && Char.getMyChar().statusMe == 1 && GameCanvas.gameTick % 100 == 0) {
             System.gc();
         }
 
@@ -4146,6 +4146,10 @@ public final class GameScr extends mScreen implements IActionListener, IChatable
 
         EffectAuto.gameAB();
         EffectAuto.gameAC();
+        if (HeadlessTuning.ENABLED) {
+            HeadlessTuning.effectCount = Effect2.vEffect2.size() + Effect2.vEffect2Outside.size()
+                    + Effect2.vAnimateEffect.size();
+        }
         if (GameCanvas.isKiemduyet_info) {
             GameCanvas.regScr.update();
         }
@@ -5780,6 +5784,7 @@ public final class GameScr extends mScreen implements IActionListener, IChatable
     }
 
     public static final void gameAA(int var0, int var1) {
+        if (HeadlessTuning.SKIP_DECORATIONS) return;
         gameHJ.addElement(new Lanterns(var0, var1));
     }
 
@@ -19442,6 +19447,7 @@ public final class GameScr extends mScreen implements IActionListener, IChatable
     }
 
     public static void fieldAC(String var0) {
+        if (HeadlessTuning.SKIP_AUTO_POPUP) return;
         ChatPopup.gameAA("[THUAN_DEN] " + var0, Char.getMyChar());
     }
 

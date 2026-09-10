@@ -13,14 +13,14 @@ public final class Session_ME {
     public DataInputStream dis;
     public Controller messageHandler;
     public SocketConnection fieldAE;
-    public boolean connected;
-    public boolean connecting;
+    public volatile boolean connected;
+    public volatile boolean connecting;
     private final Sender sender = new Sender(this);
     public Thread fieldAS;
     public Thread gameAI;
     public int sendByteCount;
     public int recvByteCount;
-    boolean getKeyComplete;
+    volatile boolean getKeyComplete;
     public byte[] key = null;
     private byte curR;
     private byte curW;
@@ -213,10 +213,58 @@ public final class Session_ME {
     }
 
     public final void sendMessage(Message var1) {
+        if (HeadlessTuning.EVENT_SENDER) {
+            this.sender.queue.add(var1);
+            return;
+        }
         this.sender.gameAA.recieveMsg.addElement(var1);
     }
 
+    final synchronized void startSender() {
+        if (HeadlessTuning.EVENT_SENDER) {
+            long token = this.sender.queue.open();
+            new Thread(this.sender.connection(token), "NSO-Sender").start();
+        } else {
+            new Thread(this.sender).start();
+        }
+    }
+
+    final synchronized boolean sendQueued(Message message, long token) {
+        if (!connected || !getKeyComplete || !sender.queue.current(token)) return false;
+        return writeMessage(message);
+    }
+
+    final void keyReady() {
+        this.getKeyComplete = true;
+        if (HeadlessTuning.EVENT_SENDER) sender.queue.ready();
+    }
+
+    final long connectionGeneration() { return sender.queue.generation(); }
+
+    final boolean currentConnection(long token) {
+        return !HeadlessTuning.EVENT_SENDER || sender.queue.current(token);
+    }
+
+    final synchronized void installKey(byte[] value, long token) {
+        if (!currentConnection(token)) return;
+        this.key = value;
+        keyReady();
+    }
+
+    final void closeSender() {
+        if (HeadlessTuning.EVENT_SENDER) sender.queue.close();
+    }
+
+    public final long[] senderStats() {
+        return HeadlessTuning.EVENT_SENDER ? sender.queue.stats()
+                : new long[]{recieveMsg.size(), -1, -1, -1, -1};
+    }
+
     private synchronized void gameAB(Message var1) {
+        writeMessage(var1);
+    }
+
+    private boolean writeMessage(Message var1) {
         byte[] var2 = var1.getData();
 
         try {
@@ -256,8 +304,10 @@ public final class Session_ME {
             if (var1.command == -101) {
                 System.out.println("AUTO LOGIN TRACE: đã gửi command=-101 ra socket");
             }
+            return true;
         } catch (IOException var4) {
             var4.printStackTrace();
+            return false;
         }
     }
 
@@ -278,6 +328,7 @@ public final class Session_ME {
                 Session_ME.gameAP = true;
                 Session_ME.instance.connecting = false;
                 Session_ME.instance.connected = false;
+                Session_ME.instance.closeSender();
                 Session_ME.instance.messageHandler.gameAB();
             }
 
@@ -307,7 +358,7 @@ public final class Session_ME {
                 this.gameAB.fieldAE = (SocketConnection) Connector.open(var2);
                 Session_ME.gameAA(this.gameAB, this.gameAB.fieldAE.openDataOutputStream());
                 this.gameAB.dis = this.gameAB.fieldAE.openDataInputStream();
-                (new Thread(Session_ME.gameAA(this.gameAB))).start();
+                this.gameAB.startSender();
                 this.gameAB.gameAI = new Thread(new MessageCollector(this.gameAB));
                 this.gameAB.gameAI.start();
                 this.gameAB.gameAN = System.currentTimeMillis();
@@ -350,7 +401,23 @@ public final class Session_ME {
     }
 
     public final void gameAD() {
+        closeSender();
+        if (HeadlessTuning.EVENT_SENDER) {
+            // Close the socket first to unblock a writer before acquiring its monitor.
+            connected = false;
+            connecting = false;
+            try {
+                if (fieldAE != null) fieldAE.close();
+            } catch (IOException ignored) { }
+            synchronized (this) { closeConnection(); }
+        } else {
+            closeConnection();
+        }
+    }
+
+    private void closeConnection() {
         this.key = null;
+        this.getKeyComplete = false;
         this.curR = 0;
         this.curW = 0;
 
@@ -418,16 +485,22 @@ public final class Session_ME {
         return var1;
     }
 
-    public synchronized final void fieldAD() {
-        if (GameCanvas.currentScreen != GameCanvas.selectsvScr) {
-            GameCanvas.instance.fieldAE();
+    public final void fieldAD() {
+        // Do not hold the session lock while entering the account manager.
+        if (AccountAutoManager.onReconnectRequested()) {
+            return;
         }
+        synchronized (this) {
+            if (GameCanvas.currentScreen != GameCanvas.selectsvScr) {
+                GameCanvas.instance.fieldAE();
+            }
 
-        if (gameAP) {
-            fieldAE();
-        } else {
-            gameAP = true;
-            (new Thread(new ReLogin(this))).start();
+            if (gameAP) {
+                fieldAE();
+            } else {
+                gameAP = true;
+                (new Thread(new ReLogin(this))).start();
+            }
         }
     }
 

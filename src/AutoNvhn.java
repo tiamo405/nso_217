@@ -106,6 +106,7 @@ public final class AutoNvhn extends Auto {
                }
 
                GameScr.fieldAC("Hoàn thành NV " + fieldAX + "/20");
+               BotMetrics.returningTask();
                GameScr.fieldAB(25, GameScr.fieldGH, 2);
                this.waitingForNewTask = true;
                this.fieldAY = null;

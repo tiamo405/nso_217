@@ -33,6 +33,7 @@ public final class AutoFlipNvhn extends Auto {
         try {
             this.buyAndFlipLuckyTickets();
         } catch (Exception ex) {
+            BotMetrics.event("error", "flip:" + ex.getClass().getName(), 1);
             System.out.println("AUTO NVHN LAT HINH: lỗi xử lý lật thẻ, vẫn tiếp tục đi hang: "
                     + ex.toString());
         } finally {

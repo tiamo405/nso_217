@@ -411,6 +411,10 @@ public class Char extends MainObject {
             }
 
             Code.speedGame = var1.readInt();
+            if (HeadlessTuning.ENABLED) {
+                System.out.println("HEADLESS CONFIG: rms_tick_ms=" + Code.speedGame
+                        + " effective_tick_ms=" + HeadlessTuning.tickMillis(Code.speedGame));
+            }
             fieldEU = var1.readBoolean();
             fieldEV = var1.readBoolean();
             int varDel1 = var1.readInt();

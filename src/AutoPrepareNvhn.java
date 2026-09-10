@@ -81,6 +81,7 @@ public final class AutoPrepareNvhn extends Auto {
         Auto.fieldAA(1500L);
         GameScr.fieldAC("AUTO NVHN: bắt đầu nhiệm vụ hàng ngày");
         System.out.println("AUTO NVHN: lưu tọa độ xong, bắt đầu nhiệm vụ hàng ngày");
+        BotMetrics.event("daily_started", "", 0);
         Code.fieldAD();
     }
 

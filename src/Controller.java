@@ -2568,6 +2568,7 @@ public final class Controller {
 
                     for (var86 = 0; var86 < Char.getMyChar().taskOrders.size(); ++var86) {
                         if (((TaskOrder) Char.getMyChar().taskOrders.elementAt(var86)).taskId == var85) {
+                            BotMetrics.taskRemoved((TaskOrder) Char.getMyChar().taskOrders.elementAt(var86));
                             Char.getMyChar().taskOrders.removeElementAt(var86);
                             break;
                         }

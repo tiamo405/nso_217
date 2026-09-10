@@ -16,6 +16,7 @@ public final class AccountAutoManager implements Runnable {
     private static boolean started;
     private static boolean switching;
     private static boolean waitingForGame;
+    private static volatile boolean waitingForCharacters;
     private static boolean enteringCave;
     private static boolean postDailyProcessing;
     private static boolean reconnecting;
@@ -39,6 +40,7 @@ public final class AccountAutoManager implements Runnable {
         enabled = true;
         accountIndex = 0;
         characterIndex = 0;
+        characterNames = null;
         switching = true;
         reconnecting = false;
         disconnectRetryCount = 0;
@@ -130,12 +132,15 @@ public final class AccountAutoManager implements Runnable {
         GameMidlet.IP = UpdateServer.listIP[0];
         GameMidlet.PORT = UpdateServer.listPort[0];
         GameMidlet.serverLogin = UpdateServer.serverLoginList[0];
-        characterNames = null;
+        // Keep the original name order across logins: the server moves the last
+        // selected character to the front of each new list.
+        waitingForCharacters = false;
         waitingForGame = false;
         enteringCave = false;
         postDailyProcessing = false;
 
         System.out.println("AUTO NVHN: đăng nhập tài khoản " + username + " (" + (accountIndex + 1) + "/" + usernames.size() + ")");
+        Code.fieldAG();
         Session_ME session = Session_ME.gI();
         session.gameAC();
         session.gameAA11(GameMidlet.IP, GameMidlet.PORT);
@@ -161,19 +166,39 @@ public final class AccountAutoManager implements Runnable {
             return;
         }
         connectRetryCount = 0;
+        waitingForCharacters = true;
         Service.gI().login(username, password, "2.1.7");
     }
 
-    public static synchronized void onCharacterList(String[] names) {
+    public static synchronized boolean isRunning() {
+        return enabled;
+    }
+
+    /** Route legacy reconnect requests through the account runner as well. */
+    public static synchronized boolean onReconnectRequested() {
         if (!enabled) {
+            return false;
+        }
+        if (switching || reconnecting) {
+            return true;
+        }
+        Code.fieldAG();
+        Session_ME.gI().gameAC();
+        return onDisconnected();
+    }
+
+    public static synchronized void onCharacterList(String[] names) {
+        if (!enabled || !waitingForCharacters) {
             return;
         }
-        reconnecting = false;
-        disconnectRetryCount = 0;
-        characterNames = names;
+        waitingForCharacters = false;
+        if (characterNames == null) {
+            characterNames = new String[names.length];
+            System.arraycopy(names, 0, characterNames, 0, names.length);
+        }
         while (characterIndex < characterNames.length
                 && (characterNames[characterIndex] == null || characterNames[characterIndex].length() == 0)) {
-            characterIndex++;
+            ++characterIndex;
         }
         if (characterIndex >= characterNames.length) {
             switching = true;
@@ -185,6 +210,18 @@ public final class AccountAutoManager implements Runnable {
             return;
         }
         String name = characterNames[characterIndex];
+        boolean found = false;
+        for (int i = 0; i < names.length; ++i) {
+            if (name.equals(names[i])) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            skipCurrentCharacter("nhân vật " + name + " không còn trong danh sách server");
+            return;
+        }
+        BotMetrics.begin(getCurrentUsername(), name);
         SelectCharScr.fieldAK = name;
         waitingForGame = true;
         switching = false;
@@ -209,10 +246,18 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || !waitingForGame) {
             return;
         }
+        Char me = Char.getMyChar();
+        if (characterNames == null || characterIndex >= characterNames.length
+                || !characterNames[characterIndex].equals(me.cName)) {
+            System.out.println("AUTO LOGIN: nhân vật vào game không khớp tên đang chờ, đăng nhập lại");
+            reconnecting = false;
+            onReconnectRequested();
+            return;
+        }
         reconnecting = false;
         disconnectRetryCount = 0;
         waitingForGame = false;
-        Char me = Char.getMyChar();
+        BotMetrics.event("game_ready", me.nClass == null ? "" : String.valueOf(me.nClass.classId), me.clevel);
         if (me.clevel < 30) {
             skipCurrentCharacter("nhân vật " + me.cName + " level=" + me.clevel + " < 30, bỏ qua");
             return;
@@ -228,11 +273,19 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled) {
             return false;
         }
+        if (switching) {
+            return true;
+        }
         if (reconnecting) {
             return true;
         }
 
         reconnecting = true;
+        Code.fieldAG();
+        waitingForCharacters = false;
+        final int retryAccount = accountIndex;
+        final int retryCharacter = characterIndex;
+        BotMetrics.event("reconnect", "", 1);
         waitingForGame = false;
         enteringCave = false;
         int retryNumber = ++disconnectRetryCount;
@@ -244,8 +297,8 @@ public final class AccountAutoManager implements Runnable {
             public void run() {
                 sleep(delay);
                 synchronized (AccountAutoManager.class) {
-                    if (!enabled) {
-                        reconnecting = false;
+                    if (!enabled || switching || !reconnecting
+                            || accountIndex != retryAccount || characterIndex != retryCharacter) {
                         return;
                     }
                     reconnecting = false;
@@ -283,6 +336,7 @@ public final class AccountAutoManager implements Runnable {
             return;
         }
         postDailyProcessing = true;
+        BotMetrics.event("daily_finished", "", Code.fieldAD.didDailyWorkThisRun() ? 1 : 0);
         if (!Code.fieldAD.didDailyWorkThisRun()) {
             System.out.println("AUTO NVHN LAT HINH: nhân vật không làm nhiệm vụ nào trong lượt chạy này, bỏ qua lật thẻ");
             startCaveEntry();
@@ -290,6 +344,7 @@ public final class AccountAutoManager implements Runnable {
         }
         System.out.println("AUTO NVHN: đã hết nhiệm vụ, bắt đầu lật thẻ trước khi đi hang.");
         AutoFlipNvhn flip = new AutoFlipNvhn();
+        BotMetrics.event("flip_started", "", 0);
         flip.fieldAD();
         Code.fieldAA((Auto) flip);
     }
@@ -298,6 +353,7 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || switching) {
             return;
         }
+        BotMetrics.event("flip_finished", "processed_not_server_confirmed", 0);
         startCaveEntry();
     }
 
@@ -306,6 +362,7 @@ public final class AccountAutoManager implements Runnable {
             return;
         }
         enteringCave = true;
+        BotMetrics.event("cave_started", "", 0);
         System.out.println("AUTO NVHN: nhân vật đã hết nhiệm vụ, bắt đầu vào hang trước khi đổi nhân vật.");
         AutoEnterCave cave = new AutoEnterCave();
         cave.fieldAD();
@@ -316,10 +373,16 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || switching) {
             return;
         }
+        boolean entered = TileMap.isHang(TileMap.mapID);
+        BotMetrics.event("cave_finished", entered ? "entered" : "skipped_or_rejected", TileMap.mapID);
+        BotMetrics.finish(entered ? "completed" : "cave_skipped", "cave processing finished");
         skipCurrentCharacter("đã xử lý hang động, chuyển nhân vật");
     }
 
     private static void skipCurrentCharacter(String reason) {
+        reconnecting = false;
+        waitingForCharacters = false;
+        BotMetrics.finish("skipped", reason);
         switching = true;
         waitingForGame = false;
         enteringCave = false;
@@ -355,14 +418,19 @@ public final class AccountAutoManager implements Runnable {
     }
 
     private static void nextAccount() {
+        reconnecting = false;
+        waitingForCharacters = false;
+        BotMetrics.finish("account_abandoned", "advancing account before character completion");
         accountIndex++;
         characterIndex = 0;
+        characterNames = null;
         connectRetryCount = 0;
         switching = true;
         loginCurrentAccount();
     }
 
     private static void finishAll() {
+        BotMetrics.finish("interrupted", "worker finishing with active character");
         enabled = false;
         switching = false;
         reconnecting = false;

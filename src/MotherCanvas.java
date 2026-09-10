@@ -35,10 +35,13 @@ public final class MotherCanvas extends Canvas implements Runnable {
                 long var3 = System.currentTimeMillis() - var1;
 
                 try {
-                    Thread.sleep(var3 < (long) Code.speedGame ? (long) Code.speedGame - var3 : 1L);
+                    int tickMillis = HeadlessTuning.tickMillis(Code.speedGame);
+                    HeadlessTuning.effectiveTickMillis = tickMillis;
+                    Thread.sleep(var3 < (long) tickMillis ? (long) tickMillis - var3 : 1L);
                 } catch (InterruptedException var6) {
                 }
             } catch (Exception var12) {
+                BotMetrics.event("error", "game_update:" + var12.getClass().getName(), 1);
                 try {
                     Thread.sleep(1000L);
                 } catch (InterruptedException var7) {

@@ -270,6 +270,7 @@ public final class TileMap {
     }
 
     public static void gameAA() {
+        if (HeadlessTuning.SKIP_DECORATIONS) return;
         cmtoXMini = Char.getMyChar().cx / 12;
         cmtoYmini = Char.getMyChar().cy / 12;
         if (cmtoXMini > tmw * sizeMiniMap - wMiniMap / 2) {
@@ -293,6 +294,7 @@ public final class TileMap {
     }
 
     public static void gameAB() {
+        if (HeadlessTuning.SKIP_DECORATIONS) return;
         if (tmw * sizeMiniMap >= wMiniMap || tmh * sizeMiniMap >= hMiniMap) {
             if (cmyMini != cmtoYmini) {
                 cmvyMini = cmtoYmini - cmyMini << 2;

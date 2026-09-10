@@ -25,7 +25,7 @@ final class NetworkConnector implements Runnable {
             this.gameAB.fieldAE = (SocketConnection) Connector.open(var2);
             Session_ME.gameAA(this.gameAB, this.gameAB.fieldAE.openDataOutputStream());
             this.gameAB.dis = this.gameAB.fieldAE.openDataInputStream();
-            (new Thread(Session_ME.gameAA(this.gameAB))).start();
+            this.gameAB.startSender();
             this.gameAB.gameAI = new Thread(new MessageCollector(this.gameAB));
             this.gameAB.gameAI.start();
             this.gameAB.gameAN = System.currentTimeMillis();
