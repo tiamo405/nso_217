@@ -12,6 +12,7 @@ JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeR
 START_DELAY=${START_DELAY:-10}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
+source "$SCRIPT_DIR/tuning-options.sh"
 
 usage() {
     cat >&2 <<EOF
@@ -146,6 +147,7 @@ for worker_dir in "${worker_dirs[@]}"; do
         "-Xms$JAVA_XMS" \
         "-Xmx$JAVA_XMX" \
         "${java_opts_array[@]}" \
+        "${headless_tuning_args[@]}" \
         "-Duser.home=$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \
         HeadlessMain \

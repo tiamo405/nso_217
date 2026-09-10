@@ -1,5 +1,15 @@
 # NSO Headless Runtime Experiment
 
+Hướng dẫn tối ưu NVHN, cấu hình baseline/optimized và đo RAM/CPU theo nhân vật:
+[PERFORMANCE.md](PERFORMANCE.md). Launcher NVHN mặc định dùng profile optimized
+sau khi build lại code mới.
+
+Auto giữ danh sách tên nhân vật từ lần đăng nhập đầu tiên của mỗi tài khoản.
+Reconnect chọn lại đúng tên đang xử lý, kể cả khi server đưa nhân vật vừa chơi
+lên đầu danh sách. Khi auto đang chạy, các yêu cầu reconnect đi qua
+`AccountAutoManager`; cộng skill thành công không gây đăng nhập lại.
+Kiểm thử offline cho cả NVHN và Tà Thú: `bash tests/test-character-reconnect.sh`.
+
 Thu muc nay la huong thu nghiem de chay bot khong qua MicroEmulator. Code cu va cac worker hien tai khong phu thuoc vao thu muc nay.
 
 ## Ket luan ngan
