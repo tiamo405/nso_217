@@ -105,7 +105,7 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
     pid_file = worker_dir / "bot.pid"
     pid, pid_state = classify_pid(pid_file, worker_dir)
     paused = (worker_dir / ".paused").is_file()
-    done = (worker_dir / "home" / "worker.done").is_file()
+    done = (worker_dir / "worker.done").is_file() or (worker_dir / "home" / "worker.done").is_file()
 
     if paused:
         state = "PAUSED"

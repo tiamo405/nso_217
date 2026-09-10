@@ -38,7 +38,7 @@ for worker_dir in "${worker_dirs[@]}"; do
     if [[ -f "$worker_dir/.paused" ]]; then
         state='PAUSED'
         paused=$((paused + 1))
-    elif [[ -f "$worker_dir/home/worker.done" ]]; then
+    elif [[ -f "$worker_dir/worker.done" || -f "$worker_dir/home/worker.done" ]]; then
         state='DONE'
         stopped=$((stopped + 1))
     elif [[ -f "$pid_file" ]]; then

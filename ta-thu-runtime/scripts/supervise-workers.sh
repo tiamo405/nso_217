@@ -278,7 +278,7 @@ while true; do
 
     for worker_dir in "${worker_dirs[@]}"; do
         [[ -f "$worker_dir/.paused" ]] && continue
-        [[ -f "$worker_dir/home/worker.done" ]] && continue
+        [[ -f "$worker_dir/worker.done" || -f "$worker_dir/home/worker.done" ]] && continue
         pid_file="$worker_dir/bot.pid"
         [[ -f "$pid_file" ]] || continue
         pid=$(<"$pid_file")

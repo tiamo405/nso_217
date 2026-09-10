@@ -8,6 +8,7 @@ public final class AutoTaThuOrders extends Auto {
     private boolean processing;
     private long nextAttemptAt;
     private int useFailures;
+    private long pendingPurchaseSequence = -1L;
 
     public AutoTaThuOrders(boolean observeOnly) {
         this.observeOnly = observeOnly;
@@ -17,6 +18,7 @@ public final class AutoTaThuOrders extends Auto {
         this.processing = false;
         this.nextAttemptAt = 0L;
         this.useFailures = 0;
+        this.pendingPurchaseSequence = -1L;
         super.fieldAD();
     }
 
@@ -48,6 +50,11 @@ public final class AutoTaThuOrders extends Auto {
     private boolean process() {
         Char me = Char.getMyChar();
         TaThuDailyState state = TaThuDailyState.loadCurrent();
+        // A rejection can arrive after the bag wait timed out, during retry backoff.
+        if (this.pendingPurchaseSequence >= 0L
+                && TaThuAccountManager.hasInsufficientFundsSince(this.pendingPurchaseSequence)) {
+            return this.skipPurchase(state);
+        }
         int serverRemaining = this.refreshActivityCount();
         this.refreshBox();
         int bagCount = this.countItems(me.arrItemBag, ORDER_ITEM_ID);
@@ -69,6 +76,10 @@ public final class AutoTaThuOrders extends Auto {
         if (task != null) {
             System.out.println("AUTO TA THU ORDERS: đang có TaskOrder id=1 map=" + task.mapId
                     + " killId=" + task.killId + ", hoãn dùng lệnh tới sau khi trả task");
+            return true;
+        }
+
+        if (state.ordersPurchaseSkipped && !TaThuAccountManager.isShopStage()) {
             return true;
         }
 
@@ -129,12 +140,23 @@ public final class AutoTaThuOrders extends Auto {
                     }
                     System.out.println("AUTO TA THU ORDERS: mua itemId=268 số lượng=" + missing
                             + " typeUI=" + storeOrder.typeUI + " shopIndex=" + storeOrder.indexUI);
+                    long purchaseSequence = TaThuAccountManager.getMessageSequence();
+                    this.pendingPurchaseSequence = purchaseSequence;
                     Service.gI().buyItem(storeOrder.typeUI, storeOrder.indexUI, missing);
-                    order = this.waitForBagItem(ORDER_ITEM_ID, 4000L);
+                    deadline = System.currentTimeMillis() + 4000L;
+                    while ((order = this.findItem(me.arrItemBag, ORDER_ITEM_ID)) == null
+                            && !TaThuAccountManager.hasInsufficientFundsSince(purchaseSequence)
+                            && System.currentTimeMillis() < deadline) {
+                        Auto.fieldAA(100L);
+                    }
+                    if (TaThuAccountManager.hasInsufficientFundsSince(purchaseSequence)) {
+                        return this.skipPurchase(state);
+                    }
                     if (order == null) {
                         this.refreshBox();
                         return false;
                     }
+                    this.pendingPurchaseSequence = -1L;
                     // Seeing the item in the local bag does not always mean the
                     // purchase transaction is ready for a use request yet.
                     Auto.fieldAA(1500L);
@@ -175,6 +197,14 @@ public final class AutoTaThuOrders extends Auto {
                 return false;
             }
         }
+        return true;
+    }
+
+    private boolean skipPurchase(TaThuDailyState state) {
+        state.ordersPurchaseSkipped = true;
+        state.save();
+        this.pendingPurchaseSequence = -1L;
+        System.out.println("AUTO TA THU ORDERS: không đủ tiền, bỏ mua lệnh còn thiếu cho nhân vật hôm nay; tiếp tục lượt Tà Thú hiện có");
         return true;
     }
 

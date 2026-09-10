@@ -103,7 +103,7 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
     worker_pass=1
 
-    if [[ -f "$worker_dir/home/worker.done" ]]; then
+    if [[ -f "$worker_dir/worker.done" || -f "$worker_dir/home/worker.done" ]]; then
         echo "$worker_name đã hoàn tất toàn bộ account, không khởi động lại"
         completed=$((completed + 1))
         continue

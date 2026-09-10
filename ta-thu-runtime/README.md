@@ -14,6 +14,9 @@ Tà Thú vào bản copy rồi compile cùng compatibility layer J2ME của
 5. Tìm item `268` trong shop Goosho (NPC 30, `typeUI=14`) theo ID, không ghi
    cứng vị trí shop.
 6. Lấy lệnh có sẵn trong rương; chỉ mua phần thiếu; dùng tối đa hai lệnh/ngày.
+   Nếu server báo `Không đủ tiền!` khi mua lệnh, bỏ mua phần thiếu cho nhân vật
+   trong ngày và tiếp tục các lượt hiện có. Trạng thái này được lưu qua restart;
+   không tăng giả `ordersUsed` và không quay lại mua sau khi trả nhiệm vụ.
 7. Nhận, đánh và trả nhiệm vụ tại NPC 25 cho tới khi server hết lượt hoặc đủ
    bốn nhiệm vụ.
    Nếu hiệu ứng thức ăn hết và trong túi không còn đúng loại thức ăn đã cấu
@@ -22,6 +25,11 @@ Tà Thú vào bản copy rồi compile cùng compatibility layer J2ME của
    `levelBoss=3`.
 8. Lật hình bằng Phiếu may mắn và đi hang động.
 9. Chuyển nhân vật, sau đó chuyển tài khoản.
+
+Danh sách tên nhân vật được giữ cố định trong mỗi lượt xử lý tài khoản.
+Reconnect luôn chọn lại tên đang làm, dù server đổi thứ tự danh sách.
+Các yêu cầu reconnect đều qua `TaThuAccountManager`; cộng skill thành công
+không gây đăng nhập lại. Kiểm thử offline: `bash tests/test-character-reconnect.sh`.
 
 Tiến độ được lưu theo ngày GMT+7, account và nhân vật trong
 `$TA_THU_HOME/ta-thu-state/`. Khi tìm thấy Tà Thú, runtime khóa
@@ -80,8 +88,10 @@ Chạy supervisor:
 ./ta-thu-runtime/scripts/supervise-workers.sh
 ```
 
-Mỗi worker chỉ chạy một lượt. File `worker.done` là kết quả cuối cùng; runtime
-không chạy lượt audit thứ hai để tránh lật hình hoặc vào hang lặp lại.
+Mỗi worker chỉ chạy một lượt. File `workers/worker-XX/worker.done` là kết quả
+cuối cùng; start, supervisor và status đều nhận marker này (và tương thích với
+marker cũ `workers/worker-XX/home/worker.done`). Runtime không chạy lượt audit
+thứ hai để tránh lật hình hoặc vào hang lặp lại.
 
 Dashboard hiện có trong `web_control` cũng có thể điều khiển runtime này bằng
 cách trỏ cấu hình sang thư mục riêng:

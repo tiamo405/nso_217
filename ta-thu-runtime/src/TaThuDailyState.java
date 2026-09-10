@@ -7,6 +7,7 @@ import java.util.Properties;
 /** Durable per-character, per-game-day progress for the Ta Thu runtime. */
 public final class TaThuDailyState {
     public int ordersUsed;
+    public boolean ordersPurchaseSkipped;
     public int questsCompleted;
     public int mapId = -1;
     public int zoneId = -1;
@@ -70,6 +71,7 @@ public final class TaThuDailyState {
             input = new FileInputStream(this.file);
             values.load(input);
             this.ordersUsed = integer(values, "ordersUsed", 0);
+            this.ordersPurchaseSkipped = "true".equals(values.getProperty("ordersPurchaseSkipped"));
             this.questsCompleted = integer(values, "questsCompleted", 0);
             this.mapId = integer(values, "mapId", -1);
             this.zoneId = integer(values, "zoneId", -1);
@@ -92,6 +94,7 @@ public final class TaThuDailyState {
     public synchronized void save() {
         Properties values = new Properties();
         values.setProperty("ordersUsed", String.valueOf(this.ordersUsed));
+        values.setProperty("ordersPurchaseSkipped", String.valueOf(this.ordersPurchaseSkipped));
         values.setProperty("questsCompleted", String.valueOf(this.questsCompleted));
         values.setProperty("mapId", String.valueOf(this.mapId));
         values.setProperty("zoneId", String.valueOf(this.zoneId));

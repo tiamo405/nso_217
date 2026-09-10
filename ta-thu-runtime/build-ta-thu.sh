@@ -33,6 +33,8 @@ cp -R "$RUNTIME_DIR/overrides"/. "$WORK_SRC_DIR"/
 # Apply Ta Thu-only hooks to the disposable source copy. Repository src/ is untouched.
 sed -i 's/AccountAutoManager\.start()/TaThuAccountManager.start()/' "$WORK_SRC_DIR/GameMidlet.java"
 sed -i 's/AccountAutoManager\.onDisconnected()/TaThuAccountManager.onDisconnected()/' "$WORK_SRC_DIR/Controller.java"
+sed -i 's/AccountAutoManager\.onReconnectRequested()/TaThuAccountManager.onReconnectRequested()/' "$WORK_SRC_DIR/Session_ME.java"
+sed -i 's/AccountAutoManager\.isRunning()/TaThuAccountManager.isRunning()/' "$WORK_SRC_DIR/Code.java"
 sed -i 's/AccountAutoManager\.onServerMessage(utf)/TaThuAccountManager.onServerMessage(utf)/' "$WORK_SRC_DIR/Controller.java"
 sed -i 's/AccountAutoManager\.onCaveEntered()/TaThuAccountManager.onCaveEntered()/g' "$WORK_SRC_DIR/Controller.java" "$WORK_SRC_DIR/AutoEnterCave.java"
 sed -i 's/AccountAutoManager\.onCharacterBelowLevel30(utf13)/TaThuAccountManager.onCharacterBelowLevel30(utf13)/' "$WORK_SRC_DIR/Controller.java"
@@ -69,6 +71,8 @@ require_hook() {
 
 require_hook 'TaThuAccountManager.start()' "$WORK_SRC_DIR/GameMidlet.java"
 require_hook 'TaThuAccountManager.onDisconnected()' "$WORK_SRC_DIR/Controller.java"
+require_hook 'TaThuAccountManager.onReconnectRequested()' "$WORK_SRC_DIR/Session_ME.java"
+require_hook 'TaThuAccountManager.isRunning()' "$WORK_SRC_DIR/Code.java"
 require_hook 'TaThuAccountManager.onNpcMessage(' "$WORK_SRC_DIR/Controller.java"
 require_hook 'TaThuAccountManager.onServerMessage(' "$WORK_SRC_DIR/InfoMe.java"
 require_hook 'TaThuAccountManager.onGameReady()' "$WORK_SRC_DIR/Controller.java"

@@ -44,11 +44,11 @@ public final class AutoTaThuDaily extends Auto {
                 System.out.println("AUTO TA THU DAILY: server đã xóa task, hoàn thành="
                         + this.state.questsCompleted + "/" + MAX_DAILY_TASKS);
                 this.nextActionAt = System.currentTimeMillis() + 1000L;
-                if (this.state.questsCompleted >= MAX_DAILY_TASKS || this.refreshRemainingRuns() <= 0) {
+                if (this.state.questsCompleted >= MAX_DAILY_TASKS || this.refreshRemainingRuns() == 0) {
                     this.finishDaily();
                 } else if ("fight".equals(TaThuAccountManager.getStage())) {
                     TaThuAccountManager.onTestStageFinished("đã đánh và trả thành công một nhiệm vụ");
-                } else if (this.state.ordersUsed < 2) {
+                } else if (this.state.ordersUsed < 2 && !this.state.ordersPurchaseSkipped) {
                     // A restarted worker may have lost local order state while
                     // the server still has an active task. Only use missing
                     // orders after that task has been safely turned in.
@@ -75,11 +75,11 @@ public final class AutoTaThuDaily extends Auto {
                 return;
             }
             int remaining = this.refreshRemainingRuns();
-            if (remaining == 0 && this.state.ordersUsed >= 2) {
+            if (remaining == 0 && (this.state.ordersUsed >= 2 || this.state.ordersPurchaseSkipped)) {
                 this.finishDaily();
                 return;
             }
-            if (this.state.questsCompleted > 0 && this.state.ordersUsed < 2) {
+            if (this.state.questsCompleted > 0 && this.state.ordersUsed < 2 && !this.state.ordersPurchaseSkipped) {
                 this.switchToOrders();
                 return;
             }

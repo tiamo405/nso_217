@@ -16,11 +16,13 @@ public final class TaThuAccountManager implements Runnable {
     private static boolean started;
     private static boolean switching;
     private static boolean waitingForGame;
+    private static volatile boolean waitingForCharacters;
     private static boolean reconnecting;
     private static boolean postProcessing;
     private static int disconnectRetryCount;
     private static int connectRetryCount;
     private static volatile long messageSequence;
+    private static volatile long insufficientFundsSequence;
     private static volatile String lastServerMessage = "";
     private static volatile String lastNpcMessage = "";
     private static volatile String lastMessage = "";
@@ -59,6 +61,7 @@ public final class TaThuAccountManager implements Runnable {
         enabled = true;
         accountIndex = 0;
         characterIndex = 0;
+        characterNames = null;
         switching = true;
         System.out.println("AUTO TA THU: runtime stage=" + getStage() + " accounts=" + usernames.size());
         (new Thread(new TaThuAccountManager())).start();
@@ -141,10 +144,13 @@ public final class TaThuAccountManager implements Runnable {
         GameMidlet.IP = UpdateServer.listIP[0];
         GameMidlet.PORT = UpdateServer.listPort[0];
         GameMidlet.serverLogin = UpdateServer.serverLoginList[0];
-        characterNames = null;
+        // Keep the original name order across logins: the server moves the last
+        // selected character to the front of each new list.
+        waitingForCharacters = false;
         waitingForGame = false;
         postProcessing = false;
         System.out.println("AUTO TA THU: đăng nhập account " + (accountIndex + 1) + "/" + usernames.size());
+        Code.fieldAG();
         Session_ME session = Session_ME.gI();
         session.gameAC();
         session.gameAA11(GameMidlet.IP, GameMidlet.PORT);
@@ -166,20 +172,41 @@ public final class TaThuAccountManager implements Runnable {
             return;
         }
         connectRetryCount = 0;
+        waitingForCharacters = true;
         Service.gI().login(username, password, "2.1.7");
     }
 
-    public static synchronized void onCharacterList(String[] names) {
+    public static synchronized boolean isRunning() {
+        return enabled;
+    }
+
+    /** Route legacy reconnect requests through the account runner as well. */
+    public static synchronized boolean onReconnectRequested() {
         if (!enabled) {
+            return false;
+        }
+        if (switching || reconnecting) {
+            return true;
+        }
+        Code.fieldAG();
+        Session_ME.gI().gameAC();
+        return onDisconnected();
+    }
+
+    public static synchronized void onCharacterList(String[] names) {
+        if (!enabled || !waitingForCharacters) {
             return;
         }
-        reconnecting = false;
-        disconnectRetryCount = 0;
-        characterNames = names;
-        while (characterIndex < names.length && (names[characterIndex] == null || names[characterIndex].length() == 0)) {
+        waitingForCharacters = false;
+        if (characterNames == null) {
+            characterNames = new String[names.length];
+            System.arraycopy(names, 0, characterNames, 0, names.length);
+        }
+        while (characterIndex < characterNames.length
+                && (characterNames[characterIndex] == null || characterNames[characterIndex].length() == 0)) {
             ++characterIndex;
         }
-        if (characterIndex >= names.length) {
+        if (characterIndex >= characterNames.length) {
             switching = true;
             (new Thread(new Runnable() {
                 public void run() {
@@ -188,21 +215,40 @@ public final class TaThuAccountManager implements Runnable {
             })).start();
             return;
         }
-        SelectCharScr.fieldAK = names[characterIndex];
+        String name = characterNames[characterIndex];
+        boolean found = false;
+        for (int i = 0; i < names.length; ++i) {
+            if (name.equals(names[i])) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            skipCurrentCharacter("nhân vật " + name + " không còn trong danh sách server");
+            return;
+        }
+        SelectCharScr.fieldAK = name;
         waitingForGame = true;
         switching = false;
-        System.out.println("AUTO TA THU: chọn nhân vật " + names[characterIndex]);
-        Service.gI().selectCharToPlay(names[characterIndex]);
+        System.out.println("AUTO TA THU: chọn nhân vật " + name);
+        Service.gI().selectCharToPlay(name);
     }
 
     public static synchronized void onGameReady() {
         if (!enabled || !waitingForGame) {
             return;
         }
+        Char me = Char.getMyChar();
+        if (characterNames == null || characterIndex >= characterNames.length
+                || !characterNames[characterIndex].equals(me.cName)) {
+            System.out.println("AUTO LOGIN: nhân vật vào game không khớp tên đang chờ, đăng nhập lại");
+            reconnecting = false;
+            onReconnectRequested();
+            return;
+        }
         reconnecting = false;
         disconnectRetryCount = 0;
         waitingForGame = false;
-        Char me = Char.getMyChar();
         if (me.clevel < 30) {
             skipCurrentCharacter("level=" + me.clevel + " < 30");
             return;
@@ -326,6 +372,10 @@ public final class TaThuAccountManager implements Runnable {
             return true;
         }
         reconnecting = true;
+        Code.fieldAG();
+        waitingForCharacters = false;
+        final int retryAccount = accountIndex;
+        final int retryCharacter = characterIndex;
         waitingForGame = false;
         int retry = ++disconnectRetryCount;
         final long delay = Math.min(30000L, 5000L * retry);
@@ -334,8 +384,8 @@ public final class TaThuAccountManager implements Runnable {
             public void run() {
                 sleep(delay);
                 synchronized (TaThuAccountManager.class) {
-                    if (!enabled) {
-                        reconnecting = false;
+                    if (!enabled || switching || !reconnecting
+                            || accountIndex != retryAccount || characterIndex != retryCharacter) {
                         return;
                     }
                     reconnecting = false;
@@ -350,6 +400,10 @@ public final class TaThuAccountManager implements Runnable {
         lastServerMessage = message == null ? "" : message;
         lastMessage = lastServerMessage;
         ++messageSequence;
+        String lowerMessage = lastServerMessage.toLowerCase();
+        if (lowerMessage.indexOf("không đủ tiền") >= 0 || lowerMessage.indexOf("khong du tien") >= 0) {
+            insufficientFundsSequence = messageSequence;
+        }
         if (enabled) {
             System.out.println("AUTO TA THU SERVER: [" + lastServerMessage + "]");
         }
@@ -404,6 +458,11 @@ public final class TaThuAccountManager implements Runnable {
 
     public static long getMessageSequence() {
         return messageSequence;
+    }
+
+    // Keep this rejection even if a subsequent NPC/info message overwrites lastMessage.
+    public static synchronized boolean hasInsufficientFundsSince(long previousSequence) {
+        return insufficientFundsSequence > previousSequence;
     }
 
     public static String getLastMessageSince(long previousSequence) {
@@ -473,6 +532,8 @@ public final class TaThuAccountManager implements Runnable {
     }
 
     private static void skipCurrentCharacter(String reason) {
+        reconnecting = false;
+        waitingForCharacters = false;
         switching = true;
         waitingForGame = false;
         postProcessing = false;
@@ -500,8 +561,11 @@ public final class TaThuAccountManager implements Runnable {
     }
 
     private static void nextAccount() {
+        reconnecting = false;
+        waitingForCharacters = false;
         ++accountIndex;
         characterIndex = 0;
+        characterNames = null;
         connectRetryCount = 0;
         switching = true;
         loginCurrentAccount();
