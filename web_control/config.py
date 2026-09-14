@@ -13,6 +13,7 @@ class Settings:
     workers_dir: Path
     account_csv: Path
     runtime_dir: Path
+    ta_thu_dir: Path
     max_upload_bytes: int = 2 * 1024 * 1024
     command_timeout: int = 30
     build_timeout: int = 15 * 60
@@ -35,6 +36,9 @@ class Settings:
                 os.environ.get("HEADLESS_WORKERS_DIR", headless_dir / "workers"),
             )
         ).resolve()
+        ta_thu_dir = Path(
+            os.environ.get("NSO_TA_THU_DIR", repo_dir / "ta-thu-runtime")
+        ).resolve()
         return cls(
             repo_dir=repo_dir,
             headless_dir=headless_dir,
@@ -48,6 +52,7 @@ class Settings:
                     "NSO_WEB_RUNTIME_DIR", headless_dir / "run" / "web-control"
                 )
             ).resolve(),
+            ta_thu_dir=ta_thu_dir,
         )
 
     def command_env(self) -> dict[str, str]:
@@ -55,4 +60,5 @@ class Settings:
         env["OPTIMIZED_WORKERS_DIR"] = str(self.workers_dir)
         env["HEADLESS_WORKERS_DIR"] = str(self.workers_dir)
         env["ACCOUNT_CSV"] = str(self.account_csv)
+        env["TA_THU_WORKERS_DIR"] = str(self.ta_thu_dir / "workers")
         return env

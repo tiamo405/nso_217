@@ -29,13 +29,14 @@ class ScheduleRequest(BaseModel):
     daily_time: str = "01:00"
     interval_hours: int = 6
     worker_count: int = 10
+    auto_ta_thu: bool = True
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     manager = HeadlessManager(settings)
     jobs = BuildJobManager(manager)
-    scheduler = ScheduleManager(settings.runtime_dir, jobs)
+    scheduler = ScheduleManager(settings.runtime_dir, jobs, manager)
     static_dir = Path(__file__).with_name("static")
 
     @asynccontextmanager
@@ -81,9 +82,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data = await manager.status()
         data["account"] = manager.account_summary()
         data["schedule"] = scheduler.get_state()
+        data["current_phase"] = scheduler.current_phase
+        data["ta_thu"] = manager.ta_thu_supervisor_status()
         active = jobs.active_job()
         data["active_job"] = active.public() if active else None
         return data
+
+    @app.get("/api/ta-thu/status")
+    async def ta_thu_status() -> dict[str, object]:
+        status_script = settings.ta_thu_dir / "scripts" / "status-workers.sh"
+        if not status_script.is_file():
+            return {"workers": [], "totals": {"running": 0, "stopped": 0, "done": 0, "total": 0}}
+        code, output = await manager._capture(str(status_script), "--json")
+        if code != 0:
+            return {"workers": [], "totals": {"running": 0, "stopped": 0, "done": 0, "total": 0}}
+        try:
+            data = json.loads(output)
+            data["supervisor"] = manager.ta_thu_supervisor_status()
+            return data
+        except Exception:
+            return {"workers": [], "totals": {"running": 0, "stopped": 0, "done": 0, "total": 0}}
 
     @app.get("/api/schedule")
     async def get_schedule() -> dict[str, object]:
@@ -97,16 +115,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             daily_time=body.daily_time,
             interval_hours=body.interval_hours,
             worker_count=body.worker_count,
+            auto_ta_thu=body.auto_ta_thu,
         )
 
     @app.post("/api/supervisor/start")
     async def start_supervisor() -> dict[str, object]:
         require_idle()
+        # Nếu start supervisor NVHN thì dừng Tà Thú nếu đang chạy
+        await manager.stop_ta_thu()
+        scheduler.current_phase = "nvhn"
         return await manager.start_supervisor()
 
     @app.post("/api/supervisor/stop")
     async def stop_supervisor() -> dict[str, object]:
         require_idle()
+        # Dừng cả supervisor NVHN và Tà Thú
+        await manager.stop_ta_thu()
         return await manager.stop_supervisor()
 
     @app.post("/api/workers/{worker_name}/restart")
@@ -129,20 +153,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         worker_name: str,
         kind: Literal["stdout", "error"] = "stdout",
         lines: int = 200,
+        runtime: str = "auto",
     ) -> dict[str, str]:
-        return {"content": manager.tail_log(worker_name, kind, lines)}
+        return {"content": manager.tail_log(worker_name, kind, lines, runtime=runtime)}
 
     @app.get("/api/workers/{worker_name}/logs/stream")
     async def worker_log_stream(
         worker_name: str,
         request: Request,
         kind: Literal["stdout", "error"] = "stdout",
+        runtime: str = "auto",
     ) -> StreamingResponse:
-        path = manager.log_path(worker_name, kind)
+        path = manager.log_path(worker_name, kind, runtime=runtime)
 
         async def stream() -> AsyncIterator[str]:
             position = 0
-            initial = manager.tail_log(worker_name, kind, 100)
+            initial = manager.tail_log(worker_name, kind, 100, runtime=runtime)
             if initial:
                 try:
                     modified_at = datetime.fromtimestamp(

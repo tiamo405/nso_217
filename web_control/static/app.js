@@ -2,6 +2,7 @@ const $ = (selector) => document.querySelector(selector);
 let refreshTimer = null;
 let stream = null;
 let buildActive = false;
+let currentTab = "nvhn"; // "nvhn" hoặc "ta_thu"
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -66,12 +67,13 @@ function logCell(worker) {
   return td;
 }
 
-function renderWorkers(workers) {
+function renderWorkers(workers, runtime = "nvhn") {
   const body = $("#workers-body");
   body.replaceChildren();
   if (!workers.length) {
     const row = document.createElement("tr");
-    const empty = cell("Chưa có worker. Upload account rồi build.", "empty");
+    const emptyMsg = runtime === "ta_thu" ? "Chưa có worker Tà Thú." : "Chưa có worker. Upload account rồi build.";
+    const empty = cell(emptyMsg, "empty");
     empty.colSpan = 11;
     row.append(empty);
     body.append(row);
@@ -92,8 +94,10 @@ function renderWorkers(workers) {
     const actions = document.createElement("td");
     const group = document.createElement("div"); group.className = "action-group";
     const workerActions = [];
-    if (worker.state === "PAUSED") workerActions.push(["Start", "start"]);
-    else if (worker.state !== "DONE") workerActions.push(["Stop", "stop"], ["Restart", "restart"]);
+    if (runtime === "nvhn") {
+      if (worker.state === "PAUSED") workerActions.push(["Start", "start"]);
+      else if (worker.state !== "DONE") workerActions.push(["Stop", "stop"], ["Restart", "restart"]);
+    }
     workerActions.push(["Log", "stdout"], ["Errors", "error"]);
     for (const [label, action] of workerActions) {
       const button = document.createElement("button");
@@ -102,7 +106,7 @@ function renderWorkers(workers) {
       if (["start", "stop", "restart"].includes(action)) button.disabled = buildActive;
       button.addEventListener("click", () => ["start", "stop", "restart"].includes(action)
         ? workerAction(worker.name, action, button)
-        : openLog(worker.name, action));
+        : openLog(worker.name, action, runtime));
       group.append(button);
     }
     actions.append(group); row.append(actions); body.append(row);
@@ -134,7 +138,16 @@ async function refreshStatus() {
     $("#account-file").disabled = buildActive;
     $("#account-form button").disabled = buildActive;
     if (data.active_job && !stream) watchBuild(data.active_job);
-    renderWorkers(data.workers);
+    if (currentTab === "ta_thu") {
+      try {
+        const taThuData = await api("/api/ta-thu/status");
+        renderWorkers(taThuData.workers || [], "ta_thu");
+      } catch (_) {
+        renderWorkers([], "ta_thu");
+      }
+    } else {
+      renderWorkers(data.workers || [], "nvhn");
+    }
     if (data.schedule) renderSchedule(data.schedule);
     $("#last-refresh").textContent = `Cập nhật ${new Date().toLocaleTimeString("vi-VN")}`;
   } catch (error) {
@@ -148,10 +161,15 @@ function renderSchedule(schedule) {
   badge.className = `badge ${schedule.enabled ? "badge-success" : "badge-muted"}`;
 
   $("#schedule-enabled").checked = schedule.enabled;
+  $("#schedule-auto-ta-thu").checked = schedule.auto_ta_thu !== false;
   $("#schedule-mode").value = schedule.mode;
   $("#schedule-daily-time").value = schedule.daily_time || "01:00";
   $("#schedule-interval-hours").value = schedule.interval_hours || 6;
   $("#schedule-worker-count").value = schedule.worker_count || 10;
+
+  const phaseLabel = schedule.current_phase === "ta_thu" ? "Đang chạy Tà Thú 👹" : "Nhiệm vụ hàng ngày ⚔️";
+  $("#schedule-current-phase").textContent = phaseLabel;
+  $("#schedule-current-phase").style.color = schedule.current_phase === "ta_thu" ? "var(--warning)" : "var(--accent)";
 
   if (schedule.mode === "daily") {
     $("#group-daily-time").classList.remove("hidden");
@@ -201,14 +219,15 @@ function appendConsole(text) {
   output.scrollTop = output.scrollHeight;
 }
 
-function openLog(worker, kind) {
+function openLog(worker, kind, runtime = "nvhn") {
   if (stream) stream.close();
-  showConsole(`${worker} · ${kind === "error" ? "java-errors.log" : "stdout.log"}`);
-  stream = new EventSource(`/api/workers/${encodeURIComponent(worker)}/logs/stream?kind=${kind}`);
+  const label = runtime === "ta_thu" ? "Tà Thú" : "NVHN";
+  showConsole(`[${label}] ${worker} · ${kind === "error" ? "java-errors.log" : "stdout.log"}`);
+  stream = new EventSource(`/api/workers/${encodeURIComponent(worker)}/logs/stream?kind=${kind}&runtime=${runtime}`);
   stream.addEventListener("log", (event) => {
     const payload = JSON.parse(event.data);
-    const label = payload.initial ? "log gần nhất" : "log mới";
-    appendConsole(`[${formatTimestamp(payload.timestamp)} · ${label}]\n${payload.text}`);
+    const logLabel = payload.initial ? "log gần nhất" : "log mới";
+    appendConsole(`[${formatTimestamp(payload.timestamp)} · ${logLabel}]\n${payload.text}`);
   });
   stream.onerror = () => appendConsole("[Mất kết nối log, trình duyệt đang thử lại…]");
 }
@@ -294,6 +313,7 @@ $("#schedule-form").addEventListener("submit", async (event) => {
   try {
     const payload = {
       enabled: $("#schedule-enabled").checked,
+      auto_ta_thu: $("#schedule-auto-ta-thu").checked,
       mode: $("#schedule-mode").value,
       daily_time: $("#schedule-daily-time").value,
       interval_hours: Number($("#schedule-interval-hours").value),
@@ -301,12 +321,26 @@ $("#schedule-form").addEventListener("submit", async (event) => {
     };
     const updated = await api("/api/schedule", { method: "POST", json: payload });
     renderSchedule(updated);
-    notify("Đã lưu cấu hình hẹn giờ Build & Run!");
+    notify("Đã lưu cấu hình hẹn giờ & Tà Thú!");
   } catch (error) {
     notify(error.message, true);
   } finally {
     saveBtn.disabled = false;
   }
+});
+
+$("#tab-nvhn").addEventListener("click", () => {
+  currentTab = "nvhn";
+  $("#tab-nvhn").classList.add("active");
+  $("#tab-ta-thu").classList.remove("active");
+  refreshStatus();
+});
+
+$("#tab-ta-thu").addEventListener("click", () => {
+  currentTab = "ta_thu";
+  $("#tab-ta-thu").classList.add("active");
+  $("#tab-nvhn").classList.remove("active");
+  refreshStatus();
 });
 
 showDashboard();

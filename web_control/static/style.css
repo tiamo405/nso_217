@@ -54,6 +54,9 @@ input[type="number"], input[type="file"] { width: 100%; background: #0b111b; col
 .schedule-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .schedule-info { font-size: .8rem; display: flex; flex-direction: column; gap: 3px; background: #080d14; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
 .schedule-info strong { color: var(--text); }
+.tab-controls { display: flex; gap: 6px; }
+.tab-btn { background: #0b111b; border: 1px solid var(--line); border-radius: 8px; padding: 5px 12px; font-size: .8rem; font-weight: 600; color: var(--muted); cursor: pointer; }
+.tab-btn.active { background: var(--panel-2); border-color: var(--accent); color: var(--text); }
 .workers-panel { padding: 0; overflow: hidden; }
 .workers-panel .panel-title { padding: 18px; }
 .table-wrap { overflow-x: auto; }

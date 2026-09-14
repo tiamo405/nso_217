@@ -264,7 +264,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(initial["enabled"])
             self.assertEqual(initial["timezone"], "GMT+7")
 
-            # Cập nhật cấu hình daily 01:00 GMT+7
+            # Cập nhật cấu hình daily 01:00 GMT+7 và bật auto Tà Thú
             update_res = await client.post(
                 "/api/schedule",
                 json={
@@ -273,6 +273,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "daily_time": "01:00",
                     "interval_hours": 6,
                     "worker_count": 15,
+                    "auto_ta_thu": True,
                 },
             )
             self.assertEqual(update_res.status_code, 200, update_res.text)
@@ -281,6 +282,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data["mode"], "daily")
             self.assertEqual(data["daily_time"], "01:00")
             self.assertEqual(data["worker_count"], 15)
+            self.assertTrue(data["auto_ta_thu"])
             self.assertIsNotNone(data["next_run_at"])
 
             # Cập nhật chế độ interval
@@ -292,6 +294,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "daily_time": "01:00",
                     "interval_hours": 4,
                     "worker_count": 20,
+                    "auto_ta_thu": False,
                 },
             )
             self.assertEqual(interval_res.status_code, 200)
@@ -299,6 +302,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data_interval["mode"], "interval")
             self.assertEqual(data_interval["interval_hours"], 4)
             self.assertEqual(data_interval["worker_count"], 20)
+            self.assertFalse(data_interval["auto_ta_thu"])
 
             # Cập nhật tham số sai định dạng
             bad_res = await client.post(

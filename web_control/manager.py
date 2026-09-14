@@ -298,15 +298,22 @@ class HeadlessManager:
                 raise ControlError(output.strip() or "Restart worker thất bại")
             return output.strip()
 
-    def log_path(self, worker_name: str, kind: str) -> Path:
+    def log_path(self, worker_name: str, kind: str, runtime: str = "auto") -> Path:
         number = self.worker_number(worker_name)
         filename = {"stdout": "stdout.log", "error": "java-errors.log"}.get(kind)
         if filename is None:
             raise ControlError("Loại log không hợp lệ")
+
+        # Nếu runtime chỉ định là ta_thu hoặc ta-thu supervisor đang chạy thì đọc từ ta-thu-runtime
+        if runtime == "ta_thu" or (runtime == "auto" and self.ta_thu_supervisor_status()["running"]):
+            ta_thu_path = self.settings.ta_thu_dir / "workers" / f"worker-{int(number):02d}" / filename
+            if ta_thu_path.is_file():
+                return ta_thu_path
+
         return self.settings.workers_dir / f"worker-{int(number):02d}" / filename
 
-    def tail_log(self, worker_name: str, kind: str, lines: int = 200) -> str:
-        path = self.log_path(worker_name, kind)
+    def tail_log(self, worker_name: str, kind: str, lines: int = 200, runtime: str = "auto") -> str:
+        path = self.log_path(worker_name, kind, runtime=runtime)
         if not path.is_file():
             return ""
         with path.open("r", encoding="utf-8", errors="replace") as stream:
@@ -362,3 +369,85 @@ class HeadlessManager:
         except ControlError:
             # The dashboard remains available so the user can inspect/build.
             return
+
+    # ==================== Tà Thú Management ====================
+
+    @property
+    def ta_thu_supervisor_pid_file(self) -> Path:
+        return self.settings.ta_thu_dir / "workers" / "supervisor.pid"
+
+    @property
+    def ta_thu_supervisor_log(self) -> Path:
+        return self.settings.runtime_dir / "ta-thu-supervisor.log"
+
+    def ta_thu_supervisor_status(self) -> dict[str, Any]:
+        pid = self._read_pid(self.ta_thu_supervisor_pid_file)
+        running = False
+        if pid is not None:
+            try:
+                os.kill(pid, 0)
+                raw_args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+                for raw_arg in raw_args:
+                    if b"ta-thu-runtime/scripts/supervise-workers.sh" in raw_arg or raw_arg.endswith(b"supervise-workers.sh"):
+                        running = True
+                        break
+            except OSError:
+                running = False
+        return {
+            "running": running,
+            "pid": pid if running else None,
+        }
+
+    async def start_ta_thu(self, worker_count: int = 10) -> bool:
+        async with self.control_lock:
+            status = self.ta_thu_supervisor_status()
+            if status["running"]:
+                return True
+
+            # 1. Build workers Tà Thú
+            build_script = self.settings.ta_thu_dir / "scripts" / "build-workers.sh"
+            if not build_script.is_file():
+                return False
+
+            code, output = await self._capture(
+                str(build_script),
+                str(worker_count),
+                timeout=300,
+            )
+            if code != 0:
+                return False
+
+            # 2. Start supervisor Tà Thú
+            sup_script = self.settings.ta_thu_dir / "scripts" / "supervise-workers.sh"
+            if not sup_script.is_file():
+                return False
+
+            self.settings.runtime_dir.mkdir(parents=True, exist_ok=True)
+            log_stream = self.ta_thu_supervisor_log.open("ab", buffering=0)
+            try:
+                subprocess.Popen(
+                    [str(sup_script)],
+                    cwd=self.settings.repo_dir,
+                    env=self.settings.command_env(),
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_stream,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            except OSError:
+                return False
+            finally:
+                log_stream.close()
+
+            await asyncio.sleep(1)
+            return self.ta_thu_supervisor_status()["running"]
+
+    async def stop_ta_thu(self) -> bool:
+        async with self.control_lock:
+            stop_script = self.settings.ta_thu_dir / "scripts" / "stop-workers.sh"
+            if stop_script.is_file():
+                await self._capture(str(stop_script), timeout=30)
+            if self.ta_thu_supervisor_pid_file.exists():
+                self.ta_thu_supervisor_pid_file.unlink(missing_ok=True)
+            return True

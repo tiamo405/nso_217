@@ -44,11 +44,12 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 1. Upload `account.csv` có header `username,password`.
 2. Chọn số worker.
 3. Nhấn **Build** để compile và chia worker (hoặc **Run** để khởi động supervisor).
-4. Cấu hình **Hẹn giờ Build & Run (GMT+7)**:
-   - Tự động chạy lại từ đầu (xóa worker done, compile, chia lại account và run supervisor).
-   - Chọn chế độ: Hàng ngày lúc mốc giờ cố định (ví dụ `01:00` sáng) hoặc lặp lại sau mỗi N giờ.
+4. Cấu hình **Hẹn giờ & Tự động (GMT+7)**:
+   - **Bật tự động Build & Run NVHN**: Tự động chạy lại từ đầu khi đến giờ hẹn (xóa worker done, compile, chia lại account và run supervisor).
+   - **Auto Tà Thú khi NVHN xong**: Khi toàn bộ worker hoàn tất NVHN (2/2 lượt), hệ thống tự động build và chạy supervisor Tà Thú (`ta-thu-runtime/`).
+   - **Ưu tiên NVHN**: Khi đến mốc hẹn giờ của ngày hôm sau, hệ thống tự động ngắt toàn bộ tiến trình Tà Thú để ưu tiên Build & Run lại NVHN.
 5. Xem status, tên nhân vật đang chạy, live log; Stop, Start hoặc Restart từng worker.
-6. Stop tất cả sẽ dừng supervisor và worker, đồng thời ghi nhớ không tự bật lại sau reboot.
+6. Stop tất cả sẽ dừng cả supervisor NVHN và Tà Thú, đồng thời ghi nhớ không tự bật lại sau reboot.
 
 `Stop` tại một worker tạo marker `.paused`, dừng Java và giữ supervisor chạy cho
 các worker còn lại. Supervisor không tự bật lại worker có trạng thái `PAUSED`.

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .jobs import BuildJobManager
-from .manager import ControlError
+from .manager import ControlError, HeadlessManager
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +17,10 @@ TZ_VN = timezone(timedelta(hours=7), name="GMT+7")
 
 
 class ScheduleManager:
-    def __init__(self, runtime_dir: Path, jobs: BuildJobManager):
+    def __init__(self, runtime_dir: Path, jobs: BuildJobManager, manager: HeadlessManager | None = None):
         self.runtime_dir = runtime_dir
         self.jobs = jobs
+        self.manager = manager
         self.state_file = runtime_dir / "schedule.json"
 
         # Cấu hình mặc định
@@ -28,6 +29,8 @@ class ScheduleManager:
         self.daily_time: str = "01:00"  # HH:MM
         self.interval_hours: int = 6     # 1 - 72 giờ
         self.worker_count: int = 10
+        self.auto_ta_thu: bool = True    # Tự động chạy Tà Thú sau khi NVHN xong
+        self.current_phase: Literal["nvhn", "ta_thu"] = "nvhn"
         self.last_run_at: str | None = None
         self.next_run_at: str | None = None
 
@@ -45,6 +48,8 @@ class ScheduleManager:
             self.daily_time = str(data.get("daily_time", "01:00"))
             self.interval_hours = max(1, min(int(data.get("interval_hours", 6)), 72))
             self.worker_count = max(1, min(int(data.get("worker_count", 10)), 500))
+            self.auto_ta_thu = bool(data.get("auto_ta_thu", True))
+            self.current_phase = data.get("current_phase", "nvhn")
             self.last_run_at = data.get("last_run_at")
             self.next_run_at = data.get("next_run_at")
         except Exception:
@@ -61,6 +66,8 @@ class ScheduleManager:
             "daily_time": self.daily_time,
             "interval_hours": self.interval_hours,
             "worker_count": self.worker_count,
+            "auto_ta_thu": self.auto_ta_thu,
+            "current_phase": self.current_phase,
             "last_run_at": self.last_run_at,
             "next_run_at": self.next_run_at,
         }
@@ -111,6 +118,8 @@ class ScheduleManager:
             "daily_time": self.daily_time,
             "interval_hours": self.interval_hours,
             "worker_count": self.worker_count,
+            "auto_ta_thu": self.auto_ta_thu,
+            "current_phase": self.current_phase,
             "last_run_at": self.last_run_at,
             "next_run_at": self.next_run_at,
             "current_time": now.isoformat(timespec="seconds"),
@@ -124,6 +133,7 @@ class ScheduleManager:
         daily_time: str,
         interval_hours: int,
         worker_count: int,
+        auto_ta_thu: bool = True,
     ) -> dict[str, Any]:
         if mode not in {"daily", "interval"}:
             raise ControlError("Chế độ hẹn giờ phải là daily hoặc interval")
@@ -146,6 +156,7 @@ class ScheduleManager:
         self.enabled = bool(enabled)
         self.mode = mode
         self.worker_count = worker_count
+        self.auto_ta_thu = bool(auto_ta_thu)
         self._update_next_run()
         self._save()
         return self.get_state()
@@ -167,42 +178,77 @@ class ScheduleManager:
         while True:
             try:
                 await asyncio.sleep(15)
-                if not self.enabled:
-                    continue
 
                 now = datetime.now(TZ_VN)
-                if not self.next_run_at:
-                    self._update_next_run()
-                    self._save()
-                    continue
 
-                try:
-                    target_dt = datetime.fromisoformat(self.next_run_at).astimezone(TZ_VN)
-                except Exception:
-                    self._update_next_run()
-                    self._save()
-                    continue
+                # =========================================================================
+                # 1. KIỂM TRA LỊCH HẸN GIỜ: ƯU TIÊN NGẮT TÀ THÚ VÀ BUILD & RUN LẠI NVHN
+                # =========================================================================
+                if self.enabled and self.next_run_at:
+                    try:
+                        target_dt = datetime.fromisoformat(self.next_run_at).astimezone(TZ_VN)
+                    except Exception:
+                        self._update_next_run()
+                        self._save()
+                        target_dt = None
 
-                if now >= target_dt:
-                    # Kiểm tra xem có build job nào đang chạy không
-                    if self.jobs.active_job() is not None:
-                        logger.warning("Đến giờ hẹn Build & Run nhưng có build job đang chạy, chờ lượt kế...")
-                        await asyncio.sleep(15)
+                    if target_dt and now >= target_dt:
+                        if self.jobs.active_job() is not None:
+                            logger.warning("Đến giờ hẹn Build & Run nhưng có build job đang chạy...")
+                            await asyncio.sleep(10)
+                            continue
+
+                        logger.info("Đến giờ hẹn Build & Run! Ngắt toàn bộ Tà Thú và ưu tiên chạy lại NVHN...")
+                        if self.manager is not None:
+                            # Dừng toàn bộ tiến trình Tà Thú trước
+                            await self.manager.stop_ta_thu()
+                        self.current_phase = "nvhn"
+                        self._save()
+
+                        try:
+                            await self.jobs.create(
+                                worker_count=self.worker_count,
+                                start_after_build=True,
+                            )
+                            self.last_run_at = now.isoformat(timespec="seconds")
+                        except Exception as exc:
+                            logger.error("Lỗi khi tự động kích hoạt Build & Run: %s", exc)
+
+                        # Tính toán mốc chạy tiếp theo
+                        self._update_next_run()
+                        self._save()
                         continue
 
-                    logger.info("Đến giờ hẹn, bắt đầu tự động Build & Run %s workers...", self.worker_count)
-                    try:
-                        await self.jobs.create(
-                            worker_count=self.worker_count,
-                            start_after_build=True,
-                        )
-                        self.last_run_at = now.isoformat(timespec="seconds")
-                    except Exception as exc:
-                        logger.error("Lỗi khi tự động kích hoạt Build & Run: %s", exc)
+                # =========================================================================
+                # 2. KIỂM TRA AUTO TÀ THÚ: NẾU NVHN ĐÃ XONG 2/2 LƯỢT THÌ TỰ ĐỘNG CHẠY TÀ THÚ
+                # =========================================================================
+                if self.auto_ta_thu and self.current_phase == "nvhn" and self.manager is not None:
+                    # Chỉ kiểm tra khi không có build job nào đang chạy
+                    if self.jobs.active_job() is None:
+                        try:
+                            nvhn_status = await self.manager.status()
+                            totals = nvhn_status.get("totals", {})
+                            total_workers = totals.get("total", 0)
+                            done_workers = totals.get("done", 0)
 
-                    # Tính toán mốc chạy tiếp theo
-                    self._update_next_run()
-                    self._save()
+                            # Tất cả worker NVHN đã hoàn thành đủ lượt
+                            if total_workers > 0 and done_workers == total_workers:
+                                # Kiểm tra supervisor NVHN
+                                if not nvhn_status.get("supervisor", {}).get("running"):
+                                    logger.info(
+                                        "Tất cả %s worker NVHN đã hoàn thành đủ 2 lượt! Tự động chuyển sang chạy Tà Thú...",
+                                        total_workers,
+                                    )
+                                    self.current_phase = "ta_thu"
+                                    self._save()
+                                    ta_thu_started = await self.manager.start_ta_thu(worker_count=self.worker_count)
+                                    if ta_thu_started:
+                                        logger.info("Đã khởi chạy thành công Auto Tà Thú.")
+                                    else:
+                                        logger.warning("Khởi chạy Auto Tà Thú không thành công.")
+                        except Exception as check_exc:
+                            logger.error("Lỗi khi kiểm tra tiến độ NVHN: %s", check_exc)
+
             except asyncio.CancelledError:
                 break
             except Exception as exc:
