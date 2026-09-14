@@ -4,6 +4,8 @@
   "daily_time": "01:00",
   "interval_hours": 6,
   "worker_count": 100,
+  "auto_ta_thu": true,
+  "current_phase": "ta_thu",
   "last_run_at": null,
   "next_run_at": "2026-09-15T01:00:00+07:00"
 }

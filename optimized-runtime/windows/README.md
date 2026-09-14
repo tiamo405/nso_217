@@ -1,0 +1,76 @@
+# Hướng dẫn chạy NSO Optimized Runtime trên Windows Server 2012 R2
+
+Hệ thống đã được tích hợp bộ công cụ chạy đa nền tảng (hỗ trợ Windows 10/11 & Windows Server 2012 R2) bằng Python 3.8+ và Java 11.
+
+---
+
+## 1. Yêu cầu môi trường trên VPS Windows Server 2012 R2
+
+Bạn đã cài đặt sẵn:
+- **Java**: 11.0.22 (đã có `java` và `javac`)
+- **Python**: 3.8+ (đã tích hợp vào `PATH`)
+
+> 💡 **Khuyến nghị bổ sung:**
+> Mở Command Prompt (cmd) trên VPS và chạy lệnh:
+> ```cmd
+> pip install psutil
+> ```
+> *(Thư viện `psutil` giúp script đo chính xác dung lượng RAM và % CPU từng worker).*
+
+---
+
+## 2. Các file Batch tiện ích (Thư mục `optimized-runtime/windows/`)
+
+Bạn có thể chạy trực tiếp bằng cách **nhấp đúp chuột** vào các file `.bat`:
+
+| File Batch | Chức năng |
+| :--- | :--- |
+| `build.bat` | Biên dịch mã nguồn Java thành các class tối ưu (`OptimizedMain`) |
+| `build-workers.bat` | Nhập số worker muốn chia từ `account.csv` và tự động tạo thư mục `worker-XX` |
+| `supervise.bat` | Chạy Supervisor tự động giám sát, chia lượt 1/2 và 2/2, tự restart nếu crash |
+| `status.bat` | Xem bảng trạng thái các Worker (PID, RAM, CPU, Tiến độ, Nhân vật...) |
+| `logs.bat` | Xem log theo thời gian thực (nhập số worker hoặc Enter để xem toàn bộ) |
+| `stop.bat` | Dừng toàn bộ các Worker và Supervisor |
+| `reset.bat` | Xóa các marker hoàn tất để có thể chạy lại từ đầu |
+| `run.bat` | CLI tổng hợp (chạy qua lệnh cmd: `run.bat status`, `run.bat start 1 2`...) |
+
+---
+
+## 3. Hoặc chạy trực tiếp qua lệnh CMD / PowerShell
+
+Mở CMD/PowerShell tại thư mục gốc của project:
+
+```cmd
+:: 1. Biên dịch source code
+python optimized-runtime\windows\win_manager.py build
+
+:: 2. Chia account thành 10 workers (mặc định sẽ tự build luôn)
+python optimized-runtime\windows\win_manager.py build-workers 10
+
+:: 3. Chạy Supervisor giám sát (khuyên dùng)
+python optimized-runtime\windows\win_manager.py supervise --delay 30
+
+:: 4. Xem bảng trạng thái các worker
+python optimized-runtime\windows\win_manager.py status
+
+:: 5. Khởi động các worker cụ thể (ví dụ worker 1, 2, 3)
+python optimized-runtime\windows\win_manager.py start 1 2 3
+
+:: 6. Dừng tất cả worker
+python optimized-runtime\windows\win_manager.py stop
+
+:: 7. Xem log realtime của worker 1
+python optimized-runtime\windows\win_manager.py logs 1
+```
+
+---
+
+## 4. Đặc điểm nổi bật trên Windows
+
+1. **Chạy hoàn toàn ẩn (Headless No-Window)**:
+   - Các worker Java chạy ngầm với cờ `DETACHED_PROCESS` & `CREATE_NO_WINDOW`, không làm lag màn hình hoặc bật lên hàng chục cửa sổ đen.
+2. **Tiết kiệm RAM tối đa**:
+   - Sử dụng `-XX:+UseSerialGC`, `-Xss256k` (giảm stack size) và `-XX:CICompilerCount=2`.
+   - Mỗi worker chỉ tiêu tốn khoảng **18MB - 28MB RAM** trên JVM 11.
+3. **Giữ nguyên cơ chế 2 Lượt (Two-Pass)**:
+   - Supervisor tự động phát hiện khi worker xong lượt 1 (`worker.first-pass.done`) và kích hoạt chạy kiểm tra quét lại lượt 2 trước khi đánh dấu hoàn tất (`worker.done`).
