@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "mode": "daily",
+  "daily_time": "01:00",
+  "interval_hours": 6,
+  "worker_count": 100,
+  "last_run_at": null,
+  "next_run_at": "2026-09-15T01:00:00+07:00"
+}

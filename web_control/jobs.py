@@ -109,8 +109,9 @@ class BuildJobManager:
             try:
                 await job.append("Đang dừng supervisor và worker...")
                 await self.manager.stop_supervisor(remember=False)
-                await job.append(f"Đang build headless và chia {job.worker_count} worker...")
+                await job.append(f"Đang build runtime và chia {job.worker_count} worker...")
                 env = self.manager.settings.command_env()
+                env["BUILD_OPTIMIZED"] = "1"
                 env["BUILD_HEADLESS"] = "1"
                 process = await asyncio.create_subprocess_exec(
                     str(self.manager._script("build-workers.sh")),
@@ -135,9 +136,12 @@ class BuildJobManager:
                 if return_code != 0:
                     raise ControlError(f"Build thất bại với exit code {return_code}")
 
-                main_class = self.manager.settings.headless_dir / "build" / "classes" / "HeadlessMain.class"
-                if not main_class.is_file():
-                    raise ControlError("Build xong nhưng thiếu HeadlessMain.class")
+                has_main = (
+                    (self.manager.settings.headless_dir / "build" / "classes" / "OptimizedMain.class").is_file()
+                    or (self.manager.settings.headless_dir / "build" / "classes" / "HeadlessMain.class").is_file()
+                )
+                if not has_main:
+                    raise ControlError("Build xong nhưng thiếu OptimizedMain.class (hoặc HeadlessMain.class)")
                 worker_dirs = list(self.manager.settings.workers_dir.glob("worker-*"))
                 if len(worker_dirs) != job.worker_count:
                     raise ControlError(

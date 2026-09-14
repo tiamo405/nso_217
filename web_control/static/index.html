@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NSO Headless Control</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2">
 </head>
 <body>
   <main class="shell">
     <section id="dashboard">
       <header class="topbar">
         <div>
-          <p class="eyebrow">NSO HEADLESS</p>
+          <p class="eyebrow">NSO OPTIMIZED RUNTIME</p>
           <h1>Worker Control</h1>
         </div>
         <div class="top-actions">
@@ -53,12 +53,61 @@
         </article>
 
         <article class="panel build-panel">
-          <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build headless</h2></div></div>
+          <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build & Chạy</h2></div></div>
           <form id="build-form" class="build-form">
-            <label for="worker-count">Số worker</label>
-            <input id="worker-count" type="number" min="1" max="500" value="10" required>
-            <label class="checkbox"><input id="start-after-build" type="checkbox" checked> Start supervisor sau build</label>
-            <button id="build-button" type="submit" class="primary">Build & Run</button>
+            <div class="field-group">
+              <label for="worker-count">Số worker</label>
+              <input id="worker-count" type="number" min="1" max="500" value="10" required>
+            </div>
+            <div class="deploy-actions">
+              <button id="build-button" type="button" class="secondary">Build</button>
+              <button id="run-button" type="button" class="primary">Run</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="panel schedule-panel">
+          <div class="panel-title">
+            <div><p class="eyebrow">TIMER (GMT+7)</p><h2>Hẹn giờ Build & Run</h2></div>
+            <span id="schedule-status-badge" class="badge">Tắt</span>
+          </div>
+          <form id="schedule-form" class="schedule-form">
+            <label class="checkbox">
+              <input id="schedule-enabled" type="checkbox">
+              <span>Bật tự động Build & Run</span>
+            </label>
+
+            <div class="schedule-inputs">
+              <div class="field-group">
+                <label for="schedule-mode">Hình thức</label>
+                <select id="schedule-mode" class="custom-select">
+                  <option value="daily">Hàng ngày (cố định giờ)</option>
+                  <option value="interval">Lặp lại sau N giờ</option>
+                </select>
+              </div>
+
+              <div id="group-daily-time" class="field-group">
+                <label for="schedule-daily-time">Mốc giờ (GMT+7)</label>
+                <input id="schedule-daily-time" type="time" value="01:00">
+              </div>
+
+              <div id="group-interval-hours" class="field-group hidden">
+                <label for="schedule-interval-hours">Chu kỳ (giờ)</label>
+                <input id="schedule-interval-hours" type="number" min="1" max="72" value="6">
+              </div>
+
+              <div class="field-group">
+                <label for="schedule-worker-count">Số worker</label>
+                <input id="schedule-worker-count" type="number" min="1" max="500" value="10">
+              </div>
+            </div>
+
+            <div class="schedule-info muted">
+              <div>Lần chạy kế tiếp: <strong id="schedule-next-run">—</strong></div>
+              <div>Lần chạy trước: <strong id="schedule-last-run">—</strong></div>
+            </div>
+
+            <button id="schedule-save-button" type="submit" class="secondary">Lưu hẹn giờ</button>
           </form>
         </article>
       </section>
@@ -70,8 +119,8 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Worker</th><th>State</th><th>Lượt</th><th>PID</th><th>CPU</th><th>RAM</th><th>Elapsed</th><th>Accounts</th><th>Log cuối</th><th>Actions</th></tr></thead>
-            <tbody id="workers-body"><tr><td colspan="10" class="empty">Đang tải…</td></tr></tbody>
+            <thead><tr><th>Worker</th><th>State</th><th>Nhân vật</th><th>Lượt</th><th>PID</th><th>CPU</th><th>RAM</th><th>Elapsed</th><th>Accounts</th><th>Log cuối</th><th>Actions</th></tr></thead>
+            <tbody id="workers-body"><tr><td colspan="11" class="empty">Đang tải…</td></tr></tbody>
           </table>
         </div>
       </section>
@@ -85,6 +134,6 @@
       </section>
     </section>
   </main>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=2" defer></script>
 </body>
 </html>

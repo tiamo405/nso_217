@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from .config import Settings
 from .jobs import BuildJobManager
 from .manager import ControlError, HeadlessManager
+from .scheduler import ScheduleManager
 
 
 class BuildRequest(BaseModel):
@@ -22,16 +23,27 @@ class BuildRequest(BaseModel):
     start_after_build: bool = True
 
 
+class ScheduleRequest(BaseModel):
+    enabled: bool
+    mode: Literal["daily", "interval"]
+    daily_time: str = "01:00"
+    interval_hours: int = 6
+    worker_count: int = 10
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     manager = HeadlessManager(settings)
     jobs = BuildJobManager(manager)
+    scheduler = ScheduleManager(settings.runtime_dir, jobs)
     static_dir = Path(__file__).with_name("static")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         await manager.reconcile()
+        await scheduler.start_loop()
         yield
+        await scheduler.stop_loop()
 
     app = FastAPI(
         title="NSO Headless Control",
@@ -44,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.manager = manager
     app.state.jobs = jobs
+    app.state.scheduler = scheduler
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
     @app.exception_handler(ControlError)
@@ -67,9 +80,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def status() -> dict[str, object]:
         data = await manager.status()
         data["account"] = manager.account_summary()
+        data["schedule"] = scheduler.get_state()
         active = jobs.active_job()
         data["active_job"] = active.public() if active else None
         return data
+
+    @app.get("/api/schedule")
+    async def get_schedule() -> dict[str, object]:
+        return scheduler.get_state()
+
+    @app.post("/api/schedule")
+    async def update_schedule(body: ScheduleRequest) -> dict[str, object]:
+        return scheduler.update_config(
+            enabled=body.enabled,
+            mode=body.mode,
+            daily_time=body.daily_time,
+            interval_hours=body.interval_hours,
+            worker_count=body.worker_count,
+        )
 
     @app.post("/api/supervisor/start")
     async def start_supervisor() -> dict[str, object]:

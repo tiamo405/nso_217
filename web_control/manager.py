@@ -153,8 +153,12 @@ class HeadlessManager:
             self.supervisor_pid_file.unlink(missing_ok=True)
         if not any(self.settings.workers_dir.glob("worker-*")):
             raise ControlError("Chưa có worker. Hãy build trước.")
-        if not (self.settings.headless_dir / "build" / "classes" / "HeadlessMain.class").is_file():
-            raise ControlError("Chưa có HeadlessMain.class. Hãy build trước.")
+        has_main = (
+            (self.settings.headless_dir / "build" / "classes" / "OptimizedMain.class").is_file()
+            or (self.settings.headless_dir / "build" / "classes" / "HeadlessMain.class").is_file()
+        )
+        if not has_main:
+            raise ControlError("Chưa có OptimizedMain.class (hoặc HeadlessMain.class). Hãy build trước.")
 
         self.settings.runtime_dir.mkdir(parents=True, exist_ok=True)
         log_stream = self.supervisor_log.open("ab", buffering=0)

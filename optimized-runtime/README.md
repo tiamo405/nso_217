@@ -1,0 +1,66 @@
+# NSO Ultra-Optimized Standalone Runtime
+
+Standalone runtime siêu tối ưu hóa tài nguyên (RAM & CPU) cho NSO Client 217.
+
+## Điểm cải tiến so với bản gốc và headless-runtime
+
+1. **Triệt tiêu toàn bộ lệnh vẽ màn hình (`SKIP_PAINT = true`)**:
+   - `MotherCanvas` và `GameCanvas` không gọi `repaint()` và `serviceRepaints()`.
+   - Giảm 100% chi phí phân bổ đồ họa và overhead của pipeline vẽ.
+2. **Loại bỏ vòng lặp tính toán hoạt ảnh (`SKIP_DECORATIONS = true`)**:
+   - Bỏ qua cập nhật animation quái (`Mob.gameAA()`), đèn lồng (`Lanterns`), rung màn hình (`shaking`), camera easing, hiệu ứng sấm sét (`gameBP`), trứng rơi (`EggMonters`).
+   - Vẫn giữ nguyên 100% logic vật lý di chuyển của nhân vật (`Char.pxw()`) và nhặt đồ (`vItemMap`).
+3. **Lazy-loading 160 Maps (`LAZY_MAP = true`)**:
+   - Thay vì nạp sẵn 160 file nhị phân vào RAM lúc khởi động, chỉ khi nhân vật chuyển sang `mapID` mới thì file map đó mới được tải vào RAM. Giúp khởi động tức thì và giảm heap.
+4. **Điều tốc vòng lặp an toàn (`TICK_MS = 80ms` ~ 12.5 FPS)**:
+   - Khớp hoàn hảo với chu kỳ 100ms của luồng tự đánh quái/boss (`Code.run()`).
+   - Không làm chậm việc nhận quái từ mạng TCP hay hồi chiêu skill (vì đều tính theo `System.currentTimeMillis()`).
+5. **Image Flyweight Pattern**:
+   - Dùng singleton dummy image cho các hàm `Image.createImage()` để triệt tiêu việc cấp phát rác bộ nhớ cho Garbage Collector (GC).
+
+---
+
+## Hướng dẫn sử dụng
+
+### 1. Biên dịch Standalone Runtime
+
+```bash
+chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
+./optimized-runtime/build-optimized.sh
+```
+
+### 2. Quản lý Workers
+
+```bash
+# Chia tài khoản thành 10 workers và tạo thư mục worker-XX
+./optimized-runtime/scripts/build-workers.sh 10
+
+# Chạy tất cả workers (mỗi worker cách nhau 3 giây)
+./optimized-runtime/scripts/start-workers.sh
+
+# Xem trạng thái CPU, RAM và tiến độ
+./optimized-runtime/scripts/status-workers.sh
+
+# Xem live log của các workers
+./optimized-runtime/scripts/logs-workers.sh
+./optimized-runtime/scripts/logs-workers.sh 1   # Chỉ xem worker 1
+
+# Chạy supervisor tự động khởi động lại nếu worker crash
+./optimized-runtime/scripts/supervise-workers.sh
+
+# Dừng toàn bộ workers
+./optimized-runtime/scripts/stop-workers.sh
+```
+
+---
+
+## Cấu hình Biến môi trường (`optimized-runtime/scripts/tuning-options.sh`)
+
+| Biến | Mặc định | Ý nghĩa |
+| :--- | :--- | :--- |
+| `JAVA_XMS` | `8m` | Heap khởi điểm cho mỗi worker JVM |
+| `JAVA_XMX` | `36m` | Heap tối đa cho mỗi worker JVM |
+| `NSO_TICK_MS` | `80` | Chu kỳ tick (ms) của MotherCanvas (80ms = 12.5 FPS) |
+| `NSO_SKIP_PAINT`| `true` | Tắt hoàn toàn repaint & vẽ giao diện |
+| `NSO_SKIP_DECORATIONS` | `true` | Bỏ qua các hoạt ảnh đồ họa |
+| `NSO_LAZY_MAP` | `true` | Chỉ nạp map khi nhân vật bước vào map |

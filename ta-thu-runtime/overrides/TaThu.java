@@ -398,6 +398,30 @@ public final class TaThu extends Auto {
       targetTaThuLevelBoss = -1;
    }
 
+   private static String formatCompactNumber(int val) {
+      if (val < 0) {
+         return "-" + formatCompactNumber(-val);
+      }
+      if (val < 10000) {
+         return String.valueOf(val);
+      }
+      if (val < 1000000) {
+         return (val / 1000) + "k";
+      }
+      int m = val / 1000000;
+      int rem = (val % 1000000) / 100000;
+      return rem == 0 ? m + "M" : m + "." + rem + "M";
+   }
+
+   private static String formatAgoSeconds(long ms) {
+      if (ms < 0L) {
+         return "-";
+      }
+      long sec = ms / 1000L;
+      long tenths = (ms % 1000L) / 100L;
+      return sec + "." + tenths + "s";
+   }
+
    private void logMissionStatus() {
       if (!TaThuAccountManager.isEnabledRuntime()) {
          return;
@@ -408,6 +432,9 @@ public final class TaThu extends Auto {
       }
       this.lastMissionStatusAt = now;
       Char me = Char.getMyChar();
+      if (me == null) {
+         return;
+      }
       Mob focus = me.mobFocus;
       // Tìm boss thực tế trong vMob để log vị trí so với nhân vật
       Mob actualBoss = this.findLiveMissionTarget();
@@ -419,38 +446,68 @@ public final class TaThu extends Auto {
          cooldownRemain = 0L;
       }
       String skillState = this.describeSkillState(me, configuredSkill, selectedSkill, actualBoss, now);
-      String bossPos = "none";
-      if (actualBoss != null) {
+
+      // Map & zone info
+      String mapInfo = (TileMap.mapID == super.fieldAB)
+              ? "map=" + TileMap.mapID
+              : "map=" + TileMap.mapID + "->" + super.fieldAB;
+      String zoneInfo = (TileMap.zoneID == super.fieldAC)
+              ? "z=" + TileMap.zoneID + (this.missionZoneLocked ? "[L]" : "[U]")
+              : "z=" + TileMap.zoneID + "->" + super.fieldAC + (this.missionZoneLocked ? "[L]" : "[U]");
+
+      // Boss info
+      String bossInfo;
+      if (actualBoss == null) {
+         bossInfo = "boss=none";
+      } else {
          int dx = actualBoss.x - me.cx;
          int dy = actualBoss.y - me.cy;
-         bossPos = "x=" + actualBoss.x + ",y=" + actualBoss.y
-                 + ",dx=" + dx + ",dy=" + dy
-                 + ",hp=" + actualBoss.hp + "/" + actualBoss.maxHp
-                 + ",mobId=" + actualBoss.mobId;
+         bossInfo = "boss=id" + actualBoss.mobId + "(dx=" + dx + ",dy=" + dy
+                 + ",hp=" + formatCompactNumber(actualBoss.hp) + "/" + formatCompactNumber(actualBoss.maxHp) + ")";
       }
-      System.out.println("AUTO TA THU FIGHT: map=" + TileMap.mapID + " targetMap=" + super.fieldAB
-              + " zone=" + TileMap.zoneID + " targetZone=" + super.fieldAC
-              + " locked=" + this.missionZoneLocked + " killId=" + this.fieldAV
-              + " charPos=(" + me.cx + "," + me.cy + ")"
-              + " charHp=" + me.cHP + "/" + me.cMaxHP
-              + " charMp=" + me.cMP + "/" + me.cMaxMP
-              + " focus=" + (focus == null ? "none" : focus.templateId + ":" + focus.hp + "/" + focus.maxHp
-              + ",mobId=" + focus.mobId + ",levelBoss=" + focus.levelBoss)
-              + " boss=" + bossPos
-              + " auto=" + (Code.fieldAB == null ? "none" : Code.fieldAB.getClass().getName())
-              + " configuredSkill=" + this.skillDescription(configuredSkill)
-              + " selectedSkill=" + this.skillDescription(selectedSkill)
-              + " cooldownRemain=" + cooldownRemain + "ms"
-              + " lastSentSkill=" + this.lastSentSkillTemplateId + ":" + this.lastSentSkillId
-              + " attacksSent=" + this.missionAttackCount
-              + " lastAttackAgo=" + (this.lastMissionAttackAt == 0L ? -1L : now - this.lastMissionAttackAt) + "ms"
-              + " serverAcks=" + this.serverAttackAckCount
-              + " lastServerAckAgo=" + (this.lastServerAttackAckAt == 0L ? -1L : now - this.lastServerAttackAckAt) + "ms"
-              + " serverSkill=" + this.lastServerSkillTemplateId
-              + " serverTargetMobId=" + this.lastServerTargetMobId
-              + " serverTargetOk=" + this.lastServerAckIncludedMissionTarget
-              + " skillState=" + skillState
-              + " task=" + (this.fieldAY == null ? "none" : this.fieldAY.count + "/" + this.fieldAY.maxCount));
+      // Log focus nếu đang focus quái khác boss nhiệm vụ
+      String focusInfo = "";
+      if (focus != null && (actualBoss == null || focus.mobId != actualBoss.mobId)) {
+         focusInfo = " focus=" + focus.templateId + "(id" + focus.mobId + ",lv" + focus.levelBoss + ")";
+      }
+
+      // Skill info
+      String skillInfo;
+      if (configuredSkill == null) {
+         skillInfo = "sk=none";
+      } else {
+         int cfgTemplateId = configuredSkill.template == null ? -1 : configuredSkill.template.id;
+         skillInfo = "sk=" + cfgTemplateId + ":" + configuredSkill.skillId
+                 + "(cd=" + cooldownRemain + "/" + configuredSkill.coolDown + "ms)";
+         if (selectedSkill != null && selectedSkill.template != null
+                 && selectedSkill.template.id != cfgTemplateId) {
+            skillInfo += "[sel=" + selectedSkill.template.id + ":" + selectedSkill.skillId + "]";
+         }
+      }
+
+      // Attack & Ack info
+      long attackAgo = this.lastMissionAttackAt == 0L ? -1L : now - this.lastMissionAttackAt;
+      long ackAgo = this.lastServerAttackAckAt == 0L ? -1L : now - this.lastServerAttackAckAt;
+      String ackDetail = this.lastServerAckIncludedMissionTarget ? "ok" : "MISMATCH";
+      if (this.lastServerTargetMobId != -1) {
+         ackDetail = "mob=" + this.lastServerTargetMobId + "," + ackDetail;
+      }
+
+      String charName = me.cName == null ? "?" : me.cName;
+      String taskStr = this.fieldAY == null ? "none" : this.fieldAY.count + "/" + this.fieldAY.maxCount;
+
+      System.out.println("AUTO TA THU FIGHT: nv=" + charName
+              + " " + mapInfo + " " + zoneInfo
+              + " kill=" + this.fieldAV
+              + " pos=(" + me.cx + "," + me.cy + ")"
+              + " hp=" + me.cHP + "/" + me.cMaxHP
+              + " mp=" + me.cMP + "/" + me.cMaxMP
+              + " " + bossInfo + focusInfo
+              + " " + skillInfo
+              + " atk=" + this.missionAttackCount + "(" + formatAgoSeconds(attackAgo) + ")"
+              + " ack=" + this.serverAttackAckCount + "(" + formatAgoSeconds(ackAgo) + "," + ackDetail + ")"
+              + " state=" + skillState
+              + " task=" + taskStr);
    }
 
    /** Được Auto gọi đúng tại thời điểm gửi packet đánh mob. */

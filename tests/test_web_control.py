@@ -40,6 +40,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         (worker / "stdout.log").write_text("AUTO NVHN STATUS: test\n", encoding="utf-8")
         (headless / "build" / "classes").mkdir(parents=True)
         (headless / "build" / "classes" / "HeadlessMain.class").touch()
+        (headless / "build" / "classes" / "OptimizedMain.class").touch()
 
         status_payload = {
             "workers_dir": str(workers),
@@ -48,6 +49,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "name": "worker-01",
                     "pid": None,
                     "state": "STOPPED",
+                    "char_name": "fmgmza",
                     "cpu_percent": None,
                     "rss_mb": None,
                     "elapsed": None,
@@ -84,6 +86,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             scripts / "build-workers.sh",
             'count="$1"\n'
             'mkdir -p "$PWD/headless-runtime/build/classes"\n'
+            'touch "$PWD/headless-runtime/build/classes/OptimizedMain.class"\n'
             'touch "$PWD/headless-runtime/build/classes/HeadlessMain.class"\n'
             'find "$HEADLESS_WORKERS_DIR" -mindepth 1 -maxdepth 1 -type d -name "worker-*" -exec rm -rf -- {} +\n'
             'for ((i=1; i<=count; i++)); do mkdir -p "$(printf "$HEADLESS_WORKERS_DIR/worker-%02d/home" "$i")"; done\n'
@@ -125,6 +128,13 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             status_response = await client.get("/api/status")
             self.assertEqual(status_response.status_code, 200)
             self.assertEqual(status_response.json()["workers"][0]["name"], "worker-01")
+            self.assertEqual(status_response.json()["workers"][0]["char_name"], "fmgmza")
+
+            # Check index.html table header and buttons
+            index_html = (static_dir / "index.html").read_text(encoding="utf-8")
+            self.assertIn("<th>Nhân vật</th>", index_html)
+            self.assertIn('id="build-button"', index_html)
+            self.assertIn('id="run-button"', index_html)
 
             invalid_csv = await client.post(
                 "/api/accounts/upload",
@@ -243,6 +253,65 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(restarted.status_code, 200, restarted.text)
             self.assertFalse(marker.exists())
             self.assertIn("restarted worker-01", restarted.json()["output"])
+
+    async def test_schedule_api_configuration(self) -> None:
+        transport = ASGITransport(app=create_app(self.settings))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Lấy trạng thái schedule ban đầu
+            res = await client.get("/api/schedule")
+            self.assertEqual(res.status_code, 200)
+            initial = res.json()
+            self.assertFalse(initial["enabled"])
+            self.assertEqual(initial["timezone"], "GMT+7")
+
+            # Cập nhật cấu hình daily 01:00 GMT+7
+            update_res = await client.post(
+                "/api/schedule",
+                json={
+                    "enabled": True,
+                    "mode": "daily",
+                    "daily_time": "01:00",
+                    "interval_hours": 6,
+                    "worker_count": 15,
+                },
+            )
+            self.assertEqual(update_res.status_code, 200, update_res.text)
+            data = update_res.json()
+            self.assertTrue(data["enabled"])
+            self.assertEqual(data["mode"], "daily")
+            self.assertEqual(data["daily_time"], "01:00")
+            self.assertEqual(data["worker_count"], 15)
+            self.assertIsNotNone(data["next_run_at"])
+
+            # Cập nhật chế độ interval
+            interval_res = await client.post(
+                "/api/schedule",
+                json={
+                    "enabled": True,
+                    "mode": "interval",
+                    "daily_time": "01:00",
+                    "interval_hours": 4,
+                    "worker_count": 20,
+                },
+            )
+            self.assertEqual(interval_res.status_code, 200)
+            data_interval = interval_res.json()
+            self.assertEqual(data_interval["mode"], "interval")
+            self.assertEqual(data_interval["interval_hours"], 4)
+            self.assertEqual(data_interval["worker_count"], 20)
+
+            # Cập nhật tham số sai định dạng
+            bad_res = await client.post(
+                "/api/schedule",
+                json={
+                    "enabled": True,
+                    "mode": "daily",
+                    "daily_time": "99:99",
+                    "interval_hours": 4,
+                    "worker_count": 10,
+                },
+            )
+            self.assertEqual(bad_res.status_code, 400)
 
     async def test_relative_manual_supervisor_is_recognized(self) -> None:
         relative_script = Path("headless-runtime/scripts/supervise-workers.sh")

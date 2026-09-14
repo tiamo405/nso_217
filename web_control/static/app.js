@@ -72,7 +72,7 @@ function renderWorkers(workers) {
   if (!workers.length) {
     const row = document.createElement("tr");
     const empty = cell("Chưa có worker. Upload account rồi build.", "empty");
-    empty.colSpan = 10;
+    empty.colSpan = 11;
     row.append(empty);
     body.append(row);
     return;
@@ -81,6 +81,7 @@ function renderWorkers(workers) {
     const row = document.createElement("tr");
     row.append(cell(worker.name));
     const state = document.createElement("td"); state.append(stateBadge(worker.state)); row.append(state);
+    row.append(cell(worker.char_name || "—"));
     row.append(cell(`${worker.run_pass || 1}/${worker.run_pass_total || 2}`));
     row.append(cell(worker.pid));
     row.append(cell(worker.cpu_percent == null ? "—" : `${worker.cpu_percent}%`));
@@ -129,14 +130,43 @@ async function refreshStatus() {
     $("#start-supervisor").disabled = buildActive;
     $("#stop-supervisor").disabled = buildActive;
     $("#build-button").disabled = buildActive;
+    $("#run-button").disabled = buildActive;
     $("#account-file").disabled = buildActive;
     $("#account-form button").disabled = buildActive;
     if (data.active_job && !stream) watchBuild(data.active_job);
     renderWorkers(data.workers);
+    if (data.schedule) renderSchedule(data.schedule);
     $("#last-refresh").textContent = `Cập nhật ${new Date().toLocaleTimeString("vi-VN")}`;
   } catch (error) {
     notify(error.message, true);
   }
+}
+
+function renderSchedule(schedule) {
+  const badge = $("#schedule-status-badge");
+  badge.textContent = schedule.enabled ? "Đang bật" : "Tắt";
+  badge.className = `badge ${schedule.enabled ? "badge-success" : "badge-muted"}`;
+
+  $("#schedule-enabled").checked = schedule.enabled;
+  $("#schedule-mode").value = schedule.mode;
+  $("#schedule-daily-time").value = schedule.daily_time || "01:00";
+  $("#schedule-interval-hours").value = schedule.interval_hours || 6;
+  $("#schedule-worker-count").value = schedule.worker_count || 10;
+
+  if (schedule.mode === "daily") {
+    $("#group-daily-time").classList.remove("hidden");
+    $("#group-interval-hours").classList.add("hidden");
+  } else {
+    $("#group-daily-time").classList.add("hidden");
+    $("#group-interval-hours").classList.remove("hidden");
+  }
+
+  $("#schedule-next-run").textContent = schedule.enabled && schedule.next_run_at
+    ? formatTimestamp(schedule.next_run_at)
+    : "Chưa lên lịch";
+  $("#schedule-last-run").textContent = schedule.last_run_at
+    ? formatTimestamp(schedule.last_run_at)
+    : "Chưa chạy lần nào";
 }
 
 async function supervisorAction(action, button) {
@@ -197,7 +227,8 @@ function watchBuild(job) {
       stream.close(); stream = null;
       buildActive = false;
       $("#build-button").disabled = false;
-      notify(status.status === "succeeded" ? "Build thành công" : `Build lỗi: ${status.error}`, status.status === "failed");
+      $("#run-button").disabled = false;
+      notify(status.status === "succeeded" ? "Build thành công! Nhấn Run để chạy." : `Build lỗi: ${status.error}`, status.status === "failed");
       refreshStatus();
     }
   });
@@ -222,16 +253,60 @@ $("#account-form").addEventListener("submit", async (event) => {
   } catch (error) { notify(error.message, true); }
 });
 
-$("#build-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = $("#build-button"); button.disabled = true;
+$("#build-button").addEventListener("click", async () => {
+  const buildBtn = $("#build-button");
+  const runBtn = $("#run-button");
+  buildBtn.disabled = true;
+  runBtn.disabled = true;
   try {
     const job = await api("/api/build", { method: "POST", json: {
       worker_count: Number($("#worker-count").value),
-      start_after_build: $("#start-after-build").checked,
+      start_after_build: false,
     }});
     watchBuild(job);
-  } catch (error) { button.disabled = false; notify(error.message, true); }
+  } catch (error) {
+    buildBtn.disabled = false;
+    runBtn.disabled = false;
+    notify(error.message, true);
+  }
+});
+
+$("#run-button").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  await supervisorAction("start", button);
+});
+
+$("#schedule-mode").addEventListener("change", (event) => {
+  const mode = event.target.value;
+  if (mode === "daily") {
+    $("#group-daily-time").classList.remove("hidden");
+    $("#group-interval-hours").classList.add("hidden");
+  } else {
+    $("#group-daily-time").classList.add("hidden");
+    $("#group-interval-hours").classList.remove("hidden");
+  }
+});
+
+$("#schedule-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const saveBtn = $("#schedule-save-button");
+  saveBtn.disabled = true;
+  try {
+    const payload = {
+      enabled: $("#schedule-enabled").checked,
+      mode: $("#schedule-mode").value,
+      daily_time: $("#schedule-daily-time").value,
+      interval_hours: Number($("#schedule-interval-hours").value),
+      worker_count: Number($("#schedule-worker-count").value),
+    };
+    const updated = await api("/api/schedule", { method: "POST", json: payload });
+    renderSchedule(updated);
+    notify("Đã lưu cấu hình hẹn giờ Build & Run!");
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    saveBtn.disabled = false;
+  }
 });
 
 showDashboard();
