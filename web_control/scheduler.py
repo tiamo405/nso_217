@@ -34,6 +34,7 @@ class ScheduleManager:
         self.last_run_at: str | None = None
         self.next_run_at: str | None = None
 
+        self.transition_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._load()
 
@@ -222,35 +223,36 @@ class ScheduleManager:
                 # =========================================================================
                 # 2. KIỂM TRA AUTO TÀ THÚ: NẾU NVHN ĐÃ XONG 2/2 LƯỢT THÌ TỰ ĐỘNG CHẠY TÀ THÚ
                 # =========================================================================
-                if self.auto_ta_thu and self.current_phase == "nvhn" and self.manager is not None:
-                    # Chỉ kiểm tra khi không có build job nào đang chạy
-                    if self.jobs.active_job() is None:
-                        try:
-                            nvhn_status = await self.manager.status()
-                            totals = nvhn_status.get("totals", {})
-                            total_workers = totals.get("total", 0)
-                            done_workers = totals.get("done", 0)
-
-                            # Tất cả worker NVHN đã hoàn thành đủ lượt
-                            if total_workers > 0 and done_workers == total_workers:
-                                # Kiểm tra supervisor NVHN
-                                if not nvhn_status.get("supervisor", {}).get("running"):
-                                    logger.info(
-                                        "Tất cả %s worker NVHN đã hoàn thành đủ 2 lượt! Tự động chuyển sang chạy Tà Thú...",
-                                        total_workers,
-                                    )
-                                    self.current_phase = "ta_thu"
-                                    self._save()
-                                    ta_thu_started = await self.manager.start_ta_thu(worker_count=self.worker_count)
-                                    if ta_thu_started:
-                                        logger.info("Đã khởi chạy thành công Auto Tà Thú.")
-                                    else:
-                                        logger.warning("Khởi chạy Auto Tà Thú không thành công.")
-                        except Exception as check_exc:
-                            logger.error("Lỗi khi kiểm tra tiến độ NVHN: %s", check_exc)
+                await self._check_auto_ta_thu()
 
             except asyncio.CancelledError:
                 break
             except Exception as exc:
                 logger.error("Lỗi trong scheduler loop: %s", exc)
                 await asyncio.sleep(15)
+
+    async def _check_auto_ta_thu(self) -> None:
+        async with self.transition_lock:
+            if (
+                not self.auto_ta_thu
+                or self.current_phase != "nvhn"
+                or self.manager is None
+                or not self.manager.desired_supervisor()
+                or self.jobs.active_job() is not None
+            ):
+                return
+            nvhn_status = await self.manager.status()
+            totals = nvhn_status.get("totals", {})
+            total_workers = totals.get("total", 0)
+            if (
+                total_workers > 0
+                and totals.get("done", 0) == total_workers
+                and not nvhn_status.get("supervisor", {}).get("running")
+            ):
+                logger.info("Tất cả %s worker NVHN đã hoàn thành! Khởi chạy Tà Thú...", total_workers)
+                if await self.manager.start_ta_thu(worker_count=self.worker_count):
+                    self.current_phase = "ta_thu"
+                    self._save()
+                    logger.info("Đã khởi chạy thành công Auto Tà Thú.")
+                else:
+                    logger.warning("Khởi chạy Auto Tà Thú không thành công.")

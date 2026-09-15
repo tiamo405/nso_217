@@ -51,6 +51,10 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 5. Xem status, tên nhân vật đang chạy, live log; Stop, Start hoặc Restart từng worker.
 6. Stop tất cả sẽ dừng cả supervisor NVHN và Tà Thú, đồng thời ghi nhớ không tự bật lại sau reboot.
 
+**Start/Run** supervisor chạy tiếp tiến độ hiện có. Nếu toàn bộ worker đã hoàn
+thành 2/2 lượt, nhấn **Build** rồi **Run** để chạy lại từ đầu. Start thất bại
+hoặc Stop tất cả sẽ không kích hoạt Auto Tà Thú từ tiến độ NVHN cũ.
+
 `Stop` tại một worker tạo marker `.paused`, dừng Java và giữ supervisor chạy cho
 các worker còn lại. Supervisor không tự bật lại worker có trạng thái `PAUSED`.
 Nhấn `Start` worker đó để xóa marker và chạy lại; nút `Restart` dùng để khởi

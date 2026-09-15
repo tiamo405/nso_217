@@ -2,6 +2,9 @@ const $ = (selector) => document.querySelector(selector);
 let refreshTimer = null;
 let stream = null;
 let buildActive = false;
+let scheduleDirty = false;
+let scheduleSaving = false;
+let scheduleRevision = 0;
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -108,6 +111,7 @@ function renderWorkers(workers) {
 }
 
 async function refreshStatus() {
+  const revision = scheduleRevision;
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
@@ -144,7 +148,9 @@ async function refreshStatus() {
     if (data.active_job && !stream) watchBuild(data.active_job);
 
     renderWorkers(data.workers || []);
-    if (data.schedule) renderSchedule(data.schedule);
+    if (data.schedule && revision === scheduleRevision && !scheduleSaving) {
+      renderSchedule(data.schedule);
+    }
 
     $("#last-refresh").textContent = `Cập nhật ${new Date().toLocaleTimeString("vi-VN")}`;
   } catch (error) {
@@ -157,18 +163,21 @@ function renderSchedule(schedule) {
   badge.textContent = schedule.enabled ? "Đang bật" : "Tắt";
   badge.className = `badge ${schedule.enabled ? "badge-success" : "badge-muted"}`;
 
-  $("#schedule-enabled").checked = schedule.enabled;
-  $("#schedule-mode").value = schedule.mode;
-  $("#schedule-daily-time").value = schedule.daily_time || "01:00";
-  $("#schedule-interval-hours").value = schedule.interval_hours || 6;
-  $("#schedule-worker-count").value = schedule.worker_count || 10;
+  // Polling cập nhật trạng thái, nhưng giữ nguyên các giá trị chưa lưu.
+  if (!scheduleDirty && !scheduleSaving) {
+    $("#schedule-enabled").checked = schedule.enabled;
+    $("#schedule-mode").value = schedule.mode;
+    $("#schedule-daily-time").value = schedule.daily_time || "01:00";
+    $("#schedule-interval-hours").value = schedule.interval_hours || 6;
+    $("#schedule-worker-count").value = schedule.worker_count || 10;
 
-  if (schedule.mode === "daily") {
-    $("#group-daily-time").classList.remove("hidden");
-    $("#group-interval-hours").classList.add("hidden");
-  } else {
-    $("#group-daily-time").classList.add("hidden");
-    $("#group-interval-hours").classList.remove("hidden");
+    if (schedule.mode === "daily") {
+      $("#group-daily-time").classList.remove("hidden");
+      $("#group-interval-hours").classList.add("hidden");
+    } else {
+      $("#group-daily-time").classList.add("hidden");
+      $("#group-interval-hours").classList.remove("hidden");
+    }
   }
 
   if (schedule.enabled && schedule.next_run_at) {
@@ -310,6 +319,13 @@ function watchBuild(job) {
 $("#build-button").addEventListener("click", () => triggerBuild(false));
 $("#run-button").addEventListener("click", () => triggerBuild(true));
 
+for (const eventName of ["input", "change"]) {
+  $("#schedule-form").addEventListener(eventName, () => {
+    scheduleDirty = true;
+    scheduleRevision += 1;
+  });
+}
+
 $("#schedule-mode").addEventListener("change", (event) => {
   if (event.target.value === "daily") {
     $("#group-daily-time").classList.remove("hidden");
@@ -322,6 +338,12 @@ $("#schedule-mode").addEventListener("change", (event) => {
 
 $("#schedule-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (scheduleSaving) return;
+  scheduleSaving = true;
+  scheduleDirty = true;
+  const revision = ++scheduleRevision;
+  const button = $("#schedule-form button[type='submit']");
+  button.disabled = true;
   const enabled = $("#schedule-enabled").checked;
   const mode = $("#schedule-mode").value;
   const dailyTime = $("#schedule-daily-time").value;
@@ -339,10 +361,16 @@ $("#schedule-form").addEventListener("submit", async (event) => {
         worker_count: workerCount,
       },
     });
+    scheduleSaving = false;
+    if (revision === scheduleRevision) scheduleDirty = false;
+    scheduleRevision += 1;
     notify("Đã lưu cấu hình hẹn giờ!");
     renderSchedule(updated);
   } catch (error) {
     notify(error.message, true);
+  } finally {
+    scheduleSaving = false;
+    button.disabled = false;
   }
 });
 

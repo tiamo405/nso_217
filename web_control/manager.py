@@ -151,8 +151,18 @@ class HeadlessManager:
 
         if current["stale_pid"]:
             self.supervisor_pid_file.unlink(missing_ok=True)
-        if not any(self.settings.workers_dir.glob("worker-*")):
+        workers = [path for path in self.settings.workers_dir.glob("worker-*") if path.is_dir()]
+        if not workers:
             raise ControlError("Chưa có worker. Hãy build trước.")
+        if all(
+            (worker / "home" / "worker.done").is_file()
+            and (worker / "home" / "worker.first-pass.done").is_file()
+            for worker in workers
+        ):
+            raise ControlError(
+                "Tất cả worker NVHN đã hoàn thành 2/2 lượt. "
+                "Start/Run chỉ chạy tiếp tiến độ cũ. Hãy nhấn Build rồi Run để chạy lại từ đầu."
+            )
         has_main = (
             (self.settings.headless_dir / "build" / "classes" / "OptimizedMain.class").is_file()
             or (self.settings.headless_dir / "build" / "classes" / "HeadlessMain.class").is_file()

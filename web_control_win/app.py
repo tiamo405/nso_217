@@ -23,11 +23,11 @@ class BuildRequest(BaseModel):
 
 
 class ScheduleRequest(BaseModel):
-    enabled: bool
-    mode: Literal["daily", "interval"]
-    daily_time: str = "01:00"
-    interval_hours: int = 6
-    worker_count: int = 10
+    enabled: bool = False
+    mode: Literal["daily", "interval"] = "daily"
+    daily_time: Optional[str] = "01:00"
+    interval_hours: Optional[int] = 6
+    worker_count: Optional[int] = 10
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -93,9 +93,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return scheduler.update_config(
             enabled=body.enabled,
             mode=body.mode,
-            daily_time=body.daily_time,
-            interval_hours=body.interval_hours,
-            worker_count=body.worker_count,
+            daily_time=body.daily_time or "01:00",
+            interval_hours=body.interval_hours if body.interval_hours is not None else 6,
+            worker_count=body.worker_count if body.worker_count is not None else 10,
         )
 
     @app.post("/api/supervisor/start")

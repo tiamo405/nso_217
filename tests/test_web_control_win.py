@@ -150,6 +150,21 @@ sys.exit(0)
             self.assertEqual(data["interval_hours"], 8)
             self.assertEqual(data["worker_count"], 15)
 
+        saved = json.loads((self.settings.web_runtime_dir / "schedule.json").read_text())
+        self.assertEqual(saved["worker_count"], 15)
+        # Một app mới phải đọc lại lịch đã lưu, kể cả sau khi tắt lịch.
+        async with AsyncClient(
+            transport=ASGITransport(app=create_app(self.settings)), base_url="http://test"
+        ) as client:
+            restored = (await client.get("/api/schedule")).json()
+            for key in ("enabled", "mode", "daily_time", "interval_hours", "worker_count"):
+                self.assertEqual(restored[key], data[key])
+            restored["enabled"] = False
+            self.assertEqual((await client.post("/api/schedule", json=restored)).status_code, 200)
+        restored = create_app(self.settings).state.scheduler.get_state()
+        self.assertFalse(restored["enabled"])
+        self.assertEqual(restored["worker_count"], 15)
+
     async def test_worker_actions(self) -> None:
         transport = ASGITransport(app=create_app(self.settings))
         async with AsyncClient(transport=transport, base_url="http://test") as client:

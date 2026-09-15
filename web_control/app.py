@@ -120,18 +120,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/supervisor/start")
     async def start_supervisor() -> dict[str, object]:
-        require_idle()
-        # Nếu start supervisor NVHN thì dừng Tà Thú nếu đang chạy
-        await manager.stop_ta_thu()
-        scheduler.current_phase = "nvhn"
-        return await manager.start_supervisor()
+        async with scheduler.transition_lock:
+            require_idle()
+            try:
+                await manager.stop_ta_thu()
+                result = await manager.start_supervisor()
+            except Exception:
+                # Không dùng tiến độ cũ để tự chuyển Tà Thú sau Start thất bại.
+                manager._set_desired_supervisor(False)
+                raise
+            scheduler.current_phase = "nvhn"
+            scheduler._save()
+            return result
 
     @app.post("/api/supervisor/stop")
     async def stop_supervisor() -> dict[str, object]:
-        require_idle()
-        # Dừng cả supervisor NVHN và Tà Thú
-        await manager.stop_ta_thu()
-        return await manager.stop_supervisor()
+        async with scheduler.transition_lock:
+            require_idle()
+            # Dừng cả supervisor NVHN và Tà Thú
+            await manager.stop_ta_thu()
+            return await manager.stop_supervisor()
 
     @app.post("/api/ta-thu/supervisor/stop")
     async def stop_ta_thu_supervisor() -> dict[str, object]:

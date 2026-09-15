@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from httpx import ASGITransport, AsyncClient
 
@@ -238,6 +239,68 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         stopped = await manager.stop_supervisor()
         self.assertFalse(stopped["running"])
         self.assertFalse(manager.desired_supervisor())
+
+    async def test_completed_start_does_not_trigger_ta_thu(self) -> None:
+        home = self.settings.workers_dir / "worker-01" / "home"
+        (home / "worker.done").touch()
+        (home / "worker.first-pass.done").touch()
+        app = create_app(self.settings)
+        manager = app.state.manager
+        scheduler = app.state.scheduler
+        manager._set_desired_supervisor(True)
+        with patch.object(manager, "stop_ta_thu", new_callable=AsyncMock), patch.object(
+            manager, "start_ta_thu", new_callable=AsyncMock
+        ) as start_ta_thu:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                response = await client.post("/api/supervisor/start")
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertIn("Build rồi Run", response.text)
+            self.assertIsNone(manager._supervisor_process)
+            self.assertFalse(manager.desired_supervisor())
+            await scheduler._check_auto_ta_thu()
+            start_ta_thu.assert_not_awaited()
+
+    async def test_first_pass_done_can_still_start(self) -> None:
+        (self.settings.workers_dir / "worker-01" / "home" / "worker.done").touch()
+        manager = HeadlessManager(self.settings)
+        try:
+            self.assertTrue((await manager.start_supervisor())["running"])
+        finally:
+            await manager.stop_supervisor()
+
+    async def test_start_updates_phase_only_after_success(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.current_phase = "ta_thu"
+        with patch.object(app.state.manager, "stop_ta_thu", new_callable=AsyncMock), patch.object(
+            app.state.manager, "start_supervisor", new_callable=AsyncMock
+        ) as start:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                start.side_effect = ControlError("startup failed")
+                self.assertEqual((await client.post("/api/supervisor/start")).status_code, 400)
+                self.assertEqual(scheduler.current_phase, "ta_thu")
+                start.side_effect = None
+                start.return_value = {"running": True}
+                self.assertEqual((await client.post("/api/supervisor/start")).status_code, 200)
+        self.assertEqual(json.loads(scheduler.state_file.read_text())["current_phase"], "nvhn")
+
+    async def test_auto_ta_thu_requires_active_nvhn_and_successful_start(self) -> None:
+        app = create_app(self.settings)
+        manager = app.state.manager
+        scheduler = app.state.scheduler
+        completed = {"totals": {"total": 1, "done": 1}, "supervisor": {"running": False}}
+        with patch.object(manager, "status", new_callable=AsyncMock, return_value=completed), patch.object(
+            manager, "start_ta_thu", new_callable=AsyncMock, return_value=False
+        ) as start:
+            await scheduler._check_auto_ta_thu()
+            start.assert_not_awaited()
+            manager._set_desired_supervisor(True)
+            await scheduler._check_auto_ta_thu()
+            start.assert_awaited_once()
+            self.assertEqual(scheduler.current_phase, "nvhn")
+            start.return_value = True
+            await scheduler._check_auto_ta_thu()
+            self.assertEqual(scheduler.current_phase, "ta_thu")
 
     async def test_worker_pause_start_and_restart_actions(self) -> None:
         marker = self.settings.workers_dir / "worker-01" / ".paused"
