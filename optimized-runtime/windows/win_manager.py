@@ -197,10 +197,35 @@ def get_process_stats(pid: int) -> Tuple[Optional[float], Optional[float]]:
 # ==========================================
 # 1. BUILD OPTIMIZED RUNTIME
 # ==========================================
+def _safe_print(msg: str, file=None) -> None:
+    """Print an toàn, encode lỗi thành '?' thay vì crash."""
+    try:
+        if file is None:
+            print(msg)
+        else:
+            print(msg, file=file)
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        safe = msg.encode("ascii", errors="replace").decode("ascii")
+        if file is None:
+            print(safe)
+        else:
+            print(safe, file=file)
+
+
 def cmd_build(args: Any = None) -> int:
-    print("==========================================================")
-    print(" [1/4] Chuẩn bị mã nguồn và áp dụng Overrides...")
-    print("==========================================================")
+    try:
+        return _cmd_build_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        _tb.print_exc()
+        sys.stderr.write(f"[!] Exception: {exc}\n")
+        return 1
+
+
+def _cmd_build_inner(args: Any = None) -> int:
+    _safe_print("==========================================================")
+    _safe_print("[1/4] Chuan bi ma nguon va ap dung Overrides...")
+    _safe_print("==========================================================")
 
     work_src = BUILD_DIR / "src-repo"
     classes_dir = BUILD_DIR / "classes"
@@ -247,16 +272,15 @@ def cmd_build(args: Any = None) -> int:
                 text = text.replace(old_str, new_str)
                 file_path.write_text(text, encoding="utf-8")
 
-    print("[2/4] Tạo danh sách file Java (sources.txt)...")
+    _safe_print("[2/4] Tao danh sach file Java (sources.txt)...")
     java_files = sorted(work_src.rglob("*.java"))
-    # Chuyển sang dạng path POSIX (dấu /) để javac parse được trên cả Windows và Linux
     with open(sources_file, "w", encoding="utf-8") as f:
         for jf in java_files:
             f.write(jf.as_posix() + "\n")
 
-    print(f"      Tổng số: {len(java_files)} file Java.")
+    _safe_print(f"      Total: {len(java_files)} Java files.")
 
-    print("[3/4] Biên dịch mã nguồn với javac...")
+    _safe_print("[3/4] Bien dich ma nguon voi javac...")
     javac_bin = get_java_bin("javac")
     classes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -270,13 +294,14 @@ def cmd_build(args: Any = None) -> int:
         f"@{sources_file.as_posix()}",
     ]
 
-    res = subprocess.run(compile_cmd)
+    res = subprocess.run(compile_cmd, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
     if res.returncode != 0:
-        print("\n[!] LỖI BIÊN DỊCH JAVAC!", file=sys.stderr)
+        sys.stderr.write("\n[!] LOI BIEN DICH JAVAC!\n")
+        if res.stderr:
+            sys.stderr.write(res.stderr)
         return 1
 
-    print("[4/4] Đóng gói tài nguyên tĩnh (maps, account, configs)...")
-    # Copy toàn bộ asset (trừ .java) vào classes
+    _safe_print("[4/4] Dong goi tai nguyen tinh (maps, account, configs)...")
     shutil.copytree(work_src, classes_dir, dirs_exist_ok=True)
     for jf in classes_dir.rglob("*.java"):
         jf.unlink()
@@ -301,14 +326,17 @@ def cmd_build(args: Any = None) -> int:
 
     main_class = classes_dir / "OptimizedMain.class"
     if not main_class.is_file():
-        print("[!] Không tìm thấy OptimizedMain.class sau khi build!", file=sys.stderr)
+        sys.stderr.write("[!] Khong tim thay OptimizedMain.class sau khi build!\n")
+        sys.stderr.write(f"    REPO_DIR    = {REPO_DIR}\n")
+        sys.stderr.write(f"    RUNTIME_DIR = {RUNTIME_DIR}\n")
+        sys.stderr.write(f"    classes_dir = {classes_dir}\n")
         return 1
 
-    print("==========================================================")
-    print(" BUILD THÀNH CÔNG!")
-    print(f" Thư mục classes: {classes_dir}")
-    print(" Entry point: OptimizedMain")
-    print("==========================================================")
+    _safe_print("==========================================================")
+    _safe_print(" BUILD THANH CONG!")
+    _safe_print(f" Classes dir: {classes_dir}")
+    _safe_print(" Entry point: OptimizedMain")
+    _safe_print("==========================================================")
     return 0
 
 
@@ -316,44 +344,52 @@ def cmd_build(args: Any = None) -> int:
 # 2. BUILD WORKERS (CHIA TÀI KHOẢN)
 # ==========================================
 def cmd_build_workers(args: Any) -> int:
+    try:
+        return _cmd_build_workers_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        _tb.print_exc()
+        sys.stderr.write(f"[!] Exception: {exc}\n")
+        return 1
+
+
+def _cmd_build_workers_inner(args: Any) -> int:
     worker_count = args.count
     source_csv = Path(args.csv).resolve() if args.csv else ACCOUNT_CSV
 
     if worker_count < 1:
-        print("[!] Số worker phải >= 1", file=sys.stderr)
+        sys.stderr.write("[!] So worker phai >= 1\n")
         return 1
 
     if not source_csv.is_file():
-        print(f"[!] Không tìm thấy file account: {source_csv}", file=sys.stderr)
+        sys.stderr.write(f"[!] Khong tim thay file account: {source_csv}\n")
         return 1
 
-    # Kiểm tra xem có worker nào đang chạy không
     if WORKERS_DIR.is_dir():
         for pid_file in WORKERS_DIR.glob("worker-*/bot.pid"):
             try:
                 pid = int(pid_file.read_text(encoding="utf-8").strip())
                 if is_pid_running(pid):
-                    print(f"[!] Worker PID {pid} đang chạy. Hãy stop trước khi chia lại.", file=sys.stderr)
+                    sys.stderr.write(f"[!] Worker PID {pid} dang chay. Hay stop truoc khi chia lai.\n")
                     return 1
             except (ValueError, OSError):
                 pass
 
     if args.compile:
-        print("Đang biên dịch optimized classes...")
+        _safe_print("Dang bien dich optimized classes...")
         if cmd_build() != 0:
             return 1
 
-    # Đọc danh sách tài khoản
     lines = source_csv.read_text(encoding="utf-8-sig", errors="replace").splitlines()
     accounts = [line.strip() for line in lines[1:] if line.strip()]
     total = len(accounts)
 
     if total == 0:
-        print("[!] File account.csv không có tài khoản hợp lệ.", file=sys.stderr)
+        sys.stderr.write("[!] File account.csv khong co tai khoan hop le.\n")
         return 1
 
     if worker_count > total:
-        print(f"[!] Có {total} tài khoản nhưng yêu cầu {worker_count} worker.", file=sys.stderr)
+        sys.stderr.write(f"[!] Co {total} tai khoan nhung yeu cau {worker_count} worker.\n")
         return 1
 
     header = lines[0].strip()
@@ -366,7 +402,7 @@ def cmd_build_workers(args: Any) -> int:
     extra = total % worker_count
     offset = 0
 
-    print(f"Đang chia {total} tài khoản thành {worker_count} workers...")
+    _safe_print(f"Dang chia {total} tai khoan thanh {worker_count} workers...")
     for idx in range(1, worker_count + 1):
         worker_name = f"worker-{idx:02d}"
         worker_dir = staging_dir / worker_name
@@ -383,17 +419,15 @@ def cmd_build_workers(args: Any) -> int:
             for acc in chunk:
                 f.write(acc + "\n")
 
-        print(f" - {worker_name}: {count} tài khoản")
+        _safe_print(f" - {worker_name}: {count} accounts")
 
-    # Xóa sạch toàn bộ thư mục workers cũ (xóa sạch home/, log, pid, marker hoàn tất cũ)
     if WORKERS_DIR.exists():
-        print("Đang dọn dẹp sạch sẽ dữ liệu worker cũ (logs, home, markers)...")
+        _safe_print("Dang don dep du lieu worker cu...")
         shutil.rmtree(WORKERS_DIR, ignore_errors=True)
 
-    # Đưa thư mục staging mới vào vị trí workers
     shutil.move(str(staging_dir), str(WORKERS_DIR))
 
-    print(f"Hoàn tất: Đã tạo mới hoàn toàn {worker_count} worker trắng tại {WORKERS_DIR}")
+    _safe_print(f"Hoan tat: Da tao moi {worker_count} worker tai {WORKERS_DIR}")
     return 0
 
 
@@ -401,8 +435,18 @@ def cmd_build_workers(args: Any) -> int:
 # 3. START WORKERS
 # ==========================================
 def cmd_start(args: Any) -> int:
+    try:
+        return _cmd_start_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        _tb.print_exc()
+        sys.stderr.write(f"[!] Exception: {exc}\n")
+        return 1
+
+
+def _cmd_start_inner(args: Any) -> int:
     if not CLASSES_DIR.is_dir() or not (CLASSES_DIR / "OptimizedMain.class").is_file():
-        print("[!] Chưa có classes. Chạy lệnh build trước.", file=sys.stderr)
+        sys.stderr.write("[!] Chua co classes. Chay lenh build truoc.\n")
         return 1
 
     delay = args.delay if args.delay is not None else START_DELAY
@@ -415,7 +459,7 @@ def cmd_start(args: Any) -> int:
 
     worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
     if not worker_dirs:
-        print("[!] Chưa có worker nào. Hãy chạy build-workers trước.", file=sys.stderr)
+        sys.stderr.write("[!] Chua co worker nao. Hay chay build-workers truoc.\n")
         return 1
 
     started = 0
@@ -438,18 +482,16 @@ def cmd_start(args: Any) -> int:
         home_dir = worker_dir / "home"
         home_dir.mkdir(parents=True, exist_ok=True)
 
-        # Kiểm tra hoàn thành
         if (home_dir / "worker.done").is_file():
-            print(f"[{worker_name}] Đã hoàn tất toàn bộ account, bỏ qua.")
+            _safe_print(f"[{worker_name}] Da hoan tat toan bo account, bo qua.")
             completed += 1
             continue
 
-        # Kiểm tra đang chạy
         if pid_file.is_file():
             try:
                 pid = int(pid_file.read_text(encoding="utf-8").strip())
                 if is_pid_running(pid):
-                    print(f"[{worker_name}] Đang chạy (PID {pid})")
+                    _safe_print(f"[{worker_name}] Dang chay (PID {pid})")
                     running += 1
                     continue
             except (ValueError, OSError):
@@ -466,7 +508,6 @@ def cmd_start(args: Any) -> int:
             f_out.write(f"\n===== START OPTIMIZED {now_str} PASS {worker_pass}/2 =====\n")
             f_err.write(f"\n===== START OPTIMIZED {now_str} PASS {worker_pass}/2 =====\n")
 
-        # Chuẩn bị classpath: Windows dùng dấu ; - Linux dùng dấu :
         cp_sep = ";" if os.name == "nt" else ":"
         classpath = f"{worker_dir}{cp_sep}{CLASSES_DIR}"
 
@@ -496,7 +537,6 @@ def cmd_start(args: Any) -> int:
 
         creationflags = 0
         if os.name == "nt":
-            # Chạy nền ngầm hoàn toàn không hiện cửa sổ console
             creationflags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
 
         try:
@@ -513,20 +553,20 @@ def cmd_start(args: Any) -> int:
             time.sleep(0.3)
 
             if is_pid_running(p.pid):
-                print(f"[{worker_name}] Đã khởi động (PID {p.pid})")
+                _safe_print(f"[{worker_name}] Da khoi dong (PID {p.pid})")
                 started += 1
             else:
-                print(f"[!] [{worker_name}] Khởi động thất bại. Xem {err_log}", file=sys.stderr)
+                sys.stderr.write(f"[!] [{worker_name}] Khoi dong that bai. Xem {err_log}\n")
                 pid_file.unlink(missing_ok=True)
                 failed += 1
         except Exception as e:
-            print(f"[!] [{worker_name}] Lỗi: {e}", file=sys.stderr)
+            sys.stderr.write(f"[!] [{worker_name}] Loi: {e}\n")
             failed += 1
 
         if delay > 0:
             time.sleep(delay)
 
-    print(f"\nKết quả: Khởi động mới={started}, Đang chạy={running}, Hoàn tất={completed}, Lỗi={failed}")
+    _safe_print(f"\nKet qua: Khoi dong moi={started}, Dang chay={running}, Hoan tat={completed}, Loi={failed}")
     return 0 if failed == 0 else 1
 
 
@@ -534,6 +574,16 @@ def cmd_start(args: Any) -> int:
 # 4. STOP WORKERS
 # ==========================================
 def cmd_stop(args: Any) -> int:
+    try:
+        return _cmd_stop_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        _tb.print_exc()
+        sys.stderr.write(f"[!] Exception: {exc}\n")
+        return 1
+
+
+def _cmd_stop_inner(args: Any) -> int:
     target_numbers = set()
     if args.workers:
         for w in args.workers:
@@ -541,13 +591,12 @@ def cmd_stop(args: Any) -> int:
             if cleaned.isdigit():
                 target_numbers.add(int(cleaned))
 
-    # Dừng supervisor nếu không chỉ định worker cụ thể
     supervisor_pid_file = WORKERS_DIR / "supervisor.pid"
     if not target_numbers and supervisor_pid_file.is_file():
         try:
             spid = int(supervisor_pid_file.read_text(encoding="utf-8").strip())
             if is_pid_running(spid):
-                print(f"Đang dừng Supervisor (PID {spid})...")
+                _safe_print(f"Dang dung Supervisor (PID {spid})...")
                 kill_pid(spid)
         except (ValueError, OSError):
             pass
@@ -567,7 +616,7 @@ def cmd_stop(args: Any) -> int:
         try:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
             if is_pid_running(pid):
-                print(f"Đang dừng {worker_name} (PID {pid})...")
+                _safe_print(f"Dang dung {worker_name} (PID {pid})...")
                 kill_pid(pid)
                 stopped += 1
         except (ValueError, OSError):
@@ -575,7 +624,7 @@ def cmd_stop(args: Any) -> int:
 
         pid_file.unlink(missing_ok=True)
 
-    print(f"Đã dừng {stopped} worker.")
+    _safe_print(f"Da dung {stopped} worker.")
     return 0
 
 
@@ -688,6 +737,16 @@ def get_workers_status_dict() -> Dict[str, Any]:
 # 5. STATUS WORKERS
 # ==========================================
 def cmd_status(args: Any) -> int:
+    try:
+        return _cmd_status_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        _tb.print_exc()
+        sys.stderr.write(f"[!] Exception: {exc}\n")
+        return 1
+
+
+def _cmd_status_inner(args: Any) -> int:
     if getattr(args, "json", False):
         import json
         print(json.dumps(get_workers_status_dict(), ensure_ascii=False, indent=2))
@@ -695,11 +754,11 @@ def cmd_status(args: Any) -> int:
 
     worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
     if not worker_dirs:
-        print("[!] Không có worker nào trong thư mục.")
+        _safe_print("[!] Khong co worker nao trong thu muc.")
         return 0
 
-    print(f"{'WORKER':<12} {'PID':<8} {'%CPU':<8} {'RSS(MB)':<10} {'PASS':<6} {'STATUS':<12} {'CHARACTER'}")
-    print(f"{'-'*12} {'-'*8} {'-'*8} {'-'*10} {'-'*6} {'-'*12} {'-'*15}")
+    _safe_print(f"{'WORKER':<12} {'PID':<8} {'%CPU':<8} {'RSS(MB)':<10} {'PASS':<6} {'STATUS':<12} {'CHARACTER'}")
+    _safe_print(f"{'-'*12} {'-'*8} {'-'*8} {'-'*10} {'-'*6} {'-'*12} {'-'*15}")
 
     for worker_dir in worker_dirs:
         worker_name = worker_dir.name
@@ -712,11 +771,9 @@ def cmd_status(args: Any) -> int:
         rss_str = "-"
         char_name = "-"
 
-        # Đọc tên nhân vật từ log
         stdout_log = worker_dir / "stdout.log"
         if stdout_log.is_file():
             try:
-                # Đọc 200 dòng cuối
                 with open(stdout_log, "r", encoding="utf-8", errors="replace") as lf:
                     tail_lines = lf.readlines()[-200:]
                     for line in reversed(tail_lines):
@@ -746,7 +803,7 @@ def cmd_status(args: Any) -> int:
             except (ValueError, OSError):
                 pass
 
-        print(f"{worker_name:<12} {pid_str:<8} {cpu_str:<8} {rss_str:<10} {run_pass:<6} {status:<12} {char_name}")
+        _safe_print(f"{worker_name:<12} {pid_str:<8} {cpu_str:<8} {rss_str:<10} {run_pass:<6} {status:<12} {char_name}")
 
     return 0
 
@@ -755,6 +812,16 @@ def cmd_status(args: Any) -> int:
 # 6. SUPERVISE WORKERS
 # ==========================================
 def cmd_supervise(args: Any) -> int:
+    try:
+        return _cmd_supervise_inner(args)
+    except Exception as exc:
+        import traceback as _tb
+        _tb.print_exc()
+        sys.stderr.write(f"[!] Exception: {exc}\n")
+        return 1
+
+
+def _cmd_supervise_inner(args: Any) -> int:
     delay = args.delay if args.delay is not None else 30
     check_interval = args.interval if args.interval is not None else 20
 
@@ -765,25 +832,24 @@ def cmd_supervise(args: Any) -> int:
         try:
             old_pid = int(supervisor_pid_file.read_text(encoding="utf-8").strip())
             if is_pid_running(old_pid):
-                print(f"[!] Supervisor đã chạy từ trước (PID {old_pid}).", file=sys.stderr)
+                sys.stderr.write(f"[!] Supervisor da chay tu truoc (PID {old_pid}).\n")
                 return 1
         except (ValueError, OSError):
             pass
 
     current_pid = os.getpid()
     supervisor_pid_file.write_text(str(current_pid), encoding="utf-8")
-    print(f"Optimized Supervisor đang chạy (PID {current_pid})... Bấm Ctrl+C để dừng.")
-    print(f"Giãn cách: delay={delay}s, check_interval={check_interval}s\n")
+    _safe_print(f"Optimized Supervisor dang chay (PID {current_pid})... Bam Ctrl+C de dung.")
+    _safe_print(f"Gian cach: delay={delay}s, check_interval={check_interval}s\n")
 
     try:
         while True:
             worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
             if not worker_dirs:
-                print("Chưa có worker nào để giám sát. Đợi...")
+                _safe_print("Chua co worker nao de giam sat. Doi...")
                 time.sleep(check_interval)
                 continue
 
-            # Xử lý chuyển pass 1/2 sang 2/2
             for worker_dir in worker_dirs:
                 if (worker_dir / ".paused").is_file():
                     continue
@@ -793,9 +859,8 @@ def cmd_supervise(args: Any) -> int:
                 if done_marker.is_file() and not first_pass_marker.is_file():
                     shutil.move(str(done_marker), str(first_pass_marker))
                     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    print(f"[{now_str}] {worker_dir.name} đã hoàn tất Lượt 1/2 -> Chuẩn bị chạy Lượt 2/2.")
+                    _safe_print(f"[{now_str}] {worker_dir.name} hoan tat Luot 1/2 -> Chuan bi chay Luot 2/2.")
 
-            # Kiểm tra xem toàn bộ worker đã xong chưa
             all_done = True
             for worker_dir in worker_dirs:
                 if not (worker_dir / "home" / "worker.done").is_file():
@@ -803,12 +868,11 @@ def cmd_supervise(args: Any) -> int:
                     break
 
             if all_done and len(worker_dirs) > 0:
-                print("\n========================================================")
-                print(" Tất cả worker đã hoàn tất cả 2 lượt! Supervisor kết thúc.")
-                print("========================================================")
+                _safe_print("\n========================================================")
+                _safe_print(" Tat ca worker da hoan tat ca 2 luot! Supervisor ket thuc.")
+                _safe_print("========================================================")
                 break
 
-            # Gọi start worker với delay
             class DummyArgs:
                 pass
             start_req = DummyArgs()
@@ -819,7 +883,7 @@ def cmd_supervise(args: Any) -> int:
 
             time.sleep(check_interval)
     except KeyboardInterrupt:
-        print("\nSupervisor nhận lệnh dừng (Ctrl+C). Thoát.")
+        _safe_print("\nSupervisor nhan lenh dung (Ctrl+C). Thoat.")
     finally:
         supervisor_pid_file.unlink(missing_ok=True)
 
@@ -837,9 +901,9 @@ def cmd_reset(args: Any = None) -> int:
         marker.unlink(missing_ok=True)
         count += 1
         worker_name = marker.parent.parent.name
-        print(f"Đã reset {worker_name}: {marker.name}")
+        _safe_print(f"Da reset {worker_name}: {marker.name}")
 
-    print(f"Đã xóa {count} marker hoàn tất.")
+    _safe_print(f"Da xoa {count} marker hoan tat.")
     return 0
 
 
@@ -852,30 +916,27 @@ def cmd_logs(args: Any) -> int:
         worker_name = f"worker-{int(cleaned):02d}"
         log_file = WORKERS_DIR / worker_name / "stdout.log"
         if not log_file.is_file():
-            print(f"[!] Không tìm thấy log tại: {log_file}")
+            _safe_print(f"[!] Khong tim thay log tai: {log_file}")
             return 1
-        print(f"=== Đang theo dõi log của {worker_name} (Ctrl+C để thoát) ===")
+        _safe_print(f"=== Dang theo doi log cua {worker_name} (Ctrl+C de thoat) ===")
         return tail_file(log_file)
     else:
         log_files = sorted(WORKERS_DIR.glob("worker-*/stdout.log"))
         if not log_files:
-            print("[!] Chưa có log file nào.")
+            _safe_print("[!] Chua co log file nao.")
             return 1
-        print(f"=== Đang theo dõi {len(log_files)} workers (Ctrl+C để thoát) ===")
-        # Hiện 20 dòng cuối của file gần nhất
+        _safe_print(f"=== Dang theo doi {len(log_files)} workers (Ctrl+C de thoat) ===")
         for lf in log_files:
-            print(f"\n--- {lf.parent.name} ---")
+            _safe_print(f"\n--- {lf.parent.name} ---")
             lines = lf.read_text(encoding="utf-8", errors="replace").splitlines()[-10:]
-            for l in lines:
-                print(l)
+            for line in lines:
+                _safe_print(line)
     return 0
 
 
 def tail_file(file_path: Path) -> int:
-    """Theo dõi log theo thời gian thực (như tail -f)."""
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            # Nhảy đến cuối file
             f.seek(0, os.SEEK_END)
             while True:
                 line = f.readline()
@@ -885,7 +946,7 @@ def tail_file(file_path: Path) -> int:
                 else:
                     time.sleep(0.5)
     except KeyboardInterrupt:
-        print("\nĐã dừng theo dõi log.")
+        _safe_print("\nDa dung theo doi log.")
     return 0
 
 

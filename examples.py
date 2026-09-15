@@ -7,8 +7,8 @@ from hoatdong import NSOActivityClient
 # Sửa trực tiếp thông tin test tại đây.
 HOST = "Nsotk1.nsotk.online"
 PORT = 14444
-USERNAME = "trumvd24"
-PASSWORD = "ngan2021"
+USERNAME = "namtk0000"
+PASSWORD = "000111"
 
 
 def main():

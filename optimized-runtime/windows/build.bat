@@ -21,11 +21,11 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [2/3] Dang bien dich Optimized Runtime cho Windows...
-python "%~dp0win_manager.py" build
+python "%~dp0win_manager.py" build 2>&1
 
 if %ERRORLEVEL% equ 0 (
     echo [3/3] Thanh cong!
 ) else (
-    echo [!] Build that bai!
+    echo [!] Build that bai! (exit code: %ERRORLEVEL%)
 )
 pause
