@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSO Optimized Control (Windows Server)</title>
+  <link rel="stylesheet" href="/static/style.css?v=1">
+</head>
+<body>
+  <main class="shell">
+    <section id="dashboard">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">NSO OPTIMIZED RUNTIME · WINDOWS SERVER VPS</p>
+          <h1>Worker Control (Windows)</h1>
+        </div>
+        <div class="top-actions">
+          <span id="last-refresh" class="muted"></span>
+          <button id="refresh-button" class="secondary">Làm mới</button>
+        </div>
+      </header>
+
+      <div id="notice" class="notice hidden"></div>
+
+      <section class="summary-grid">
+        <article class="summary-card"><span>Supervisor</span><strong id="supervisor-state">—</strong></article>
+        <article class="summary-card"><span>Running</span><strong id="running-count">0</strong></article>
+        <article class="summary-card"><span>Stopped</span><strong id="stopped-count">0</strong></article>
+        <article class="summary-card"><span>Paused</span><strong id="paused-count">0</strong></article>
+        <article class="summary-card"><span>Done</span><strong id="done-count">0</strong></article>
+        <article class="summary-card"><span>Accounts</span><strong id="account-count">0</strong></article>
+      </section>
+
+      <section class="control-grid">
+        <!-- Supervisor panel -->
+        <article class="panel">
+          <div class="panel-title">
+            <div><p class="eyebrow">WINDOWS RUNTIME</p><h2>Supervisor</h2></div>
+          </div>
+          <p id="supervisor-detail" class="muted">Đang tải trạng thái…</p>
+          <div class="button-row">
+            <button id="start-supervisor" class="primary">Start Supervisor</button>
+            <button id="stop-supervisor" class="danger">Stop Tất Cả</button>
+          </div>
+        </article>
+
+        <!-- Account panel -->
+        <article class="panel">
+          <div class="panel-title">
+            <div><p class="eyebrow">ACCOUNT</p><h2>Thay account.csv</h2></div>
+          </div>
+          <p class="muted">Header chuẩn: <code>username,password</code>.</p>
+          <form id="account-form">
+            <input id="account-file" type="file" accept=".csv,text/csv" required>
+            <button type="submit" class="secondary" style="margin-top:8px;">Upload</button>
+          </form>
+        </article>
+
+        <!-- Deploy panel -->
+        <article class="panel">
+          <div class="panel-title">
+            <div><p class="eyebrow">DEPLOY</p><h2>Build & Chia Workers</h2></div>
+          </div>
+          <form id="build-form">
+            <div class="field-group">
+              <label for="worker-count">Số lượng worker</label>
+              <input id="worker-count" type="number" min="1" max="500" value="10" required>
+            </div>
+            <div class="deploy-actions">
+              <button id="build-button" type="button" class="secondary">Chỉ Build</button>
+              <button id="run-button" type="button" class="primary">Build & Chạy</button>
+            </div>
+          </form>
+        </article>
+
+        <!-- Timer & Schedule panel -->
+        <article class="panel">
+          <div class="panel-title">
+            <div><p class="eyebrow">TIMER & AUTO (GMT+7)</p><h2>Hẹn giờ & Tự động</h2></div>
+            <span id="schedule-status-badge" class="badge badge-muted">Tắt</span>
+          </div>
+          <form id="schedule-form" class="schedule-form">
+            <label class="checkbox">
+              <input id="schedule-enabled" type="checkbox">
+              <span>Bật tự động Build & Run NVHN</span>
+            </label>
+
+            <div class="schedule-time-row">
+              <div class="field-group" style="flex:1;">
+                <label for="schedule-mode">Chế độ</label>
+                <select id="schedule-mode">
+                  <option value="daily">Hàng ngày cố định</option>
+                  <option value="interval">Lặp lại chu kỳ</option>
+                </select>
+              </div>
+
+              <div id="group-daily-time" class="field-group" style="flex:1;">
+                <label for="schedule-daily-time">Giờ chạy (GMT+7)</label>
+                <input id="schedule-daily-time" type="time" value="01:00">
+              </div>
+
+              <div id="group-interval-hours" class="field-group hidden" style="flex:1;">
+                <label for="schedule-interval-hours">Mỗi (giờ)</label>
+                <input id="schedule-interval-hours" type="number" min="1" max="72" value="6">
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="schedule-worker-count">Số worker khi chạy tự động</label>
+              <input id="schedule-worker-count" type="number" min="1" max="500" value="10">
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+              <span id="schedule-next-run" class="muted">Chưa lên lịch</span>
+              <button type="submit" class="secondary">Lưu lịch</button>
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <!-- Worker Table -->
+      <section class="table-section">
+        <div class="table-header-row">
+          <h2>Danh sách Worker NVHN</h2>
+          <span id="active-job" class="badge badge-muted hidden">Đang Build</span>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Worker</th>
+                <th>Trạng thái</th>
+                <th>Nhân vật</th>
+                <th>Lượt</th>
+                <th>PID</th>
+                <th>CPU</th>
+                <th>RAM</th>
+                <th>Accounts</th>
+                <th>Log mới nhất</th>
+                <th>Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="workers-body">
+              <tr><td colspan="10" class="empty">Đang tải dữ liệu…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <!-- Modal xem log -->
+  <div id="log-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="modal-title">Log</h3>
+        <button id="modal-close" class="ghost">Đóng</button>
+      </div>
+      <div id="modal-terminal" class="terminal"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=1" defer></script>
+</body>
+</html>

@@ -94,6 +94,10 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.account_csv = repo / "account.csv"
+        ta_thu = repo / "ta-thu-runtime"
+        (ta_thu / "scripts").mkdir(parents=True)
+        (ta_thu / "workers").mkdir(parents=True)
+        write_script(ta_thu / "scripts" / "stop-workers.sh", "exit 0\n")
         self.settings = Settings(
             repo_dir=repo,
             headless_dir=headless,
@@ -101,6 +105,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             workers_dir=workers,
             account_csv=self.account_csv,
             runtime_dir=runtime,
+            ta_thu_dir=ta_thu,
             command_timeout=5,
         )
 
@@ -316,6 +321,20 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                 },
             )
             self.assertEqual(bad_res.status_code, 400)
+
+    async def test_stop_ta_thu_supervisor_endpoint(self) -> None:
+        ta_thu_dir = self.settings.ta_thu_dir
+        ta_thu_scripts = ta_thu_dir / "scripts"
+        ta_thu_scripts.mkdir(parents=True, exist_ok=True)
+        write_script(ta_thu_scripts / "stop-workers.sh", "exit 0\n")
+
+        transport = ASGITransport(app=create_app(self.settings))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            res = await client.post("/api/ta-thu/supervisor/stop")
+            self.assertEqual(res.status_code, 200)
+            data = res.json()
+            self.assertTrue(data["ok"])
+            self.assertFalse(data["supervisor"]["running"])
 
     async def test_relative_manual_supervisor_is_recognized(self) -> None:
         relative_script = Path("headless-runtime/scripts/supervise-workers.sh")

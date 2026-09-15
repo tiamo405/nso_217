@@ -117,11 +117,18 @@ async function refreshStatus() {
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
-    $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : "STOPPED";
-    $("#supervisor-state").style.color = supervisor.running ? "var(--accent)" : "var(--warning)";
-    $("#supervisor-detail").textContent = supervisor.running
-      ? `PID ${supervisor.pid} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`
-      : `Đang dừng${supervisor.stale_pid ? " · có PID cũ" : ""} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`;
+    const taThuSupervisor = data.ta_thu || { running: false };
+    $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : (taThuSupervisor.running ? "TÀ THÚ" : "STOPPED");
+    $("#supervisor-state").style.color = supervisor.running ? "var(--accent)" : (taThuSupervisor.running ? "var(--warning)" : "var(--danger)");
+    let supDetail = supervisor.running
+      ? `NVHN PID ${supervisor.pid} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`
+      : `NVHN: dừng${supervisor.stale_pid ? " (PID cũ)" : ""} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`;
+    if (taThuSupervisor.running) {
+      supDetail += ` | Tà Thú: PID ${taThuSupervisor.pid}`;
+    } else {
+      supDetail += " | Tà Thú: dừng";
+    }
+    $("#supervisor-detail").textContent = supDetail;
     $("#running-count").textContent = data.totals.running;
     $("#stopped-count").textContent = data.totals.stopped;
     $("#paused-count").textContent = data.totals.paused ?? 0;
@@ -133,6 +140,7 @@ async function refreshStatus() {
     else active.classList.add("hidden");
     $("#start-supervisor").disabled = buildActive;
     $("#stop-supervisor").disabled = buildActive;
+    if ($("#stop-ta-thu-supervisor")) $("#stop-ta-thu-supervisor").disabled = buildActive;
     $("#build-button").disabled = buildActive;
     $("#run-button").disabled = buildActive;
     $("#account-file").disabled = buildActive;
@@ -294,6 +302,22 @@ $("#run-button").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   await supervisorAction("start", button);
 });
+
+if ($("#stop-ta-thu-supervisor")) {
+  $("#stop-ta-thu-supervisor").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await api("/api/ta-thu/supervisor/stop", { method: "POST" });
+      notify("Đã dừng Tà Thú supervisor và toàn bộ worker Tà Thú!");
+      await refreshStatus();
+    } catch (error) {
+      notify(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
 
 $("#schedule-mode").addEventListener("change", (event) => {
   const mode = event.target.value;

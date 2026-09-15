@@ -133,6 +133,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await manager.stop_ta_thu()
         return await manager.stop_supervisor()
 
+    @app.post("/api/ta-thu/supervisor/stop")
+    async def stop_ta_thu_supervisor() -> dict[str, object]:
+        require_idle()
+        stopped = await manager.stop_ta_thu()
+        return {"ok": stopped, "supervisor": manager.ta_thu_supervisor_status()}
+
     @app.post("/api/workers/{worker_name}/restart")
     async def restart_worker(worker_name: str) -> dict[str, str]:
         require_idle()

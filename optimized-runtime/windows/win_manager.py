@@ -70,9 +70,6 @@ WORKERS_DIR = RUNTIME_DIR / "workers"
 ACCOUNT_CSV = REPO_DIR / "account.csv"
 DELL_TXT = REPO_DIR / "delllllllllll.txt"
 
-print(f"[DEBUG] REPO_DIR:    {REPO_DIR}")
-print(f"[DEBUG] RUNTIME_DIR: {RUNTIME_DIR}")
-
 # JVM Tinh chỉnh
 JAVA_XMS = os.environ.get("JAVA_XMS", "8m")
 JAVA_XMX = os.environ.get("JAVA_XMX", "36m")
@@ -555,10 +552,120 @@ def cmd_stop(args: Any) -> int:
     return 0
 
 
+def get_workers_status_dict() -> dict[str, Any]:
+    """Trả về trạng thái toàn bộ workers dạng dict (JSON compatible) cho Web Dashboard."""
+    worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
+    workers = []
+
+    for worker_dir in worker_dirs:
+        if not worker_dir.is_dir():
+            continue
+        worker_name = worker_dir.name
+        pid_file = worker_dir / "bot.pid"
+        home_dir = worker_dir / "home"
+
+        paused = (worker_dir / ".paused").is_file()
+        done = (home_dir / "worker.done").is_file()
+        first_pass_done = (home_dir / "worker.first-pass.done").is_file()
+
+        pid = None
+        if pid_file.is_file():
+            try:
+                raw_pid = pid_file.read_text(encoding="utf-8").strip()
+                if raw_pid.isdigit() and is_pid_running(int(raw_pid)):
+                    pid = int(raw_pid)
+            except (ValueError, OSError):
+                pass
+
+        if paused:
+            state = "PAUSED"
+        elif done:
+            state = "DONE"
+        elif pid is not None:
+            state = "RUNNING"
+        else:
+            state = "STOPPED"
+
+        cpu = rss_mb = None
+        if pid is not None:
+            cpu, rss_mb = get_process_stats(pid)
+
+        # Đọc log
+        stdout_log = worker_dir / "stdout.log"
+        last_log_at = None
+        last_auto_log = None
+        char_name = None
+        if stdout_log.is_file():
+            try:
+                mtime = stdout_log.stat().st_mtime
+                last_log_at = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+                with open(stdout_log, "r", encoding="utf-8", errors="replace") as lf:
+                    tail = lf.readlines()[-100:]
+                    for line in reversed(tail):
+                        if not char_name:
+                            m = RE_CHAR_STATUS.search(line) or RE_CHAR_CHOOSE.search(line)
+                            if m:
+                                char_name = m.group(1)
+                        if not last_auto_log and "AUTO NVHN" in line:
+                            last_auto_log = line.strip()
+                        if char_name and last_auto_log:
+                            break
+            except Exception:
+                pass
+
+        # Đếm account
+        acc_count = 0
+        acc_file = worker_dir / "account.csv"
+        if acc_file.is_file():
+            try:
+                acc_lines = acc_file.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                acc_count = sum(1 for line in acc_lines[1:] if line.strip())
+            except OSError:
+                pass
+
+        workers.append({
+            "name": worker_name,
+            "pid": pid,
+            "state": state,
+            "char_name": char_name,
+            "paused": paused,
+            "run_pass": 2 if first_pass_done else 1,
+            "run_pass_total": 2,
+            "cpu_percent": cpu,
+            "rss_mb": rss_mb,
+            "elapsed": None,
+            "accounts": acc_count,
+            "last_auto_log": last_auto_log,
+            "last_log_at": last_log_at,
+            "last_log_age_seconds": None,
+            "stdout_log": str(stdout_log),
+            "error_log": str(worker_dir / "java-errors.log"),
+        })
+
+    totals = {
+        "running": sum(w["state"] == "RUNNING" for w in workers),
+        "stopped": sum(w["state"] == "STOPPED" for w in workers),
+        "paused": sum(w["state"] == "PAUSED" for w in workers),
+        "done": sum(w["state"] == "DONE" for w in workers),
+        "total": len(workers),
+    }
+
+    return {
+        "workers_dir": str(WORKERS_DIR),
+        "workers": workers,
+        "totals": totals,
+    }
+
+
 # ==========================================
 # 5. STATUS WORKERS
 # ==========================================
 def cmd_status(args: Any) -> int:
+    if getattr(args, "json", False):
+        import json
+        print(json.dumps(get_workers_status_dict(), ensure_ascii=False, indent=2))
+        return 0
+
     worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
     if not worker_dirs:
         print("[!] Không có worker nào trong thư mục.")
@@ -782,7 +889,8 @@ def main() -> None:
     p_restart.add_argument("workers", nargs="*", help="Số thứ tự worker")
 
     # status
-    subparsers.add_parser("status", help="Xem trạng thái workers")
+    p_status = subparsers.add_parser("status", help="Xem trạng thái workers")
+    p_status.add_argument("--json", action="store_true", help="Xuất dữ liệu định dạng JSON")
 
     # supervise
     p_sup = subparsers.add_parser("supervise", help="Giám sát và tự động chạy lại workers")

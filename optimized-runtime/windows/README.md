@@ -25,6 +25,7 @@ Bạn có thể chạy trực tiếp bằng cách **nhấp đúp chuột** vào 
 
 | File Batch | Chức năng |
 | :--- | :--- |
+| `run-web.bat` | **Khởi động Web Dashboard** (Giao diện web riêng biệt `web_control_win/` tương thích Windows Server) |
 | `build.bat` | Biên dịch mã nguồn Java thành các class tối ưu (`OptimizedMain`) |
 | `build-workers.bat` | Nhập số worker muốn chia từ `account.csv` và tự động tạo thư mục `worker-XX` |
 | `supervise.bat` | Chạy Supervisor tự động giám sát, chia lượt 1/2 và 2/2, tự restart nếu crash |

@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 TA_THU_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${TA_THU_WORKERS_DIR:-${HEADLESS_WORKERS_DIR:-"$TA_THU_DIR/workers"}}
+SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
 
 shopt -s nullglob
 pid_files=()
@@ -23,6 +24,24 @@ if (( $# > 0 )); then
         pid_files+=("$worker_dir/bot.pid")
     done
 else
+    if [[ -f "$SUPERVISOR_PID_FILE" ]]; then
+        sup_pid=$(<"$SUPERVISOR_PID_FILE")
+        if [[ "$sup_pid" =~ ^[0-9]+$ ]] && kill -0 "$sup_pid" 2>/dev/null; then
+            echo "Dừng Tà Thú supervisor (PID $sup_pid)..."
+            kill "$sup_pid" 2>/dev/null || true
+            for _ in {1..10}; do
+                if ! kill -0 "$sup_pid" 2>/dev/null; then
+                    break
+                fi
+                sleep 0.2
+            done
+            if kill -0 "$sup_pid" 2>/dev/null; then
+                kill -9 "$sup_pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f -- "$SUPERVISOR_PID_FILE"
+    fi
+    pkill -f "$TA_THU_DIR/scripts/supervise-workers.sh" 2>/dev/null || true
     pid_files=("$WORKERS_DIR"/worker-*/bot.pid)
 fi
 stopped=0

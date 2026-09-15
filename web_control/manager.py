@@ -393,6 +393,26 @@ class HeadlessManager:
                         break
             except OSError:
                 running = False
+
+        # Quét kiểm tra dự phòng nếu supervisor đang chạy nhưng file PID bị xóa
+        if not running:
+            try:
+                for proc_dir in Path("/proc").iterdir():
+                    if not proc_dir.name.isdigit():
+                        continue
+                    try:
+                        cmdline = (proc_dir / "cmdline").read_bytes()
+                        if b"ta-thu-runtime/scripts/supervise-workers.sh" in cmdline:
+                            cand_pid = int(proc_dir.name)
+                            if cand_pid != os.getpid():
+                                pid = cand_pid
+                                running = True
+                                break
+                    except (OSError, ValueError):
+                        continue
+            except Exception:
+                pass
+
         return {
             "running": running,
             "pid": pid if running else None,
@@ -445,9 +465,45 @@ class HeadlessManager:
 
     async def stop_ta_thu(self) -> bool:
         async with self.control_lock:
+            # 1. Tìm PID của Tà Thú supervisor trước khi gọi script dừng
+            status = self.ta_thu_supervisor_status()
+            sup_pid = status["pid"] if status["running"] else None
+
+            # 2. Chạy stop-workers.sh
             stop_script = self.settings.ta_thu_dir / "scripts" / "stop-workers.sh"
             if stop_script.is_file():
                 await self._capture(str(stop_script), timeout=30)
+
+            # 3. Đảm bảo supervisor đã bị kill
+            if sup_pid is not None:
+                try:
+                    os.kill(sup_pid, 15)  # SIGTERM
+                    for _ in range(15):
+                        await asyncio.sleep(0.1)
+                        os.kill(sup_pid, 0)
+                    os.kill(sup_pid, 9)   # SIGKILL nếu còn sống
+                except OSError:
+                    pass
+
+            # 4. Quét dọn bất kỳ supervisor tà thú nào còn sót lại
+            try:
+                for proc_dir in Path("/proc").iterdir():
+                    if not proc_dir.name.isdigit():
+                        continue
+                    try:
+                        cmdline = (proc_dir / "cmdline").read_bytes()
+                        if b"ta-thu-runtime/scripts/supervise-workers.sh" in cmdline:
+                            other_pid = int(proc_dir.name)
+                            if other_pid != os.getpid():
+                                try:
+                                    os.kill(other_pid, 9)
+                                except OSError:
+                                    pass
+                    except (OSError, ValueError):
+                        continue
+            except Exception:
+                pass
+
             if self.ta_thu_supervisor_pid_file.exists():
                 self.ta_thu_supervisor_pid_file.unlink(missing_ok=True)
             return True
