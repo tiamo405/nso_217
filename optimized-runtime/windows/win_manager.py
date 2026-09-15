@@ -25,9 +25,24 @@ if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+else:
+    try:
+        import codecs
+        if hasattr(sys.stdout, "buffer"):
+            sys.stdout = codecs.getwriter("utf-8")(sys.stdout.buffer, "replace")
+    except Exception:
+        pass
+
 if hasattr(sys.stderr, "reconfigure"):
     try:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+else:
+    try:
+        import codecs
+        if hasattr(sys.stderr, "buffer"):
+            sys.stderr = codecs.getwriter("utf-8")(sys.stderr.buffer, "replace")
     except Exception:
         pass
 

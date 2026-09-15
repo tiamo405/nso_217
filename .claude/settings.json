@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(ps -p 630568 -o pid,ppid,lstart,cmd)"
+      "Bash(ps -p 630568 -o pid,ppid,lstart,cmd)",
+      "Bash(sed -i 's/set PYTHONIOENCODING=utf-8/set PYTHONIOENCODING=utf-8:replace/g' optimized-runtime/windows/*.bat)"
+    ],
+    "additionalDirectories": [
+      "/home/namtp/Desktop/code/CLIENT_NSO_217/NSO_217/optimized-runtime/windows"
     ]
   }
 }
