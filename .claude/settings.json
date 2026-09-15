@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ps -p 630568 -o pid,ppid,lstart,cmd)"
+    ]
+  }
+}
