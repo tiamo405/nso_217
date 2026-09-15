@@ -17,18 +17,18 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # ========================================================
 # TỰ ĐỘNG TÌM ĐƯỜNG DẪN DỰ ÁN (AUTO-DISCOVER DIRECTORIES)
 # ========================================================
-def _resolve_project_dirs(start_file: Path) -> tuple[Path, Path]:
+def _resolve_project_dirs(start_file: Path) -> Tuple[Path, Path]:
     """Tự động tìm REPO_DIR và RUNTIME_DIR bất kể script nằm ở đâu."""
     curr = start_file.resolve()
     chain = [curr] + list(curr.parents)
 
-    repo_dir: Path | None = None
-    runtime_dir: Path | None = None
+    repo_dir: Optional[Path] = None
+    runtime_dir: Optional[Path] = None
 
     # 1. Tìm RUNTIME_DIR (nơi có src/OptimizedMain.java và overrides)
     for p in chain:
@@ -154,7 +154,7 @@ def kill_pid(pid: int) -> bool:
             return False
 
 
-def get_process_stats(pid: int) -> tuple[float | None, float | None]:
+def get_process_stats(pid: int) -> Tuple[Optional[float], Optional[float]]:
     """Lấy CPU% và RAM (MB) của tiến trình nếu có psutil."""
     try:
         import psutil  # type: ignore
@@ -552,7 +552,7 @@ def cmd_stop(args: Any) -> int:
     return 0
 
 
-def get_workers_status_dict() -> dict[str, Any]:
+def get_workers_status_dict() -> Dict[str, Any]:
     """Trả về trạng thái toàn bộ workers dạng dict (JSON compatible) cho Web Dashboard."""
     worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
     workers = []

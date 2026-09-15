@@ -13,7 +13,7 @@ import sys
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional, Tuple
 
 from .config import Settings
 
@@ -84,7 +84,7 @@ class WindowsHeadlessManager:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.control_lock = asyncio.Lock()
-        self._supervisor_process: subprocess.Popen[bytes] | None = None
+        self._supervisor_process: Optional[subprocess.Popen[bytes]] = None
         self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -99,7 +99,7 @@ class WindowsHeadlessManager:
     def supervisor_pid_file(self) -> Path:
         return self.settings.workers_dir / "supervisor.pid"
 
-    async def _run_win_manager(self, *args: str, timeout: int | None = None) -> tuple[int, str]:
+    async def _run_win_manager(self, *args: str, timeout: Optional[int] = None) -> Tuple[int, str]:
         """Thực thi lệnh win_manager.py bất đồng bộ."""
         cmd = [sys.executable, str(self.settings.win_manager_py), *args]
         try:
@@ -124,7 +124,7 @@ class WindowsHeadlessManager:
 
         return process.returncode or 0, stdout.decode("utf-8", errors="replace")
 
-    def _read_pid(self, path: Path) -> int | None:
+    def _read_pid(self, path: Path) -> Optional[int]:
         try:
             raw = path.read_text(encoding="utf-8").strip()
         except OSError:
@@ -147,7 +147,7 @@ class WindowsHeadlessManager:
         )
         temporary.replace(self.state_file)
 
-    def supervisor_status(self) -> dict[str, Any]:
+    def supervisor_status(self) -> Dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and is_pid_running(pid)
         stale = self.supervisor_pid_file.exists() and not running
@@ -159,7 +159,7 @@ class WindowsHeadlessManager:
             "log": str(self.supervisor_log),
         }
 
-    async def status(self) -> dict[str, Any]:
+    async def status(self) -> Dict[str, Any]:
         """Lấy toàn bộ thông tin trạng thái worker & supervisor từ win_manager.py."""
         code, output = await self._run_win_manager("status", "--json")
         if code != 0:
@@ -173,11 +173,11 @@ class WindowsHeadlessManager:
         data["supervisor"] = self.supervisor_status()
         return data
 
-    async def start_supervisor(self, *, remember: bool = True) -> dict[str, Any]:
+    async def start_supervisor(self, *, remember: bool = True) -> Dict[str, Any]:
         async with self.control_lock:
             return await self._start_supervisor_unlocked(remember=remember)
 
-    async def _start_supervisor_unlocked(self, *, remember: bool) -> dict[str, Any]:
+    async def _start_supervisor_unlocked(self, *, remember: bool) -> Dict[str, Any]:
         current = self.supervisor_status()
         if current["running"]:
             if remember:
@@ -249,11 +249,11 @@ class WindowsHeadlessManager:
             result["desired"] = True
         return result
 
-    async def stop_supervisor(self, *, remember: bool = True) -> dict[str, Any]:
+    async def stop_supervisor(self, *, remember: bool = True) -> Dict[str, Any]:
         async with self.control_lock:
             return await self._stop_supervisor_unlocked(remember=remember)
 
-    async def _stop_supervisor_unlocked(self, *, remember: bool) -> dict[str, Any]:
+    async def _stop_supervisor_unlocked(self, *, remember: bool) -> Dict[str, Any]:
         if remember:
             self._set_desired_supervisor(False)
 
@@ -286,7 +286,7 @@ class WindowsHeadlessManager:
             raise ControlError("Không tìm thấy worker")
         return number
 
-    def worker_pause_marker(self, worker_name: str) -> tuple[str, Path]:
+    def worker_pause_marker(self, worker_name: str) -> Tuple[str, Path]:
         number = self.worker_number(worker_name)
         marker = self.settings.workers_dir / f"worker-{int(number):02d}" / ".paused"
         return number, marker
@@ -373,7 +373,7 @@ class WindowsHeadlessManager:
         temporary.replace(self.settings.account_csv)
         return len(accounts)
 
-    def account_summary(self) -> dict[str, Any]:
+    def account_summary(self) -> Dict[str, Any]:
         if not self.settings.account_csv.is_file():
             return {"configured": False, "count": 0}
         try:

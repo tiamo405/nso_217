@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Dict, Literal, Optional
 
 from .jobs import WindowsBuildJobManager
 from .manager import ControlError, WindowsHeadlessManager
@@ -23,7 +23,7 @@ class WindowsScheduleManager:
         self,
         web_runtime_dir: Path,
         jobs: WindowsBuildJobManager,
-        manager: WindowsHeadlessManager | None = None,
+        manager: Optional[WindowsHeadlessManager] = None,
     ):
         self.web_runtime_dir = web_runtime_dir
         self.jobs = jobs
@@ -36,10 +36,10 @@ class WindowsScheduleManager:
         self.daily_time: str = "01:00"  # HH:MM
         self.interval_hours: int = 6     # 1 - 72 giờ
         self.worker_count: int = 10
-        self.last_run_at: str | None = None
-        self.next_run_at: str | None = None
+        self.last_run_at: Optional[str] = None
+        self.next_run_at: Optional[str] = None
 
-        self._task: asyncio.Task[None] | None = None
+        self._task: Optional[asyncio.Task[None]] = None
         self._load()
 
     def _load(self) -> None:
@@ -113,7 +113,7 @@ class WindowsScheduleManager:
                 next_dt = now + delta
             self.next_run_at = next_dt.isoformat(timespec="seconds")
 
-    def get_state(self) -> dict[str, Any]:
+    def get_state(self) -> Dict[str, Any]:
         return {
             "enabled": self.enabled,
             "mode": self.mode,
@@ -131,7 +131,7 @@ class WindowsScheduleManager:
         daily_time: str,
         interval_hours: int,
         worker_count: int,
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         self.enabled = enabled
         self.mode = mode
         self.daily_time = daily_time

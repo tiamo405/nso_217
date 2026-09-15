@@ -4,6 +4,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Dict
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ class Settings:
             web_runtime_dir=web_runtime_dir,
         )
 
-    def command_env(self) -> dict[str, str]:
+    def command_env(self) -> Dict[str, str]:
         env = os.environ.copy()
         env["OPTIMIZED_WORKERS_DIR"] = str(self.workers_dir)
         env["HEADLESS_WORKERS_DIR"] = str(self.workers_dir)

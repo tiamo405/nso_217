@@ -7,7 +7,7 @@ import sys
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List, Optional, Set
 
 from .manager import ControlError, WindowsHeadlessManager
 
@@ -23,14 +23,14 @@ class BuildJob:
     start_after_build: bool
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
-    started_at: str | None = None
-    finished_at: str | None = None
-    output: list[str] = field(default_factory=list)
-    error: str | None = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    output: List[str] = field(default_factory=list)
+    error: Optional[str] = None
     version: int = 0
     changed: asyncio.Condition = field(default_factory=asyncio.Condition, repr=False)
 
-    def public(self) -> dict[str, Any]:
+    def public(self) -> Dict[str, Any]:
         return {
             "id": self.id,
             "worker_count": self.worker_count,
@@ -62,9 +62,9 @@ class WindowsBuildJobManager:
 
     def __init__(self, manager: WindowsHeadlessManager):
         self.manager = manager
-        self.jobs: dict[str, BuildJob] = {}
+        self.jobs: Dict[str, BuildJob] = {}
         self.build_lock = asyncio.Lock()
-        self.tasks: set[asyncio.Task[None]] = set()
+        self.tasks: Set[asyncio.Task[None]] = set()
 
     def get(self, job_id: str) -> BuildJob:
         try:
@@ -72,7 +72,7 @@ class WindowsBuildJobManager:
         except KeyError as exc:
             raise ControlError("Không tìm thấy build job") from exc
 
-    def active_job(self) -> BuildJob | None:
+    def active_job(self) -> Optional[BuildJob]:
         return next(
             (job for job in self.jobs.values() if job.status in {"queued", "running"}),
             None,

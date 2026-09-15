@@ -4,7 +4,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, Literal
+from typing import Any, AsyncIterator, Dict, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -30,7 +30,7 @@ class ScheduleRequest(BaseModel):
     worker_count: int = 10
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Optional[Settings] = None) -> FastAPI:
     settings = settings or Settings.from_env()
     manager = WindowsHeadlessManager(settings)
     jobs = WindowsBuildJobManager(manager)
@@ -72,11 +72,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(static_dir / "index.html")
 
     @app.get("/health")
-    async def health() -> dict[str, object]:
+    async def health() -> Dict[str, Any]:
         return {"ok": True, "os": "windows"}
 
     @app.get("/api/status")
-    async def status() -> dict[str, object]:
+    async def status() -> Dict[str, Any]:
         data = await manager.status()
         data["account"] = manager.account_summary()
         data["schedule"] = scheduler.get_state()
@@ -85,11 +85,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return data
 
     @app.get("/api/schedule")
-    async def get_schedule() -> dict[str, object]:
+    async def get_schedule() -> Dict[str, Any]:
         return scheduler.get_state()
 
     @app.post("/api/schedule")
-    async def update_schedule(body: ScheduleRequest) -> dict[str, object]:
+    async def update_schedule(body: ScheduleRequest) -> Dict[str, Any]:
         return scheduler.update_config(
             enabled=body.enabled,
             mode=body.mode,
@@ -99,45 +99,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.post("/api/supervisor/start")
-    async def start_supervisor() -> dict[str, object]:
+    async def start_supervisor() -> Dict[str, Any]:
         require_idle()
         return await manager.start_supervisor()
 
     @app.post("/api/supervisor/stop")
-    async def stop_supervisor() -> dict[str, object]:
+    async def stop_supervisor() -> Dict[str, Any]:
         require_idle()
         return await manager.stop_supervisor()
 
     @app.post("/api/workers/{worker_name}/restart")
-    async def restart_worker(worker_name: str) -> dict[str, str]:
+    async def restart_worker(worker_name: str) -> Dict[str, str]:
         require_idle()
         return {"output": await manager.restart_worker(worker_name)}
 
     @app.post("/api/workers/{worker_name}/stop")
-    async def stop_worker(worker_name: str) -> dict[str, str]:
+    async def stop_worker(worker_name: str) -> Dict[str, str]:
         require_idle()
         return {"output": await manager.stop_worker(worker_name)}
 
     @app.post("/api/workers/{worker_name}/start")
-    async def start_worker(worker_name: str) -> dict[str, str]:
+    async def start_worker(worker_name: str) -> Dict[str, str]:
         require_idle()
         return {"output": await manager.start_worker(worker_name)}
 
     @app.get("/api/workers/{worker_name}/logs")
     async def worker_logs(
         worker_name: str, kind: Literal["stdout", "error"] = "stdout", lines: int = 200
-    ) -> dict[str, str]:
+    ) -> Dict[str, str]:
         return {"content": manager.tail_log(worker_name, kind, lines=lines)}
 
     @app.post("/api/account")
-    async def upload_account(request: Request) -> dict[str, object]:
+    async def upload_account(request: Request) -> Dict[str, Any]:
         require_idle()
         body = await request.body()
         count = manager.validate_and_store_account_csv(body)
         return {"ok": True, "count": count}
 
     @app.post("/api/build")
-    async def build(body: BuildRequest) -> dict[str, object]:
+    async def build(body: BuildRequest) -> Dict[str, Any]:
         require_idle()
         job = await jobs.create(
             worker_count=body.worker_count,
@@ -146,7 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"job": job.public()}
 
     @app.get("/api/build/{job_id}")
-    async def get_build(job_id: str) -> dict[str, object]:
+    async def get_build(job_id: str) -> Dict[str, Any]:
         job = jobs.get(job_id)
         return {"job": job.public()}
 
