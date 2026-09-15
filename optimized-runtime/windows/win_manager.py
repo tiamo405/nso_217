@@ -19,6 +19,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+# Thiết lập mã hóa stdout/stderr sang UTF-8 để tránh lỗi UnicodeEncodeError trên Windows (cp1252/cp936)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # ========================================================
 # TỰ ĐỘNG TÌM ĐƯỜNG DẪN DỰ ÁN (AUTO-DISCOVER DIRECTORIES)
 # ========================================================

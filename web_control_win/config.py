@@ -62,4 +62,6 @@ class Settings:
         env["OPTIMIZED_WORKERS_DIR"] = str(self.workers_dir)
         env["HEADLESS_WORKERS_DIR"] = str(self.workers_dir)
         env["ACCOUNT_CSV"] = str(self.account_csv)
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
         return env
