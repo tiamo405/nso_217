@@ -151,9 +151,9 @@ public class UpdateServer {
     static {
         // server ninjamobile
         // Base64("NinjaSM:Nsm1.ninjasm.net:14444:0")
-        // m = "TmluamFTTTpOc20xLm5pbmphc20ubmV0OjE0NDQ0OjA=";
+        m = "TmluamFTTTpOc20xLm5pbmphc20ubmV0OjE0NDQ0OjA=";
         // server TK
-        m = "TmluamFTTTpOc290azEubnNvdGsub25saW5lOjE0NDQ0OjA=";
+        // m = "TmluamFTTTpOc290azEubnNvdGsub25saW5lOjE0NDQ0OjA=";
         url = "";
     }
 
