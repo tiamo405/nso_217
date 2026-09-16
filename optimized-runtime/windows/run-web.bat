@@ -10,8 +10,8 @@ echo   NSO OPTIMIZED RUNTIME - WEB DASHBOARD (WINDOWS SERVER)
 echo ===========================================================
 echo.
 
-echo [1/3] Kiem tra FastAPI va Uvicorn...
-python -c "import fastapi, uvicorn" >nul 2>&1
+echo [1/3] Kiem tra FastAPI, Uvicorn va psutil...
+python -c "import fastapi, uvicorn, psutil" >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo [!] Chua cai dat thu vien web. Dang cai dat tu requirements.txt...
     pip install -r web_control\requirements.txt

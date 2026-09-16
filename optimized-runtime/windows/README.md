@@ -10,12 +10,11 @@ Bạn đã cài đặt sẵn:
 - **Java**: 11.0.22 (đã có `java` và `javac`)
 - **Python**: 3.8+ (đã tích hợp vào `PATH`)
 
-> 💡 **Khuyến nghị bổ sung:**
-> Mở Command Prompt (cmd) trên VPS và chạy lệnh:
+> Cài dependency cho Web Dashboard bằng lệnh:
 > ```cmd
-> pip install psutil
+> pip install -r web_control\requirements.txt
 > ```
-> *(Thư viện `psutil` giúp script đo chính xác dung lượng RAM và % CPU từng worker).*
+> Trong đó có `psutil`, thư viện dùng để nhận diện chính xác Supervisor/worker và đo RAM/CPU.
 
 ---
 
@@ -48,14 +47,14 @@ python optimized-runtime\windows\win_manager.py build
 :: 2. Chia account thành 10 workers (mặc định sẽ tự build luôn)
 python optimized-runtime\windows\win_manager.py build-workers 10
 
-:: 3. Chạy Supervisor giám sát (khuyên dùng)
-python optimized-runtime\windows\win_manager.py supervise --delay 30
+:: 3. Chạy Supervisor bằng server TK (restart nếu stdout.log im lặng 300 giây)
+python optimized-runtime\windows\win_manager.py supervise --server tk --delay 30
 
 :: 4. Xem bảng trạng thái các worker
 python optimized-runtime\windows\win_manager.py status
 
-:: 5. Khởi động các worker cụ thể (ví dụ worker 1, 2, 3)
-python optimized-runtime\windows\win_manager.py start 1 2 3
+:: 5. Khởi động các worker cụ thể bằng NinjaMobile
+python optimized-runtime\windows\win_manager.py start --server ninjamobile 1 2 3
 
 :: 6. Dừng tất cả worker
 python optimized-runtime\windows\win_manager.py stop
@@ -67,6 +66,13 @@ python optimized-runtime\windows\win_manager.py logs 1
 ---
 
 ## 4. Đặc điểm nổi bật trên Windows
+
+Supervisor kiểm tra `stdout.log` mỗi 20 giây. Nếu worker còn process nhưng log
+không thay đổi ít nhất 300 giây, worker sẽ được dừng và khởi động lại. Có thể
+đổi ngưỡng bằng biến môi trường `STALE_LOG_SECONDS`; đặt `0` để tắt watchdog log.
+
+Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trước
+khi Build & Chạy. Lựa chọn được lưu lại cho supervisor và các lần restart worker.
 
 1. **Chạy hoàn toàn ẩn (Headless No-Window)**:
    - Các worker Java chạy ngầm với cờ `DETACHED_PROCESS` & `CREATE_NO_WINDOW`, không làm lag màn hình hoặc bật lên hàng chục cửa sổ đen.

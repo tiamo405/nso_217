@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -57,11 +59,15 @@ class Settings:
             web_runtime_dir=web_runtime_dir,
         )
 
-    def command_env(self) -> Dict[str, str]:
+    def command_env(self, server: str | None = None) -> Dict[str, str]:
         env = os.environ.copy()
         env["OPTIMIZED_WORKERS_DIR"] = str(self.workers_dir)
         env["HEADLESS_WORKERS_DIR"] = str(self.workers_dir)
         env["ACCOUNT_CSV"] = str(self.account_csv)
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
+        try:
+            env["NSO_SERVER"] = normalize_server(server or env.get("NSO_SERVER"))
+        except ValueError:
+            env["NSO_SERVER"] = DEFAULT_SERVER
         return env

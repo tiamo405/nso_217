@@ -21,6 +21,11 @@ from .scheduler import ScheduleManager
 class BuildRequest(BaseModel):
     worker_count: int = Field(ge=1, le=500)
     start_after_build: bool = True
+    server: Literal["ninjamobile", "tk"] = "tk"
+
+
+class SupervisorRequest(BaseModel):
+    server: Literal["ninjamobile", "tk"] = "tk"
 
 
 class ScheduleRequest(BaseModel):
@@ -30,6 +35,7 @@ class ScheduleRequest(BaseModel):
     interval_hours: int = 6
     worker_count: int = 10
     auto_ta_thu: bool = True
+    server: Literal["ninjamobile", "tk"] = "tk"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -80,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/status")
     async def status() -> dict[str, object]:
         data = await manager.status()
+        data["server"] = manager.selected_server()
         data["account"] = manager.account_summary()
         data["schedule"] = scheduler.get_state()
         data["current_phase"] = scheduler.current_phase
@@ -116,15 +123,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             interval_hours=body.interval_hours,
             worker_count=body.worker_count,
             auto_ta_thu=body.auto_ta_thu,
+            server=body.server,
         )
 
     @app.post("/api/supervisor/start")
-    async def start_supervisor() -> dict[str, object]:
+    async def start_supervisor(body: SupervisorRequest | None = None) -> dict[str, object]:
         async with scheduler.transition_lock:
             require_idle()
             try:
                 await manager.stop_ta_thu()
-                result = await manager.start_supervisor()
+                selected_server = body.server if body is not None else manager.selected_server()
+                result = await manager.start_supervisor(server=selected_server)
             except Exception:
                 # Không dùng tiến độ cũ để tự chuyển Tà Thú sau Start thất bại.
                 manager._set_desired_supervisor(False)
@@ -243,7 +252,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/build")
     async def build(body: BuildRequest) -> dict[str, object]:
-        job = await jobs.create(body.worker_count, body.start_after_build)
+        job = await jobs.create(body.worker_count, body.start_after_build, body.server)
         return job.public()
 
     @app.get("/api/jobs/{job_id}")

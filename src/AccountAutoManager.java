@@ -132,6 +132,7 @@ public final class AccountAutoManager implements Runnable {
         GameMidlet.IP = UpdateServer.listIP[0];
         GameMidlet.PORT = UpdateServer.listPort[0];
         GameMidlet.serverLogin = UpdateServer.serverLoginList[0];
+        System.out.println("AUTO NVHN: server=" + UpdateServer.listName[0] + " (" + GameMidlet.IP + ":" + GameMidlet.PORT + ")");
         // Keep the original name order across logins: the server moves the last
         // selected character to the front of each new list.
         waitingForCharacters = false;

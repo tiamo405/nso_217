@@ -54,15 +54,22 @@
         </article>
 
         <article class="panel build-panel">
-          <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build & Chạy</h2></div></div>
+          <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build / Run</h2></div></div>
           <form id="build-form" class="build-form">
+            <div class="field-group">
+              <label for="server-select">Server</label>
+              <select id="server-select" class="custom-select">
+                <option value="tk">TK (Truyền Kỳ)</option>
+                <option value="ninjamobile">NinjaMobile</option>
+              </select>
+            </div>
             <div class="field-group">
               <label for="worker-count">Số worker</label>
               <input id="worker-count" type="number" min="1" max="500" value="10" required>
             </div>
             <div class="deploy-actions">
-              <button id="build-button" type="button" class="secondary">Build</button>
-              <button id="run-button" type="button" class="primary">Run</button>
+              <button id="build-button" type="button" class="secondary">Chỉ Build</button>
+              <button id="run-button" type="button" class="primary">Run workers</button>
             </div>
           </form>
         </article>
@@ -105,6 +112,14 @@
               <div class="field-group">
                 <label for="schedule-worker-count">Số worker</label>
                 <input id="schedule-worker-count" type="number" min="1" max="500" value="10">
+              </div>
+
+              <div class="field-group">
+                <label for="schedule-server">Server khi hẹn giờ</label>
+                <select id="schedule-server" class="custom-select">
+                  <option value="tk">TK (Truyền Kỳ)</option>
+                  <option value="ninjamobile">NinjaMobile</option>
+                </select>
               </div>
             </div>
 

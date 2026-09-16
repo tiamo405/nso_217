@@ -117,6 +117,7 @@ async function refreshStatus() {
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
+    $("#server-select").value = data.server || supervisor.server || "tk";
     const taThuSupervisor = data.ta_thu || { running: false };
     $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : (taThuSupervisor.running ? "TÀ THÚ" : "STOPPED");
     $("#supervisor-state").style.color = supervisor.running ? "var(--accent)" : (taThuSupervisor.running ? "var(--warning)" : "var(--danger)");
@@ -174,6 +175,7 @@ function renderSchedule(schedule) {
   $("#schedule-daily-time").value = schedule.daily_time || "01:00";
   $("#schedule-interval-hours").value = schedule.interval_hours || 6;
   $("#schedule-worker-count").value = schedule.worker_count || 10;
+  $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
 
   const phaseLabel = schedule.current_phase === "ta_thu" ? "Đang chạy Tà Thú 👹" : "Nhiệm vụ hàng ngày ⚔️";
   $("#schedule-current-phase").textContent = phaseLabel;
@@ -198,7 +200,9 @@ function renderSchedule(schedule) {
 async function supervisorAction(action, button) {
   button.disabled = true;
   try {
-    await api(`/api/supervisor/${action}`, { method: "POST" });
+    const options = { method: "POST" };
+    if (action === "start") options.json = { server: $("#server-select").value };
+    await api(`/api/supervisor/${action}`, options);
     notify(action === "start" ? "Đã chạy supervisor" : "Đã dừng supervisor và worker");
     await refreshStatus();
   } catch (error) { notify(error.message, true); }
@@ -289,6 +293,7 @@ $("#build-button").addEventListener("click", async () => {
     const job = await api("/api/build", { method: "POST", json: {
       worker_count: Number($("#worker-count").value),
       start_after_build: false,
+      server: $("#server-select").value,
     }});
     watchBuild(job);
   } catch (error) {
@@ -342,6 +347,7 @@ $("#schedule-form").addEventListener("submit", async (event) => {
       daily_time: $("#schedule-daily-time").value,
       interval_hours: Number($("#schedule-interval-hours").value),
       worker_count: Number($("#schedule-worker-count").value),
+      server: $("#schedule-server").value,
     };
     const updated = await api("/api/schedule", { method: "POST", json: payload });
     renderSchedule(updated);

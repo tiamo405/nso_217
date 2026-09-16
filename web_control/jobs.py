@@ -20,6 +20,7 @@ class BuildJob:
     id: str
     worker_count: int
     start_after_build: bool
+    server: str = "tk"
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: str | None = None
@@ -34,6 +35,7 @@ class BuildJob:
             "id": self.id,
             "worker_count": self.worker_count,
             "start_after_build": self.start_after_build,
+            "server": self.server,
             "status": self.status,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -75,7 +77,9 @@ class BuildJobManager:
             None,
         )
 
-    async def create(self, worker_count: int, start_after_build: bool) -> BuildJob:
+    async def create(
+        self, worker_count: int, start_after_build: bool, server: str = "tk"
+    ) -> BuildJob:
         if worker_count < 1 or worker_count > 500:
             raise ControlError("Số worker phải từ 1 đến 500")
         account_count = int(self.manager.account_summary()["count"])
@@ -91,6 +95,7 @@ class BuildJobManager:
             id=uuid.uuid4().hex[:12],
             worker_count=worker_count,
             start_after_build=start_after_build,
+            server=server,
         )
         self.jobs[job.id] = job
         task = asyncio.create_task(self._run(job))
@@ -105,12 +110,14 @@ class BuildJobManager:
             await job.touch()
             was_desired = self.manager.desired_supervisor()
             was_running = self.manager.supervisor_status()["running"]
-            should_restart = job.start_after_build or was_desired or was_running
+            was_server = self.manager.selected_server()
+            should_restart = job.start_after_build
             try:
                 await job.append("Đang dừng supervisor và worker...")
                 await self.manager.stop_supervisor(remember=False)
+                self.manager.set_server(job.server)
                 await job.append(f"Đang build runtime và chia {job.worker_count} worker...")
-                env = self.manager.settings.command_env()
+                env = self.manager.settings.command_env(job.server)
                 env["BUILD_OPTIMIZED"] = "1"
                 env["BUILD_HEADLESS"] = "1"
                 process = await asyncio.create_subprocess_exec(
@@ -150,7 +157,7 @@ class BuildJobManager:
                 await job.append("Build và kiểm tra worker thành công.")
                 if should_restart:
                     await job.append("Đang khởi động supervisor...")
-                    await self.manager.start_supervisor(remember=True)
+                    await self.manager.start_supervisor(remember=True, server=job.server)
                 else:
                     self.manager._set_desired_supervisor(False)
                 job.status = "succeeded"
@@ -161,7 +168,7 @@ class BuildJobManager:
                 if was_desired or was_running:
                     try:
                         await job.append("Đang phục hồi supervisor với runtime cũ...")
-                        await self.manager.start_supervisor(remember=True)
+                        await self.manager.start_supervisor(remember=True, server=was_server)
                     except Exception as restart_exc:
                         await job.append(f"Không thể phục hồi supervisor: {restart_exc}")
             finally:

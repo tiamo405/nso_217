@@ -7,6 +7,8 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 from .jobs import WindowsBuildJobManager
 from .manager import ControlError, WindowsHeadlessManager
 
@@ -36,6 +38,7 @@ class WindowsScheduleManager:
         self.daily_time: str = "01:00"  # HH:MM
         self.interval_hours: int = 6     # 1 - 72 giờ
         self.worker_count: int = 10
+        self.server: str = manager.selected_server() if manager is not None else DEFAULT_SERVER
         self.last_run_at: Optional[str] = None
         self.next_run_at: Optional[str] = None
 
@@ -53,6 +56,10 @@ class WindowsScheduleManager:
             self.daily_time = str(data.get("daily_time", "01:00"))
             self.interval_hours = max(1, min(int(data.get("interval_hours", 6)), 72))
             self.worker_count = max(1, min(int(data.get("worker_count", 10)), 500))
+            try:
+                self.server = normalize_server(data.get("server"))
+            except ValueError:
+                pass
             self.last_run_at = data.get("last_run_at")
             self.next_run_at = data.get("next_run_at")
         except Exception:
@@ -68,6 +75,7 @@ class WindowsScheduleManager:
             "daily_time": self.daily_time,
             "interval_hours": self.interval_hours,
             "worker_count": self.worker_count,
+            "server": self.server,
             "last_run_at": self.last_run_at,
             "next_run_at": self.next_run_at,
         }
@@ -120,6 +128,7 @@ class WindowsScheduleManager:
             "daily_time": self.daily_time,
             "interval_hours": self.interval_hours,
             "worker_count": self.worker_count,
+            "server": self.server,
             "last_run_at": self.last_run_at,
             "next_run_at": self.next_run_at,
         }
@@ -131,12 +140,17 @@ class WindowsScheduleManager:
         daily_time: str,
         interval_hours: int,
         worker_count: int,
+        server: str = DEFAULT_SERVER,
     ) -> Dict[str, Any]:
         self.enabled = enabled
         self.mode = mode
         self.daily_time = daily_time
         self.interval_hours = max(1, min(interval_hours, 72))
         self.worker_count = max(1, min(worker_count, 500))
+        try:
+            self.server = normalize_server(server)
+        except ValueError as exc:
+            raise ControlError(str(exc)) from exc
         self._update_next_run()
         self._save()
         return self.get_state()
@@ -194,6 +208,7 @@ class WindowsScheduleManager:
             await self.jobs.create(
                 worker_count=self.worker_count,
                 start_after_build=True,
+                server=self.server,
             )
         except Exception as exc:
             logger.error("Lỗi khi tự động kích hoạt Build & Run: %s", exc)

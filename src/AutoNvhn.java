@@ -83,7 +83,7 @@ public final class AutoNvhn extends Auto {
          if (TileMap.isTruong(TileMap.mapID)) {
             if (this.fieldAY == null) {
                GameScr.fieldAC("Nhận NV " + (fieldAX + 1) + "/20");
-               GameScr.fieldAB(25, GameScr.fieldGH, 0);
+               GameScr.fieldAB(25, 0, 0);
                LockGame.fieldAK();
                this.fieldAY = Char.fieldAM(0);
                if (this.waitingForNewTask && this.fieldAY != null
@@ -107,14 +107,13 @@ public final class AutoNvhn extends Auto {
 
                GameScr.fieldAC("Hoàn thành NV " + fieldAX + "/20");
                BotMetrics.returningTask();
-               GameScr.fieldAB(25, GameScr.fieldGH, 2);
+               GameScr.fieldAB(25, 0, 2);
                this.waitingForNewTask = true;
                this.fieldAY = null;
                return;
             }
 
             GameScr.fieldAC("Đi làm NV " + fieldAX + "/20");
-            GameScr.fieldAB(25, GameScr.fieldGH, 3);
             TileMap.fieldAF();
             this.fieldAB(super.fieldAC);
             return;

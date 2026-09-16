@@ -102,6 +102,11 @@ JAVA_XMS = os.environ.get("JAVA_XMS", "8m")
 JAVA_XMX = os.environ.get("JAVA_XMX", "36m")
 NSO_TICK_MS = os.environ.get("NSO_TICK_MS", "100")
 START_DELAY = int(os.environ.get("START_DELAY", "3"))
+SERVER_NAME = os.environ.get("NSO_SERVER", "tk")
+try:
+    STALE_LOG_SECONDS = max(0, int(os.environ.get("STALE_LOG_SECONDS", "300")))
+except ValueError:
+    STALE_LOG_SECONDS = 300
 
 RE_CHAR_STATUS = re.compile(r"AUTO NVHN STATUS:.*?nv=([a-zA-Z0-9_]+)")
 RE_CHAR_CHOOSE = re.compile(r"AUTO NVHN: (?:chọn|chuẩn bị) nhân vật ([a-zA-Z0-9_]+)")
@@ -154,11 +159,88 @@ def is_pid_running(pid: int) -> bool:
         return False
 
     # Linux / POSIX fallback
+    if os.name != "nt":
+        try:
+            stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+            comm_end = stat_text.rfind(")")
+            if comm_end > 0 and stat_text[comm_end + 2 : comm_end + 3] == "Z":
+                return False
+        except OSError:
+            pass
+
     try:
         os.kill(pid, 0)
         return True
     except (OSError, ValueError):
         return False
+
+
+def process_cmdline(pid: int) -> Optional[List[str]]:
+    """Return a process command line when the platform lets us inspect it."""
+    if pid <= 0:
+        return []
+
+    try:
+        import psutil  # type: ignore
+
+        return psutil.Process(pid).cmdline()
+    except ImportError:
+        pass
+    except Exception:
+        return []
+
+    if os.name != "nt":
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+            return [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+        except OSError:
+            return []
+    return None
+
+
+def process_ids() -> List[int]:
+    """List inspectable process IDs without probing every possible PID."""
+    try:
+        import psutil  # type: ignore
+
+        return [int(pid) for pid in psutil.pids()]
+    except ImportError:
+        pass
+    except Exception:
+        return []
+
+    if os.name != "nt":
+        return [int(path.name) for path in Path("/proc").glob("[0-9]*") if path.name.isdigit()]
+    return []
+
+
+def is_expected_worker_process(pid: int, worker_dir: Path) -> bool:
+    """Avoid treating a reused/stale bot.pid as this worker."""
+    if not is_pid_running(pid):
+        return False
+    args = process_cmdline(pid)
+    if args is None:
+        # Keep compatibility with Windows installations without psutil. The
+        # documented setup recommends psutil, which enables this ownership
+        # check and protects against PID reuse.
+        return True
+    if not args:
+        return False
+    command = " ".join(args).replace("\\", "/").casefold()
+    expected_dir = str(worker_dir).replace("\\", "/").casefold()
+    return "optimizedmain" in command and expected_dir in command
+
+
+def is_expected_supervisor_process(pid: int) -> bool:
+    """Identify this runtime's supervisor, including orphaned instances."""
+    if not is_pid_running(pid):
+        return False
+    args = process_cmdline(pid)
+    if args is None or not args:
+        return False
+    command = " ".join(args).replace("\\", "/").casefold()
+    manager_path = str(Path(__file__).resolve()).replace("\\", "/").casefold()
+    return manager_path in command and " supervise" in f" {command}"
 
 
 def kill_pid(pid: int) -> bool:
@@ -168,7 +250,7 @@ def kill_pid(pid: int) -> bool:
 
     if os.name == "nt":
         res = subprocess.run(
-            ["taskkill", "/F", "/PID", str(pid)],
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -179,6 +261,29 @@ def kill_pid(pid: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def log_age_seconds(log_file: Path) -> Optional[int]:
+    """Returns the age of a worker log, or None when it cannot be read."""
+    try:
+        return max(0, int(time.time() - log_file.stat().st_mtime))
+    except OSError:
+        return None
+
+
+def stale_log_reason(log_file: Path) -> Optional[str]:
+    """Returns a human-readable stale-log reason when the watchdog should restart."""
+    if STALE_LOG_SECONDS <= 0:
+        return None
+    if not log_file.is_file():
+        return "chưa có stdout.log"
+
+    age = log_age_seconds(log_file)
+    if age is None:
+        return None
+    if age >= STALE_LOG_SECONDS:
+        return f"stdout.log không đổi {age}s (ngưỡng {STALE_LOG_SECONDS}s)"
+    return None
 
 
 def get_process_stats(pid: int) -> Tuple[Optional[float], Optional[float]]:
@@ -201,15 +306,15 @@ def _safe_print(msg: str, file=None) -> None:
     """Print an toàn, encode lỗi thành '?' thay vì crash."""
     try:
         if file is None:
-            print(msg)
+            print(msg, flush=True)
         else:
-            print(msg, file=file)
+            print(msg, file=file, flush=True)
     except (UnicodeEncodeError, UnicodeDecodeError):
         safe = msg.encode("ascii", errors="replace").decode("ascii")
         if file is None:
-            print(safe)
+            print(safe, flush=True)
         else:
-            print(safe, file=file)
+            print(safe, file=file, flush=True)
 
 
 def cmd_build(args: Any = None) -> int:
@@ -369,7 +474,8 @@ def _cmd_build_workers_inner(args: Any) -> int:
         for pid_file in WORKERS_DIR.glob("worker-*/bot.pid"):
             try:
                 pid = int(pid_file.read_text(encoding="utf-8").strip())
-                if is_pid_running(pid):
+                worker_dir = pid_file.parent
+                if is_expected_worker_process(pid, worker_dir):
                     sys.stderr.write(f"[!] Worker PID {pid} dang chay. Hay stop truoc khi chia lai.\n")
                     return 1
             except (ValueError, OSError):
@@ -478,6 +584,10 @@ def _cmd_start_inner(args: Any) -> int:
         if target_numbers and num not in target_numbers:
             continue
 
+        if (worker_dir / ".paused").is_file():
+            _safe_print(f"[{worker_name}] Dang tam dung, bo qua")
+            continue
+
         pid_file = worker_dir / "bot.pid"
         home_dir = worker_dir / "home"
         home_dir.mkdir(parents=True, exist_ok=True)
@@ -490,7 +600,7 @@ def _cmd_start_inner(args: Any) -> int:
         if pid_file.is_file():
             try:
                 pid = int(pid_file.read_text(encoding="utf-8").strip())
-                if is_pid_running(pid):
+                if is_expected_worker_process(pid, worker_dir):
                     _safe_print(f"[{worker_name}] Dang chay (PID {pid})")
                     running += 1
                     continue
@@ -522,6 +632,7 @@ def _cmd_start_inner(args: Any) -> int:
             "-Xss256k",
             "-XX:CICompilerCount=2",
             "-Dnso.optimized=true",
+            f"-Dnso.server={SERVER_NAME}",
             f"-Dnso.tick.ms={NSO_TICK_MS}",
             "-Dnso.skip.paint=true",
             "-Dnso.skip.periodic.gc=true",
@@ -552,7 +663,7 @@ def _cmd_start_inner(args: Any) -> int:
             pid_file.write_text(str(p.pid), encoding="utf-8")
             time.sleep(0.3)
 
-            if is_pid_running(p.pid):
+            if is_expected_worker_process(p.pid, worker_dir):
                 _safe_print(f"[{worker_name}] Da khoi dong (PID {p.pid})")
                 started += 1
             else:
@@ -568,6 +679,45 @@ def _cmd_start_inner(args: Any) -> int:
 
     _safe_print(f"\nKet qua: Khoi dong moi={started}, Dang chay={running}, Hoan tat={completed}, Loi={failed}")
     return 0 if failed == 0 else 1
+
+
+def restart_stale_worker(worker_dir: Path) -> int:
+    """Restarts one live worker whose stdout log has stopped changing."""
+    worker_name = worker_dir.name
+    pid_file = worker_dir / "bot.pid"
+    if not pid_file.is_file():
+        return 0
+
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (ValueError, OSError):
+        pid_file.unlink(missing_ok=True)
+        return 0
+
+    if not is_expected_worker_process(pid, worker_dir):
+        pid_file.unlink(missing_ok=True)
+        return 0
+
+    if not kill_pid(pid):
+        _safe_print(f"[{worker_name}] Khong dung duoc PID {pid}, bo qua restart.")
+        return 1
+
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and is_pid_running(pid):
+        time.sleep(0.1)
+    if is_pid_running(pid):
+        _safe_print(f"[{worker_name}] PID {pid} van con song, bo qua khoi dong lai.")
+        return 1
+
+    pid_file.unlink(missing_ok=True)
+
+    class DummyArgs:
+        pass
+
+    start_req = DummyArgs()
+    start_req.workers = [worker_name]
+    start_req.delay = 0
+    return _cmd_start_inner(start_req)
 
 
 # ==========================================
@@ -595,19 +745,31 @@ def _cmd_stop_inner(args: Any) -> int:
     if not target_numbers and supervisor_pid_file.is_file():
         try:
             spid = int(supervisor_pid_file.read_text(encoding="utf-8").strip())
-            if is_pid_running(spid):
+            if is_expected_supervisor_process(spid):
                 _safe_print(f"Dang dung Supervisor (PID {spid})...")
                 kill_pid(spid)
         except (ValueError, OSError):
             pass
         supervisor_pid_file.unlink(missing_ok=True)
 
-    stopped = 0
+    if not target_numbers:
+        # A previous supervisor version could lose supervisor.pid while its
+        # process kept running. Find and terminate such orphans as well.
+        for candidate in process_ids():
+            if is_expected_supervisor_process(candidate):
+                _safe_print(f"Dang dung Supervisor mo coi (PID {candidate})...")
+                kill_pid(candidate)
+
+    selected_worker_dirs = []
     for worker_dir in sorted(WORKERS_DIR.glob("worker-*")):
+        num = int(worker_dir.name.replace("worker-", ""))
+        if not target_numbers or num in target_numbers:
+            selected_worker_dirs.append(worker_dir)
+
+    stopped = 0
+    stopped_pids: Set[int] = set()
+    for worker_dir in selected_worker_dirs:
         worker_name = worker_dir.name
-        num = int(worker_name.replace("worker-", ""))
-        if target_numbers and num not in target_numbers:
-            continue
 
         pid_file = worker_dir / "bot.pid"
         if not pid_file.is_file():
@@ -615,14 +777,29 @@ def _cmd_stop_inner(args: Any) -> int:
 
         try:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
-            if is_pid_running(pid):
+            if is_expected_worker_process(pid, worker_dir):
                 _safe_print(f"Dang dung {worker_name} (PID {pid})...")
-                kill_pid(pid)
-                stopped += 1
+                if kill_pid(pid):
+                    stopped += 1
+                    stopped_pids.add(pid)
         except (ValueError, OSError):
             pass
 
         pid_file.unlink(missing_ok=True)
+
+    # A Supervisor can be killed while it is between Popen() and writing
+    # bot.pid. Scan command lines as a fallback so an untracked Java worker
+    # cannot survive Stop all and be mistaken for a later restart.
+    for candidate in process_ids():
+        if candidate in stopped_pids:
+            continue
+        for worker_dir in selected_worker_dirs:
+            if is_expected_worker_process(candidate, worker_dir):
+                _safe_print(f"Dang dung worker mo coi (PID {candidate})...")
+                if kill_pid(candidate):
+                    stopped += 1
+                    stopped_pids.add(candidate)
+                break
 
     _safe_print(f"Da dung {stopped} worker.")
     return 0
@@ -648,7 +825,7 @@ def get_workers_status_dict() -> Dict[str, Any]:
         if pid_file.is_file():
             try:
                 raw_pid = pid_file.read_text(encoding="utf-8").strip()
-                if raw_pid.isdigit() and is_pid_running(int(raw_pid)):
+                if raw_pid.isdigit() and is_expected_worker_process(int(raw_pid), worker_dir):
                     pid = int(raw_pid)
             except (ValueError, OSError):
                 pass
@@ -669,6 +846,7 @@ def get_workers_status_dict() -> Dict[str, Any]:
         # Đọc log
         stdout_log = worker_dir / "stdout.log"
         last_log_at = None
+        last_log_age_seconds = log_age_seconds(stdout_log)
         last_auto_log = None
         char_name = None
         if stdout_log.is_file():
@@ -713,7 +891,7 @@ def get_workers_status_dict() -> Dict[str, Any]:
             "accounts": acc_count,
             "last_auto_log": last_auto_log,
             "last_log_at": last_log_at,
-            "last_log_age_seconds": None,
+            "last_log_age_seconds": last_log_age_seconds,
             "stdout_log": str(stdout_log),
             "error_log": str(worker_dir / "java-errors.log"),
         })
@@ -792,7 +970,7 @@ def _cmd_status_inner(args: Any) -> int:
         elif pid_file.is_file():
             try:
                 pid = int(pid_file.read_text(encoding="utf-8").strip())
-                if is_pid_running(pid):
+                if is_expected_worker_process(pid, worker_dir):
                     status = "RUNNING"
                     pid_str = str(pid)
                     cpu, rss = get_process_stats(pid)
@@ -881,6 +1059,33 @@ def _cmd_supervise_inner(args: Any) -> int:
 
             cmd_start(start_req)
 
+            for worker_dir in worker_dirs:
+                if (worker_dir / ".paused").is_file():
+                    continue
+                if (worker_dir / "home" / "worker.done").is_file():
+                    continue
+
+                pid_file = worker_dir / "bot.pid"
+                if not pid_file.is_file():
+                    continue
+                try:
+                    pid = int(pid_file.read_text(encoding="utf-8").strip())
+                except (ValueError, OSError):
+                    continue
+                if not is_expected_worker_process(pid, worker_dir):
+                    continue
+
+                reason = stale_log_reason(worker_dir / "stdout.log")
+                if reason is None:
+                    continue
+
+                _safe_print(
+                    f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                    f"{worker_dir.name} log im lặng đủ {STALE_LOG_SECONDS}s; đang restart."
+                )
+                _safe_print(f"Lý do: {reason}")
+                restart_stale_worker(worker_dir)
+
             time.sleep(check_interval)
     except KeyboardInterrupt:
         _safe_print("\nSupervisor nhan lenh dung (Ctrl+C). Thoat.")
@@ -967,6 +1172,7 @@ def main() -> None:
     p_start = subparsers.add_parser("start", help="Khởi động workers")
     p_start.add_argument("workers", nargs="*", help="Số thứ tự worker cần start (ví dụ 1 2 3)")
     p_start.add_argument("--delay", type=int, default=None, help="Giây giãn cách giữa các worker")
+    p_start.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
 
     # stop
     p_stop = subparsers.add_parser("stop", help="Dừng workers")
@@ -975,6 +1181,7 @@ def main() -> None:
     # restart
     p_restart = subparsers.add_parser("restart", help="Khởi động lại workers")
     p_restart.add_argument("workers", nargs="*", help="Số thứ tự worker")
+    p_restart.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
 
     # status
     p_status = subparsers.add_parser("status", help="Xem trạng thái workers")
@@ -985,6 +1192,7 @@ def main() -> None:
     p_sup.add_argument("workers", nargs="*", help="Danh sách worker cần giám sát")
     p_sup.add_argument("--delay", type=int, default=30, help="Giãn cách khởi động giữa các worker (giây)")
     p_sup.add_argument("--interval", type=int, default=20, help="Chu kỳ kiểm tra (giây)")
+    p_sup.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
 
     # reset
     subparsers.add_parser("reset", help="Reset marker hoàn tất để chạy lại")
@@ -994,6 +1202,10 @@ def main() -> None:
     p_logs.add_argument("worker", nargs="?", help="Số worker cần xem log")
 
     args = parser.parse_args()
+
+    if getattr(args, "server", None):
+        global SERVER_NAME
+        SERVER_NAME = args.server
 
     if args.command == "build":
         sys.exit(cmd_build(args))

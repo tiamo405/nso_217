@@ -115,6 +115,7 @@ async function refreshStatus() {
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
+    $("#server-select").value = data.server || supervisor.server || "tk";
 
     $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : "STOPPED";
     $("#supervisor-state").style.color = supervisor.running ? "var(--accent)" : "var(--danger)";
@@ -169,7 +170,8 @@ function renderSchedule(schedule) {
     $("#schedule-mode").value = schedule.mode;
     $("#schedule-daily-time").value = schedule.daily_time || "01:00";
     $("#schedule-interval-hours").value = schedule.interval_hours || 6;
-    $("#schedule-worker-count").value = schedule.worker_count || 10;
+  $("#schedule-worker-count").value = schedule.worker_count || 10;
+  $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
 
     if (schedule.mode === "daily") {
       $("#group-daily-time").classList.remove("hidden");
@@ -224,7 +226,9 @@ $("#modal-close").addEventListener("click", () => {
 async function supervisorAction(action, button) {
   button.disabled = true;
   try {
-    await api(`/api/supervisor/${action}`, { method: "POST" });
+    const options = { method: "POST" };
+    if (action === "start") options.json = { server: $("#server-select").value };
+    await api(`/api/supervisor/${action}`, options);
     notify(`Đã gửi lệnh ${action} supervisor`);
     await refreshStatus();
   } catch (error) {
@@ -273,7 +277,11 @@ async function triggerBuild(startAfterBuild) {
   try {
     const data = await api("/api/build", {
       method: "POST",
-      json: { worker_count: count, start_after_build: startAfterBuild },
+      json: {
+        worker_count: count,
+        start_after_build: startAfterBuild,
+        server: $("#server-select").value,
+      },
     });
     notify(`Bắt đầu build với ${count} workers...`);
     watchBuild(data.job);
@@ -358,7 +366,8 @@ $("#schedule-form").addEventListener("submit", async (event) => {
         mode,
         daily_time: dailyTime,
         interval_hours: intervalHours,
-        worker_count: workerCount,
+      worker_count: workerCount,
+      server: $("#schedule-server").value,
       },
     });
     scheduleSaving = false;

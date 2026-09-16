@@ -10,22 +10,61 @@ WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
 
 source "$SCRIPT_DIR/tuning-options.sh"
+SERVER_NAME=${NSO_SERVER:-tk}
+
+normalize_server() {
+    case "${1,,}" in
+        ninjamobile|ninja) SERVER_NAME=ninjamobile ;;
+        tk|truyenky|truyen-ky) SERVER_NAME=tk ;;
+        *)
+            echo "Server không hợp lệ: $1 (chọn ninjamobile hoặc tk)." >&2
+            exit 1
+            ;;
+    esac
+}
+
+normalize_server "$SERVER_NAME"
+
+is_optimized_worker_pid() {
+    local pid=$1
+    local worker_dir=$2
+    local cmdline
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ -r "/proc/$pid/cmdline" ]] || return 1
+    cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+    [[ "$cmdline" == *"OptimizedMain"* && "$cmdline" == *"$worker_dir"* ]]
+}
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--delay seconds] [worker_number...]
+Usage: $(basename "$0") [--server ninjamobile|tk] [--delay seconds] [worker_number...]
 
 Examples:
   $(basename "$0")                 # start all workers
   $(basename "$0") 3               # start only worker-03
   $(basename "$0") 3 8 10          # start worker-03, worker-08, worker-10
   $(basename "$0") --delay 5       # start all, wait 5s between workers
+  $(basename "$0") --server tk     # chạy bằng server Truyền Kỳ
 EOF
 }
 
 worker_args=()
 while (( $# > 0 )); do
     case "$1" in
+        --server)
+            if (( $# < 2 )); then
+                echo "Thiếu tên server sau --server." >&2
+                usage
+                exit 1
+            fi
+            normalize_server "$2"
+            shift 2
+            ;;
+        --server=*)
+            normalize_server "${1#--server=}"
+            shift
+            ;;
         --delay|-d)
             if (( $# < 2 )) || ! [[ "$2" =~ ^[0-9]+$ ]]; then
                 echo "Delay phải là số giây không âm." >&2
@@ -86,6 +125,11 @@ for worker_dir in "${worker_dirs[@]}"; do
     worker_name=$(basename -- "$worker_dir")
     pid_file="$worker_dir/bot.pid"
 
+    if [[ -f "$worker_dir/.paused" ]]; then
+        echo "$worker_name đang tạm dừng, không khởi động"
+        continue
+    fi
+
     worker_pass=1
     if [[ -f "$worker_dir/home/worker.first-pass.done" ]]; then
         worker_pass=2
@@ -99,7 +143,7 @@ for worker_dir in "${worker_dirs[@]}"; do
 
     if [[ -f "$pid_file" ]]; then
         pid=$(<"$pid_file")
-        if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+        if is_optimized_worker_pid "$pid" "$worker_dir"; then
             echo "$worker_name đang chạy (PID $pid)"
             running=$((running + 1))
             continue
@@ -125,6 +169,7 @@ for worker_dir in "${worker_dirs[@]}"; do
         "-Xmx$JAVA_XMX" \
         "${java_opts_array[@]}" \
         "${OPTIMIZED_SYSTEM_PROPS[@]}" \
+        "-Dnso.server=$SERVER_NAME" \
         "-Duser.home=$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \
         OptimizedMain \

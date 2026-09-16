@@ -44,7 +44,10 @@ def classify_pid(pid_file: Path, worker_dir: Path) -> tuple[int | None, str | No
         return None, "STALE_PID"
 
     if ("OptimizedMain" not in cmdline and "HeadlessMain" not in cmdline) or str(worker_dir) not in cmdline:
-        return None, "ERROR"
+        # bot.pid may remain after a forced stop, or its number may have been
+        # reused by another process. It is not a worker error and must never
+        # be reported as a live worker to the dashboard.
+        return None, "STALE_PID"
     return pid, "RUNNING"
 
 

@@ -10,6 +10,8 @@ import java.io.DataOutputStream;
  */
 public class UpdateServer {
 
+    private static final String DEFAULT_SERVER = "tk";
+
     public static int[] listPort;
     public static String[] listIP;
     public static int[] serverST;
@@ -42,6 +44,7 @@ public class UpdateServer {
             UpdateServer.serverST[var6] = var6;
         }
 
+        prioritizeSelectedServer();
         c();
         return true;
     }
@@ -66,6 +69,7 @@ public class UpdateServer {
                     UpdateServer.serverST[var3] = var3;
                 }
 
+                prioritizeSelectedServer();
                 var0.close();
                 var1.close();
                 return;
@@ -91,7 +95,72 @@ public class UpdateServer {
             UpdateServer.serverST[var6] = var6;
         }
 
+        prioritizeSelectedServer();
         c();
+    }
+
+    private static String selectedServerKey() {
+        String value = System.getProperty("nso.server");
+        if (value == null || value.trim().length() == 0) {
+            value = System.getenv("NSO_SERVER");
+        }
+        if (value == null) {
+            return DEFAULT_SERVER;
+        }
+
+        value = value.trim().toLowerCase();
+        if (value.equals("ninjamobile") || value.equals("ninja") || value.equals("ninja mobile")) {
+            return "ninjamobile";
+        }
+        if (value.equals("tk") || value.equals("truyenky") || value.equals("truyen ky")
+                || value.equals("truyền kỳ")) {
+            return "tk";
+        }
+        return DEFAULT_SERVER;
+    }
+
+    private static void prioritizeSelectedServer() {
+        if (UpdateServer.listName == null || UpdateServer.listIP == null
+                || UpdateServer.listName.length < 2) {
+            return;
+        }
+
+        String selected = selectedServerKey();
+        int selectedIndex = -1;
+        for (int i = 0; i < UpdateServer.listName.length; ++i) {
+            String name = UpdateServer.listName[i] == null ? "" : UpdateServer.listName[i].trim().toLowerCase();
+            String ip = UpdateServer.listIP[i] == null ? "" : UpdateServer.listIP[i].trim().toLowerCase();
+            if (selected.equals("ninjamobile")
+                    && (name.equals("ninjamobile") || ip.indexOf("ninjasm") >= 0)) {
+                selectedIndex = i;
+                break;
+            }
+            if (selected.equals("tk")
+                    && (name.equals("tk") || ip.indexOf("nsotk") >= 0)) {
+                selectedIndex = i;
+                break;
+            }
+        }
+
+        if (selectedIndex <= 0) {
+            return;
+        }
+
+        String name = UpdateServer.listName[0];
+        UpdateServer.listName[0] = UpdateServer.listName[selectedIndex];
+        UpdateServer.listName[selectedIndex] = name;
+
+        String ip = UpdateServer.listIP[0];
+        UpdateServer.listIP[0] = UpdateServer.listIP[selectedIndex];
+        UpdateServer.listIP[selectedIndex] = ip;
+
+        int port = UpdateServer.listPort[0];
+        UpdateServer.listPort[0] = UpdateServer.listPort[selectedIndex];
+        UpdateServer.listPort[selectedIndex] = port;
+
+        byte login = UpdateServer.serverLoginList[0];
+        UpdateServer.serverLoginList[0] = UpdateServer.serverLoginList[selectedIndex];
+        UpdateServer.serverLoginList[selectedIndex] = login;
     }
 
     public static String encryptDecrypt(String input) {
@@ -150,10 +219,10 @@ public class UpdateServer {
 
     static {
         // server ninjamobile
-        // Base64("NinjaSM:Nsm1.ninjasm.net:14444:0")
-        m = "TmluamFTTTpOc20xLm5pbmphc20ubmV0OjE0NDQ0OjA=";
+        // Base64("ninjamobile:Nsm1.ninjasm.net:14444:0")
         // server TK
-        // m = "TmluamFTTTpOc290azEubnNvdGsub25saW5lOjE0NDQ0OjA=";
+        // Base64("TK:Nsotk1.nsotk.online:14444:0")
+        m = "bmluamFtb2JpbGU6TnNtMS5uaW5qYXNtLm5ldDoxNDQ0NDowLFRLOk5zb3RrMS5uc290ay5vbmxpbmU6MTQ0NDQ6MA==";
         url = "";
     }
 

@@ -22,12 +22,12 @@ fi
 
 cd -- "$REPO_DIR"
 if [[ -x "$VENV_DIR/bin/python" ]] \
-        && "$VENV_DIR/bin/python" -c 'import fastapi, uvicorn' >/dev/null 2>&1; then
+        && "$VENV_DIR/bin/python" -c 'import fastapi, uvicorn, psutil' >/dev/null 2>&1; then
     PYTHON_BIN="$VENV_DIR/bin/python"
-elif python3 -c 'import fastapi, uvicorn' >/dev/null 2>&1; then
+elif python3 -c 'import fastapi, uvicorn, psutil' >/dev/null 2>&1; then
     PYTHON_BIN=python3
 else
-    echo "Không tìm thấy FastAPI/Uvicorn. Cài đặt bằng: pip install -r web_control/requirements.txt" >&2
+    echo "Không tìm thấy FastAPI/Uvicorn/psutil. Cài đặt bằng: pip install -r web_control/requirements.txt" >&2
     exit 1
 fi
 

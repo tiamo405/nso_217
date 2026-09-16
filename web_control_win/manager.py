@@ -15,6 +15,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 from .config import Settings
 
 WORKER_RE = re.compile(r"^worker-([0-9]+)$")
@@ -65,7 +67,7 @@ def kill_pid(pid: int) -> bool:
 
     if os.name == "nt":
         res = subprocess.run(
-            ["taskkill", "/F", "/PID", str(pid)],
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -76,6 +78,34 @@ def kill_pid(pid: int) -> bool:
             return True
         except OSError:
             return False
+
+
+def supervisor_pid_is_valid(pid: int, manager_path: Path) -> bool:
+    """Verify a supervisor PID belongs to this runtime before killing it."""
+    if not is_pid_running(pid):
+        return False
+    try:
+        import psutil  # type: ignore
+
+        args = psutil.Process(pid).cmdline()
+    except ImportError:
+        if os.name == "nt":
+            # Without psutil Windows cannot expose command-line ownership
+            # portably; keep compatibility with the PID-file contract.
+            return True
+        args = []
+    except Exception:
+        return False
+
+    if not args and os.name != "nt":
+        try:
+            raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+            args = [part.decode("utf-8", errors="replace") for part in raw.split(b"\0") if part]
+        except OSError:
+            return False
+    command = " ".join(args).replace("\\", "/").casefold()
+    expected = str(manager_path.resolve()).replace("\\", "/").casefold()
+    return expected in command and " supervise" in f" {command}"
 
 
 class WindowsHeadlessManager:
@@ -99,14 +129,16 @@ class WindowsHeadlessManager:
     def supervisor_pid_file(self) -> Path:
         return self.settings.workers_dir / "supervisor.pid"
 
-    async def _run_win_manager(self, *args: str, timeout: Optional[int] = None) -> Tuple[int, str]:
+    async def _run_win_manager(
+        self, *args: str, timeout: Optional[int] = None, server: Optional[str] = None
+    ) -> Tuple[int, str]:
         """Thực thi lệnh win_manager.py bất đồng bộ."""
         cmd = [sys.executable, str(self.settings.win_manager_py), *args]
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 cwd=self.settings.repo_dir,
-                env=self.settings.command_env(),
+                env=self.settings.command_env(server),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -132,30 +164,59 @@ class WindowsHeadlessManager:
         return int(raw) if raw.isdigit() else None
 
     def desired_supervisor(self) -> bool:
-        try:
-            state = json.loads(self.state_file.read_text(encoding="utf-8"))
-            return state.get("supervisor_desired") is True
-        except (OSError, json.JSONDecodeError):
-            return False
+        return self._read_state().get("supervisor_desired") is True
 
-    def _set_desired_supervisor(self, desired: bool) -> None:
+    def _read_state(self) -> Dict[str, Any]:
+        try:
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _write_state(self, data: Dict[str, Any]) -> None:
         self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.state_file.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps({"supervisor_desired": desired}, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+            json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8"
         )
         temporary.replace(self.state_file)
 
+    def selected_server(self) -> str:
+        state = self._read_state()
+        try:
+            return normalize_server(state.get("server"))
+        except (AttributeError, ValueError):
+            try:
+                return normalize_server(os.environ.get("NSO_SERVER"))
+            except ValueError:
+                return DEFAULT_SERVER
+
+    def set_server(self, server: str) -> str:
+        try:
+            selected = normalize_server(server)
+        except ValueError as exc:
+            raise ControlError(str(exc)) from exc
+        state = self._read_state()
+        state["server"] = selected
+        self._write_state(state)
+        return selected
+
+    def _set_desired_supervisor(self, desired: bool) -> None:
+        state = self._read_state()
+        state["supervisor_desired"] = desired
+        state.setdefault("server", self.selected_server())
+        self._write_state(state)
+
     def supervisor_status(self) -> Dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
-        running = pid is not None and is_pid_running(pid)
+        running = pid is not None and supervisor_pid_is_valid(pid, self.settings.win_manager_py)
         stale = self.supervisor_pid_file.exists() and not running
         return {
             "running": running,
             "pid": pid if running else None,
             "stale_pid": stale,
             "desired": self.desired_supervisor(),
+            "server": self.selected_server(),
             "log": str(self.supervisor_log),
         }
 
@@ -173,11 +234,26 @@ class WindowsHeadlessManager:
         data["supervisor"] = self.supervisor_status()
         return data
 
-    async def start_supervisor(self, *, remember: bool = True) -> Dict[str, Any]:
+    async def start_supervisor(
+        self, *, remember: bool = True, server: Optional[str] = None
+    ) -> Dict[str, Any]:
         async with self.control_lock:
-            return await self._start_supervisor_unlocked(remember=remember)
+            current = self.supervisor_status()
+            requested_server = (
+                self.selected_server() if server is None else self.set_server(server)
+            )
+            if current["running"] and current["server"] != requested_server:
+                await self._stop_supervisor_unlocked(remember=False)
+            return await self._start_supervisor_unlocked(
+                remember=remember, server=requested_server
+            )
 
-    async def _start_supervisor_unlocked(self, *, remember: bool) -> Dict[str, Any]:
+    async def _start_supervisor_unlocked(
+        self, *, remember: bool, server: Optional[str] = None
+    ) -> Dict[str, Any]:
+        selected_server = (
+            self.selected_server() if server is None else self.set_server(server)
+        )
         current = self.supervisor_status()
         if current["running"]:
             if remember:
@@ -215,7 +291,7 @@ class WindowsHeadlessManager:
                 self._supervisor_process = subprocess.Popen(
                     cmd,
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(),
+                    env=self.settings.command_env(selected_server),
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,
@@ -305,7 +381,9 @@ class WindowsHeadlessManager:
             number, pause_marker = self.worker_pause_marker(worker_name)
             was_paused = pause_marker.is_file()
             pause_marker.unlink(missing_ok=True)
-            code, output = await self._run_win_manager("start", "--delay", "0", number, timeout=30)
+            code, output = await self._run_win_manager(
+                "start", "--delay", "0", number, timeout=30, server=self.selected_server()
+            )
             if code != 0:
                 if was_paused:
                     pause_marker.touch(exist_ok=True)
@@ -317,7 +395,9 @@ class WindowsHeadlessManager:
             number, pause_marker = self.worker_pause_marker(worker_name)
             was_paused = pause_marker.is_file()
             pause_marker.unlink(missing_ok=True)
-            code, output = await self._run_win_manager("restart", number, timeout=30)
+            code, output = await self._run_win_manager(
+                "restart", number, timeout=30, server=self.selected_server()
+            )
             if code != 0:
                 if was_paused:
                     pause_marker.touch(exist_ok=True)

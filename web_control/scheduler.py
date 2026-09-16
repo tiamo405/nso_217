@@ -7,6 +7,8 @@ from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 from .jobs import BuildJobManager
 from .manager import ControlError, HeadlessManager
 
@@ -29,6 +31,7 @@ class ScheduleManager:
         self.daily_time: str = "01:00"  # HH:MM
         self.interval_hours: int = 6     # 1 - 72 giờ
         self.worker_count: int = 10
+        self.server: str = manager.selected_server() if manager is not None else DEFAULT_SERVER
         self.auto_ta_thu: bool = True    # Tự động chạy Tà Thú sau khi NVHN xong
         self.current_phase: Literal["nvhn", "ta_thu"] = "nvhn"
         self.last_run_at: str | None = None
@@ -49,6 +52,10 @@ class ScheduleManager:
             self.daily_time = str(data.get("daily_time", "01:00"))
             self.interval_hours = max(1, min(int(data.get("interval_hours", 6)), 72))
             self.worker_count = max(1, min(int(data.get("worker_count", 10)), 500))
+            try:
+                self.server = normalize_server(data.get("server"))
+            except ValueError:
+                pass
             self.auto_ta_thu = bool(data.get("auto_ta_thu", True))
             self.current_phase = data.get("current_phase", "nvhn")
             self.last_run_at = data.get("last_run_at")
@@ -67,6 +74,7 @@ class ScheduleManager:
             "daily_time": self.daily_time,
             "interval_hours": self.interval_hours,
             "worker_count": self.worker_count,
+            "server": self.server,
             "auto_ta_thu": self.auto_ta_thu,
             "current_phase": self.current_phase,
             "last_run_at": self.last_run_at,
@@ -119,6 +127,7 @@ class ScheduleManager:
             "daily_time": self.daily_time,
             "interval_hours": self.interval_hours,
             "worker_count": self.worker_count,
+            "server": self.server,
             "auto_ta_thu": self.auto_ta_thu,
             "current_phase": self.current_phase,
             "last_run_at": self.last_run_at,
@@ -135,6 +144,7 @@ class ScheduleManager:
         interval_hours: int,
         worker_count: int,
         auto_ta_thu: bool = True,
+        server: str = DEFAULT_SERVER,
     ) -> dict[str, Any]:
         if mode not in {"daily", "interval"}:
             raise ControlError("Chế độ hẹn giờ phải là daily hoặc interval")
@@ -158,6 +168,10 @@ class ScheduleManager:
         self.mode = mode
         self.worker_count = worker_count
         self.auto_ta_thu = bool(auto_ta_thu)
+        try:
+            self.server = normalize_server(server)
+        except ValueError as exc:
+            raise ControlError(str(exc)) from exc
         self._update_next_run()
         self._save()
         return self.get_state()
@@ -210,6 +224,7 @@ class ScheduleManager:
                             await self.jobs.create(
                                 worker_count=self.worker_count,
                                 start_after_build=True,
+                                server=self.server,
                             )
                             self.last_run_at = now.isoformat(timespec="seconds")
                         except Exception as exc:

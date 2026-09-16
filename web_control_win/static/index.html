@@ -63,6 +63,13 @@
           </div>
           <form id="build-form">
             <div class="field-group">
+              <label for="server-select">Server</label>
+              <select id="server-select">
+                <option value="tk">TK (Truyền Kỳ)</option>
+                <option value="ninjamobile">NinjaMobile</option>
+              </select>
+            </div>
+            <div class="field-group">
               <label for="worker-count">Số lượng worker</label>
               <input id="worker-count" type="number" min="1" max="500" value="10" required>
             </div>
@@ -108,6 +115,14 @@
             <div class="field-group">
               <label for="schedule-worker-count">Số worker khi chạy tự động</label>
               <input id="schedule-worker-count" type="number" min="1" max="500" value="10">
+            </div>
+
+            <div class="field-group">
+              <label for="schedule-server">Server khi hẹn giờ</label>
+              <select id="schedule-server">
+                <option value="tk">TK (Truyền Kỳ)</option>
+                <option value="ninjamobile">NinjaMobile</option>
+              </select>
             </div>
 
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">

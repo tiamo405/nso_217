@@ -35,8 +35,12 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 # Chia tài khoản thành 10 workers và tạo thư mục worker-XX
 ./optimized-runtime/scripts/build-workers.sh 10
 
-# Chạy tất cả workers (mỗi worker cách nhau 3 giây)
-./optimized-runtime/scripts/start-workers.sh
+# Build chỉ chia account/compile class, không kết nối server. Chọn server lúc chạy:
+# Chạy tất cả workers bằng TK (mỗi worker cách nhau 3 giây)
+./optimized-runtime/scripts/start-workers.sh --server tk
+
+# Hoặc chạy bằng NinjaMobile
+./optimized-runtime/scripts/start-workers.sh --server ninjamobile
 
 # Xem trạng thái CPU, RAM và tiến độ
 ./optimized-runtime/scripts/status-workers.sh
@@ -45,8 +49,8 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 ./optimized-runtime/scripts/logs-workers.sh
 ./optimized-runtime/scripts/logs-workers.sh 1   # Chỉ xem worker 1
 
-# Chạy supervisor tự động khởi động lại nếu worker crash
-./optimized-runtime/scripts/supervise-workers.sh
+# Chạy supervisor bằng server đã chọn; tự restart nếu worker crash hoặc stdout.log im lặng 300 giây
+./optimized-runtime/scripts/supervise-workers.sh --server tk
 
 # Dừng toàn bộ workers
 ./optimized-runtime/scripts/stop-workers.sh
@@ -55,6 +59,10 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 ---
 
 ## Cấu hình Biến môi trường (`optimized-runtime/scripts/tuning-options.sh`)
+
+Supervisor kiểm tra `stdout.log` mỗi 20 giây. Nếu worker còn process nhưng log
+không thay đổi ít nhất 300 giây, worker sẽ được dừng và khởi động lại. Có thể
+đổi ngưỡng bằng `STALE_LOG_SECONDS`; đặt `0` để tắt watchdog log.
 
 | Biến | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |

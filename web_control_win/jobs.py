@@ -21,6 +21,7 @@ class BuildJob:
     id: str
     worker_count: int
     start_after_build: bool
+    server: str = "tk"
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: Optional[str] = None
@@ -35,6 +36,7 @@ class BuildJob:
             "id": self.id,
             "worker_count": self.worker_count,
             "start_after_build": self.start_after_build,
+            "server": self.server,
             "status": self.status,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -78,7 +80,9 @@ class WindowsBuildJobManager:
             None,
         )
 
-    async def create(self, worker_count: int, start_after_build: bool) -> BuildJob:
+    async def create(
+        self, worker_count: int, start_after_build: bool, server: str = "tk"
+    ) -> BuildJob:
         if worker_count < 1 or worker_count > 500:
             raise ControlError("Số worker phải từ 1 đến 500")
         account_count = int(self.manager.account_summary()["count"])
@@ -94,6 +98,7 @@ class WindowsBuildJobManager:
             id=uuid.uuid4().hex[:12],
             worker_count=worker_count,
             start_after_build=start_after_build,
+            server=server,
         )
         self.jobs[job.id] = job
         task = asyncio.create_task(self._run(job))
@@ -108,11 +113,13 @@ class WindowsBuildJobManager:
             await job.touch()
             was_desired = self.manager.desired_supervisor()
             was_running = self.manager.supervisor_status()["running"]
-            should_restart = job.start_after_build or was_desired or was_running
+            was_server = self.manager.selected_server()
+            should_restart = job.start_after_build
 
             try:
                 await job.append("Đang dừng supervisor và các worker cũ...")
                 await self.manager.stop_supervisor(remember=False)
+                self.manager.set_server(job.server)
 
                 await job.append(f"Đang biên dịch Java và chia {job.worker_count} worker qua win_manager.py...")
                 cmd = [
@@ -125,7 +132,7 @@ class WindowsBuildJobManager:
                 process = await asyncio.create_subprocess_exec(
                     *cmd,
                     cwd=self.manager.settings.repo_dir,
-                    env=self.manager.settings.command_env(),
+                    env=self.manager.settings.command_env(job.server),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )
@@ -159,7 +166,7 @@ class WindowsBuildJobManager:
 
                 if should_restart:
                     await job.append("Đang khởi động Supervisor...")
-                    await self.manager.start_supervisor(remember=True)
+                    await self.manager.start_supervisor(remember=True, server=job.server)
                 else:
                     self.manager._set_desired_supervisor(False)
 
@@ -171,7 +178,7 @@ class WindowsBuildJobManager:
                 if was_desired or was_running:
                     try:
                         await job.append("Đang phục hồi Supervisor với runtime trước đó...")
-                        await self.manager.start_supervisor(remember=True)
+                        await self.manager.start_supervisor(remember=True, server=was_server)
                     except Exception as restart_exc:
                         await job.append(f"Không thể phục hồi Supervisor: {restart_exc}")
             finally:

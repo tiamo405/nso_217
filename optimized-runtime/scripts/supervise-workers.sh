@@ -6,17 +6,34 @@ RUNTIME_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${OPTIMIZED_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 CHECK_INTERVAL=${CHECK_INTERVAL:-20}
 START_DELAY=${START_DELAY:-30}
+STALE_LOG_SECONDS=${STALE_LOG_SECONDS:-300}
 SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
+SERVER_NAME=${NSO_SERVER:-tk}
+
+normalize_server() {
+    case "${1,,}" in
+        ninjamobile|ninja) SERVER_NAME=ninjamobile ;;
+        tk|truyenky|truyen-ky) SERVER_NAME=tk ;;
+        *)
+            echo "Server không hợp lệ: $1 (chọn ninjamobile hoặc tk)." >&2
+            exit 1
+            ;;
+    esac
+}
+
+normalize_server "$SERVER_NAME"
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--delay seconds] [worker_number...]
+Usage: $(basename "$0") [--server ninjamobile|tk] [--delay seconds] [worker_number...]
 
 Examples:
   $(basename "$0")                 # supervise all workers (default delay 3s between starts)
   $(basename "$0") --delay 5       # supervise all workers, wait 5s between worker starts
   $(basename "$0") 3               # supervise only worker-03
   $(basename "$0") 1 2 3           # supervise worker-01, worker-02, worker-03
+  STALE_LOG_SECONDS=300 $(basename "$0") # restart nếu stdout.log im lặng 300s
+  $(basename "$0") --server ninjamobile # chạy bằng server NinjaMobile
 EOF
 }
 
@@ -24,6 +41,19 @@ worker_args=()
 start_args=()
 while (( $# > 0 )); do
     case "$1" in
+        --server)
+            if (( $# < 2 )); then
+                echo "Thiếu tên server sau --server." >&2
+                usage
+                exit 1
+            fi
+            normalize_server "$2"
+            shift 2
+            ;;
+        --server=*)
+            normalize_server "${1#--server=}"
+            shift
+            ;;
         --delay|-d)
             if (( $# < 2 )) || ! [[ "$2" =~ ^[0-9]+$ ]]; then
                 echo "Delay phải là số giây không âm." >&2
@@ -50,6 +80,8 @@ while (( $# > 0 )); do
     esac
 done
 
+export NSO_SERVER="$SERVER_NAME"
+
 start_args=("--delay" "$START_DELAY")
 if (( ${#worker_args[@]} > 0 )); then
     for w in "${worker_args[@]}"; do
@@ -59,6 +91,10 @@ fi
 
 if [[ ! -d "$WORKERS_DIR" ]]; then
     echo "Chưa có thư mục workers. Chạy build-workers.sh trước." >&2
+    exit 1
+fi
+if ! [[ "$STALE_LOG_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "STALE_LOG_SECONDS phải là số nguyên không âm." >&2
     exit 1
 fi
 
@@ -75,7 +111,66 @@ printf '%s\n' "$$" >"$SUPERVISOR_PID_FILE"
 cleanup() {
     rm -f -- "$SUPERVISOR_PID_FILE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+
+find_stale_log() {
+    local log_file=$1
+    local modified_at now age
+
+    (( STALE_LOG_SECONDS > 0 )) || return 1
+    if [[ ! -f "$log_file" ]]; then
+        echo "chưa có stdout.log"
+        return 0
+    fi
+
+    modified_at=$(stat -c %Y -- "$log_file" 2>/dev/null) || return 1
+    now=$(date +%s)
+    age=$((now - modified_at))
+    if (( age >= STALE_LOG_SECONDS )); then
+        echo "stdout.log không đổi ${age}s (ngưỡng ${STALE_LOG_SECONDS}s)"
+        return 0
+    fi
+    return 1
+}
+
+restart_worker() {
+    local worker_dir=$1
+    local worker_name pid_file pid cmdline
+
+    worker_name=$(basename -- "$worker_dir")
+    pid_file="$worker_dir/bot.pid"
+    [[ -f "$pid_file" ]] || return 0
+
+    pid=$(<"$pid_file")
+    if ! [[ "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+        rm -f -- "$pid_file"
+        return 0
+    fi
+
+    cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+    if [[ "$cmdline" != *"OptimizedMain"* || "$cmdline" != *"$worker_dir"* ]]; then
+        echo "Bỏ qua restart $worker_name: PID $pid không thuộc optimized worker này." >&2
+        return 1
+    fi
+
+    if ! kill "$pid" 2>/dev/null; then
+        echo "Không dừng được $worker_name (PID $pid), bỏ qua restart." >&2
+        return 1
+    fi
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
+        sleep 0.1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f -- "$pid_file"
+
+    "$SCRIPT_DIR/start-workers.sh" --delay 0 "$worker_name"
+}
 
 echo "Optimized Supervisor đang chạy (PID $$)... Bấm Ctrl+C để dừng."
 echo "Cấu hình giãn cách khởi động: START_DELAY=${START_DELAY}s giữa các worker"
@@ -124,6 +219,25 @@ while true; do
 
     # Gọi start-workers.sh với đúng tham số delay để lần lượt khởi động so le
     "$SCRIPT_DIR/start-workers.sh" "${start_args[@]}" || true
+
+    for worker_dir in "${worker_dirs[@]}"; do
+        [[ -f "$worker_dir/.paused" ]] && continue
+        [[ -f "$worker_dir/home/worker.done" ]] && continue
+
+        pid_file="$worker_dir/bot.pid"
+        [[ -f "$pid_file" ]] || continue
+        pid=$(<"$pid_file")
+        if ! [[ "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+            continue
+        fi
+
+        worker_name=$(basename -- "$worker_dir")
+        if stale_reason=$(find_stale_log "$worker_dir/stdout.log"); then
+            echo "[$(date '+%F %T')] $worker_name log im lặng đủ ${STALE_LOG_SECONDS}s; đang restart."
+            echo "Lý do: $stale_reason"
+            restart_worker "$worker_dir" || true
+        fi
+    done
 
     sleep "$CHECK_INTERVAL"
 done

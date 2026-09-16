@@ -20,6 +20,11 @@ from .scheduler import WindowsScheduleManager
 class BuildRequest(BaseModel):
     worker_count: int = Field(ge=1, le=500)
     start_after_build: bool = True
+    server: Literal["ninjamobile", "tk"] = "tk"
+
+
+class SupervisorRequest(BaseModel):
+    server: Literal["ninjamobile", "tk"] = "tk"
 
 
 class ScheduleRequest(BaseModel):
@@ -28,6 +33,7 @@ class ScheduleRequest(BaseModel):
     daily_time: Optional[str] = "01:00"
     interval_hours: Optional[int] = 6
     worker_count: Optional[int] = 10
+    server: Literal["ninjamobile", "tk"] = "tk"
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -78,6 +84,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/status")
     async def status() -> Dict[str, Any]:
         data = await manager.status()
+        data["server"] = manager.selected_server()
         data["account"] = manager.account_summary()
         data["schedule"] = scheduler.get_state()
         active = jobs.active_job()
@@ -96,12 +103,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             daily_time=body.daily_time or "01:00",
             interval_hours=body.interval_hours if body.interval_hours is not None else 6,
             worker_count=body.worker_count if body.worker_count is not None else 10,
+            server=body.server,
         )
 
     @app.post("/api/supervisor/start")
-    async def start_supervisor() -> Dict[str, Any]:
+    async def start_supervisor(body: Optional[SupervisorRequest] = None) -> Dict[str, Any]:
         require_idle()
-        return await manager.start_supervisor()
+        selected_server = body.server if body is not None else manager.selected_server()
+        return await manager.start_supervisor(server=selected_server)
 
     @app.post("/api/supervisor/stop")
     async def stop_supervisor() -> Dict[str, Any]:
@@ -142,6 +151,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         job = await jobs.create(
             worker_count=body.worker_count,
             start_after_build=body.start_after_build,
+            server=body.server,
         )
         return {"job": job.public()}
 

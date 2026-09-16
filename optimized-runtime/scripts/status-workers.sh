@@ -5,6 +5,17 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUNTIME_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${OPTIMIZED_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 
+is_optimized_worker_pid() {
+    local pid=$1
+    local worker_dir=$2
+    local cmdline
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    [[ -r "/proc/$pid/cmdline" ]] || return 1
+    cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+    [[ "$cmdline" == *"OptimizedMain"* && "$cmdline" == *"$worker_dir"* ]]
+}
+
 if [[ ${1:-} == "--json" ]]; then
     if (( $# != 1 )); then
         echo "Usage: $(basename "$0") [--json]" >&2
@@ -30,7 +41,7 @@ for worker_dir in "$WORKERS_DIR"/worker-*; do
         status="DONE"
     elif [[ -f "$pid_file" ]]; then
         current_pid=$(<"$pid_file")
-        if [[ "$current_pid" =~ ^[0-9]+$ ]] && kill -0 "$current_pid" 2>/dev/null; then
+        if is_optimized_worker_pid "$current_pid" "$worker_dir"; then
             status="RUNNING"
             pid="$current_pid"
             stats=$(ps -p "$pid" -o %cpu,rss --no-headers 2>/dev/null || echo "0 0")

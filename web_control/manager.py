@@ -12,6 +12,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 from .config import Settings
 
 
@@ -47,12 +49,14 @@ class HeadlessManager:
             raise ControlError(f"Không tìm thấy script: {name}")
         return path
 
-    async def _capture(self, *args: str, timeout: int | None = None) -> tuple[int, str]:
+    async def _capture(
+        self, *args: str, timeout: int | None = None, server: str | None = None
+    ) -> tuple[int, str]:
         try:
             process = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=self.settings.repo_dir,
-                env=self.settings.command_env(),
+                env=self.settings.command_env(server),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -109,21 +113,49 @@ class HeadlessManager:
         return False
 
     def desired_supervisor(self) -> bool:
-        try:
-            state = json.loads(self.state_file.read_text(encoding="utf-8"))
-            return state.get("supervisor_desired") is True
-        except (OSError, json.JSONDecodeError):
-            return False
+        return self._read_state().get("supervisor_desired") is True
 
-    def _set_desired_supervisor(self, desired: bool) -> None:
+    def _read_state(self) -> dict[str, Any]:
+        try:
+            data = json.loads(self.state_file.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _write_state(self, data: dict[str, Any]) -> None:
         self.settings.runtime_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.state_file.with_suffix(".tmp")
         temporary.write_text(
-            json.dumps({"supervisor_desired": desired}, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+            json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8"
         )
         os.chmod(temporary, 0o600)
         temporary.replace(self.state_file)
+
+    def selected_server(self) -> str:
+        state = self._read_state()
+        try:
+            return normalize_server(state.get("server"))
+        except (AttributeError, ValueError):
+            try:
+                return normalize_server(os.environ.get("NSO_SERVER"))
+            except ValueError:
+                return DEFAULT_SERVER
+
+    def set_server(self, server: str) -> str:
+        try:
+            selected = normalize_server(server)
+        except ValueError as exc:
+            raise ControlError(str(exc)) from exc
+        state = self._read_state()
+        state["server"] = selected
+        self._write_state(state)
+        return selected
+
+    def _set_desired_supervisor(self, desired: bool) -> None:
+        state = self._read_state()
+        state["supervisor_desired"] = desired
+        state.setdefault("server", self.selected_server())
+        self._write_state(state)
 
     def supervisor_status(self) -> dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
@@ -134,14 +166,30 @@ class HeadlessManager:
             "pid": pid if running else None,
             "stale_pid": stale,
             "desired": self.desired_supervisor(),
+            "server": self.selected_server(),
             "log": str(self.supervisor_log),
         }
 
-    async def start_supervisor(self, *, remember: bool = True) -> dict[str, Any]:
+    async def start_supervisor(
+        self, *, remember: bool = True, server: str | None = None
+    ) -> dict[str, Any]:
         async with self.control_lock:
-            return await self._start_supervisor_unlocked(remember=remember)
+            current = self.supervisor_status()
+            requested_server = (
+                self.selected_server() if server is None else self.set_server(server)
+            )
+            if current["running"] and current["server"] != requested_server:
+                await self._stop_supervisor_unlocked(remember=False)
+            return await self._start_supervisor_unlocked(
+                remember=remember, server=requested_server
+            )
 
-    async def _start_supervisor_unlocked(self, *, remember: bool) -> dict[str, Any]:
+    async def _start_supervisor_unlocked(
+        self, *, remember: bool, server: str | None = None
+    ) -> dict[str, Any]:
+        selected_server = (
+            self.selected_server() if server is None else self.set_server(server)
+        )
         current = self.supervisor_status()
         if current["running"]:
             if remember:
@@ -177,7 +225,7 @@ class HeadlessManager:
                 self._supervisor_process = subprocess.Popen(
                     [str(self._script("supervise-workers.sh"))],
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(),
+                    env=self.settings.command_env(selected_server),
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,
@@ -218,15 +266,24 @@ class HeadlessManager:
         if current["running"]:
             pid = int(current["pid"])
             try:
-                os.kill(pid, signal.SIGTERM)
+                self._signal_supervisor(pid, signal.SIGTERM)
             except ProcessLookupError:
                 self.supervisor_pid_file.unlink(missing_ok=True)
-            for _ in range(300):
+            for _ in range(50):
                 if not self._supervisor_pid_is_valid(pid):
                     break
                 await asyncio.sleep(0.1)
             else:
-                raise ControlError("Supervisor không dừng sau 30 giây")
+                try:
+                    self._signal_supervisor(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                for _ in range(20):
+                    if not self._supervisor_pid_is_valid(pid):
+                        break
+                    await asyncio.sleep(0.1)
+                else:
+                    raise ControlError("Không thể kill Supervisor sau khi gửi SIGTERM/SIGKILL")
             if (
                 self._supervisor_process is not None
                 and self._supervisor_process.pid == pid
@@ -237,15 +294,28 @@ class HeadlessManager:
                     self._supervisor_process.kill()
                     self._supervisor_process.wait(timeout=2)
                 self._supervisor_process = None
-        else:
-            code, output = await self._capture(str(self._script("stop-workers.sh")), timeout=20)
-            if code != 0:
-                raise ControlError(output.strip() or "Không dừng được worker")
+        code, output = await self._capture(str(self._script("stop-workers.sh")), timeout=20)
+        if code != 0:
+            raise ControlError(output.strip() or "Không dừng được worker")
         if self.supervisor_pid_file.exists() and not self._supervisor_pid_is_valid(
             self._read_pid(self.supervisor_pid_file) or -1
         ):
             self.supervisor_pid_file.unlink(missing_ok=True)
         return self.supervisor_status()
+
+    @staticmethod
+    def _signal_supervisor(pid: int, signum: int) -> None:
+        """Signal the web-owned Supervisor session and its launcher children."""
+        try:
+            process_group = os.getpgid(pid)
+        except ProcessLookupError:
+            raise
+        if process_group == pid:
+            os.killpg(process_group, signum)
+        else:
+            # A manually launched Supervisor may share the web process group;
+            # never signal that whole group.
+            os.kill(pid, signum)
 
     def worker_number(self, worker_name: str) -> str:
         match = WORKER_RE.fullmatch(worker_name)
@@ -285,6 +355,7 @@ class HeadlessManager:
                 "0",
                 number,
                 timeout=30,
+                server=self.selected_server(),
             )
             if code != 0:
                 if was_paused:
@@ -299,7 +370,10 @@ class HeadlessManager:
             was_paused = pause_marker.is_file()
             pause_marker.unlink(missing_ok=True)
             code, output = await self._capture(
-                str(self._script("restart-workers.sh")), number, timeout=30
+                str(self._script("restart-workers.sh")),
+                number,
+                timeout=30,
+                server=self.selected_server(),
             )
             if code != 0:
                 if was_paused:
