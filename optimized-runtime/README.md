@@ -49,7 +49,8 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 ./optimized-runtime/scripts/logs-workers.sh
 ./optimized-runtime/scripts/logs-workers.sh 1   # Chỉ xem worker 1
 
-# Chạy supervisor bằng server đã chọn; tự restart nếu worker crash hoặc stdout.log im lặng 300 giây
+# Chạy supervisor bằng server đã chọn; tự restart nếu worker crash, stdout.log im lặng,
+# hoặc trạng thái tiến độ AUTO NVHN bị lặp 5 lần liên tiếp
 ./optimized-runtime/scripts/supervise-workers.sh --server tk
 
 # Dừng toàn bộ workers
@@ -62,13 +63,20 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 
 Supervisor kiểm tra `stdout.log` mỗi 20 giây. Nếu worker còn process nhưng log
 không thay đổi ít nhất 300 giây, worker sẽ được dừng và khởi động lại. Có thể
-đổi ngưỡng bằng `STALE_LOG_SECONDS`; đặt `0` để tắt watchdog log.
+đổi ngưỡng bằng `STALE_LOG_SECONDS`; đặt `0` để tắt watchdog log. Ngoài ra,
+nếu cùng một đoạn tiến độ `AUTO NVHN STATUS` (`nvhn=x/20` và `progress=x/y`)
+hoặc cùng một sự kiện `AUTO NVHN` lặp liên tiếp 5 lần trong đoạn log gần nhất,
+worker cũng được khởi động lại. Đổi ngưỡng bằng `REPEATED_STATUS_LIMIT`; đặt
+`0` để tắt kiểm tra lặp.
 
 | Biến | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |
 | `JAVA_XMS` | `8m` | Heap khởi điểm cho mỗi worker JVM |
 | `JAVA_XMX` | `36m` | Heap tối đa cho mỗi worker JVM |
 | `NSO_TICK_MS` | `80` | Chu kỳ tick (ms) của MotherCanvas (80ms = 12.5 FPS) |
+| `STALE_LOG_SECONDS` | `300` | Restart nếu `stdout.log` không đổi; `0` để tắt |
+| `REPEATED_STATUS_LIMIT` | `5` | Restart nếu trạng thái/sự kiện `AUTO NVHN` lặp; `0` để tắt |
+| `PERIODIC_RESTART_SECONDS` | `10800` | Restart từng worker sau 3 giờ từ lần start gần nhất; `0` để tắt |
 | `NSO_SKIP_PAINT`| `true` | Tắt hoàn toàn repaint & vẽ giao diện |
 | `NSO_SKIP_DECORATIONS` | `true` | Bỏ qua các hoạt ảnh đồ họa |
 | `NSO_LAZY_MAP` | `true` | Chỉ nạp map khi nhân vật bước vào map |

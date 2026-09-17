@@ -38,6 +38,12 @@
             <div><p class="eyebrow">WINDOWS RUNTIME</p><h2>Supervisor</h2></div>
           </div>
           <p id="supervisor-detail" class="muted">Đang tải trạng thái…</p>
+          <div class="field-group">
+            <label for="periodic-restart-hours">Restart worker định kỳ (giờ, 0 = tắt)</label>
+            <input id="periodic-restart-hours" type="number" min="0" max="168" step="1" value="3">
+            <p class="muted">Tính từ lần khởi động gần nhất của từng worker.</p>
+            <button id="save-supervisor-settings" type="button" class="secondary">Lưu cấu hình restart</button>
+          </div>
           <div class="button-row">
             <button id="start-supervisor" class="primary">Start Supervisor</button>
             <button id="stop-supervisor" class="danger">Stop Tất Cả</button>
@@ -175,6 +181,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=2" defer></script>
+  <script src="/static/app.js?v=3" defer></script>
 </body>
 </html>

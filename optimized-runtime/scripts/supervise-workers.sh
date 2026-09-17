@@ -6,7 +6,9 @@ RUNTIME_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${OPTIMIZED_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 CHECK_INTERVAL=${CHECK_INTERVAL:-20}
 START_DELAY=${START_DELAY:-30}
+REPEATED_STATUS_LIMIT=${REPEATED_STATUS_LIMIT:-5}
 STALE_LOG_SECONDS=${STALE_LOG_SECONDS:-300}
+PERIODIC_RESTART_SECONDS=${PERIODIC_RESTART_SECONDS:-10800}
 SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
 SERVER_NAME=${NSO_SERVER:-tk}
 
@@ -32,7 +34,9 @@ Examples:
   $(basename "$0") --delay 5       # supervise all workers, wait 5s between worker starts
   $(basename "$0") 3               # supervise only worker-03
   $(basename "$0") 1 2 3           # supervise worker-01, worker-02, worker-03
+  REPEATED_STATUS_LIMIT=5 $(basename "$0") # restart nếu trạng thái tiến độ lặp 5 lần
   STALE_LOG_SECONDS=300 $(basename "$0") # restart nếu stdout.log im lặng 300s
+  PERIODIC_RESTART_SECONDS=10800 $(basename "$0") # restart worker sau 3 giờ
   $(basename "$0") --server ninjamobile # chạy bằng server NinjaMobile
 EOF
 }
@@ -97,6 +101,14 @@ if ! [[ "$STALE_LOG_SECONDS" =~ ^[0-9]+$ ]]; then
     echo "STALE_LOG_SECONDS phải là số nguyên không âm." >&2
     exit 1
 fi
+if ! [[ "$REPEATED_STATUS_LIMIT" =~ ^[0-9]+$ ]]; then
+    echo "REPEATED_STATUS_LIMIT phải là số nguyên không âm." >&2
+    exit 1
+fi
+if ! [[ "$PERIODIC_RESTART_SECONDS" =~ ^[0-9]+$ ]]; then
+    echo "PERIODIC_RESTART_SECONDS phải là số giây không âm." >&2
+    exit 1
+fi
 
 mkdir -p "$WORKERS_DIR"
 if [[ -f "$SUPERVISOR_PID_FILE" ]]; then
@@ -114,6 +126,82 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' INT TERM
 
+find_repeated_status() {
+    local log_file=$1
+
+    (( REPEATED_STATUS_LIMIT > 0 )) || return 1
+    [[ -f "$log_file" ]] || return 1
+    # Only scan the recent segment so a large append-only log does not make
+    # every supervisor cycle read the complete file.
+    tail -c 4M -- "$log_file" | awk -v limit="$REPEATED_STATUS_LIMIT" '
+        /^===== START / {
+            last_key = ""
+            repeated = 0
+            next
+        }
+        index($0, "AUTO NVHN PREP: đang tới Okaza") > 0 {
+            prep = substr($0, index($0, "AUTO NVHN PREP:"))
+            key = "prep " prep
+            if (key == last_key) {
+                repeated++
+            } else {
+                last_key = key
+                repeated = 1
+            }
+            last_status = prep
+            next
+        }
+        /^AUTO NVHN STATUS:/ {
+            nvhn = ""
+            progress = ""
+            if (match($0, /nvhn=[0-9]+\/20/)) {
+                nvhn = substr($0, RSTART, RLENGTH)
+            }
+            if (match($0, /progress=[0-9]+\/[0-9]+/)) {
+                progress = substr($0, RSTART, RLENGTH)
+            }
+            if (nvhn == "" || progress == "") {
+                last_key = ""
+                repeated = 0
+                next
+            }
+
+            # Compare the progress segment, not the whole line. Values such as
+            # HP, currency, or timestamps can change while the task progress
+            # remains stuck.
+            key = nvhn " " progress
+            if (key == last_key) {
+                repeated++
+            } else {
+                last_key = key
+                repeated = 1
+            }
+            last_status = $0
+            next
+        }
+        /^AUTO NVHN / {
+            # Catch other exact AUTO NVHN event lines as well. This is more
+            # conservative than comparing every log line: five identical
+            # task events in the recent segment indicate a likely retry loop.
+            key = "event " $0
+            if (key == last_key) {
+                repeated++
+            } else {
+                last_key = key
+                repeated = 1
+            }
+            last_status = $0
+        }
+        END {
+            if (repeated >= limit) {
+                print last_key " | " last_status
+                exit 0
+            }
+            exit 1
+        }
+    ' "$log_file"
+}
+
 find_stale_log() {
     local log_file=$1
     local modified_at now age
@@ -129,6 +217,23 @@ find_stale_log() {
     age=$((now - modified_at))
     if (( age >= STALE_LOG_SECONDS )); then
         echo "stdout.log không đổi ${age}s (ngưỡng ${STALE_LOG_SECONDS}s)"
+        return 0
+    fi
+    return 1
+}
+
+find_periodic_restart() {
+    local pid_file=$1
+    local modified_at now age
+
+    (( PERIODIC_RESTART_SECONDS > 0 )) || return 1
+    [[ -f "$pid_file" ]] || return 1
+
+    modified_at=$(stat -c %Y -- "$pid_file" 2>/dev/null) || return 1
+    now=$(date +%s)
+    age=$((now - modified_at))
+    if (( age >= PERIODIC_RESTART_SECONDS )); then
+        echo "worker đã chạy ${age}s (ngưỡng ${PERIODIC_RESTART_SECONDS}s)"
         return 0
     fi
     return 1
@@ -232,9 +337,23 @@ while true; do
         fi
 
         worker_name=$(basename -- "$worker_dir")
+        if periodic_reason=$(find_periodic_restart "$pid_file"); then
+            echo "[$(date '+%F %T')] $worker_name đã đến chu kỳ restart định kỳ; đang restart."
+            echo "Lý do: $periodic_reason"
+            restart_worker "$worker_dir" || true
+            continue
+        fi
+
         if stale_reason=$(find_stale_log "$worker_dir/stdout.log"); then
             echo "[$(date '+%F %T')] $worker_name log im lặng đủ ${STALE_LOG_SECONDS}s; đang restart."
             echo "Lý do: $stale_reason"
+            restart_worker "$worker_dir" || true
+            continue
+        fi
+
+        if repeated_status=$(find_repeated_status "$worker_dir/stdout.log"); then
+            echo "[$(date '+%F %T')] $worker_name có trạng thái AUTO NVHN bị lặp từ $REPEATED_STATUS_LIMIT lần liên tiếp; đang restart."
+            echo "Trạng thái bị lặp: $repeated_status"
             restart_worker "$worker_dir" || true
         fi
     done

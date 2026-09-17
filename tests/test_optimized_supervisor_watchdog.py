@@ -191,6 +191,161 @@ class OptimizedSupervisorWatchdogTest(unittest.TestCase):
                 "Ubuntu supervisor phải thoát hẳn khi nhận lệnh Stop",
             )
 
+    def test_ubuntu_supervisor_restarts_worker_with_repeated_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="nso-optimized-repeat-") as temporary:
+            root = Path(temporary)
+            runtime = root / "optimized-runtime"
+            scripts = runtime / "scripts"
+            workers = runtime / "workers"
+            worker = workers / "worker-01"
+            scripts.mkdir(parents=True)
+            (worker / "home").mkdir(parents=True)
+
+            shutil.copy2(
+                REPO_DIR / "optimized-runtime/scripts/supervise-workers.sh",
+                scripts / "supervise-workers.sh",
+            )
+            marker = root / "restart-marker.txt"
+            write_script(
+                scripts / "start-workers.sh",
+                'if [[ "$*" == *"worker-01"* ]]; then printf "%s\\n" "$*" >>"$TEST_RESTART_MARKER"; fi\n',
+            )
+
+            process_title = f"OptimizedMain {worker}"
+            sleeper = subprocess.Popen(
+                ["bash", "-c", f"exec -a {shlex.quote(process_title)} sleep 60"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            (worker / "bot.pid").write_text(f"{sleeper.pid}\n", encoding="utf-8")
+            (worker / "stdout.log").write_text(
+                "\n".join(
+                    f"AUTO NVHN STATUS: username=test nv=char level=10 map=1 state=đang đánh "
+                    f"nvhn=3/20 progress=4/10 hp={100 - index}/100 xu=0 yen=0"
+                    for index in range(5)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            env = {
+                **os.environ,
+                "OPTIMIZED_WORKERS_DIR": str(workers),
+                "TEST_RESTART_MARKER": str(marker),
+                "STALE_LOG_SECONDS": "0",
+                "REPEATED_STATUS_LIMIT": "5",
+                "CHECK_INTERVAL": "1",
+                "START_DELAY": "0",
+            }
+            supervisor = subprocess.Popen(
+                [str(scripts / "supervise-workers.sh")],
+                cwd=root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output = ""
+            try:
+                deadline = time.time() + 6
+                while time.time() < deadline:
+                    if marker.is_file() and "worker-01" in marker.read_text(encoding="utf-8"):
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("Ubuntu supervisor không restart worker có trạng thái lặp")
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.terminate()
+                try:
+                    output, _ = supervisor.communicate(timeout=4)
+                except subprocess.TimeoutExpired:
+                    supervisor.kill()
+                    output, _ = supervisor.communicate(timeout=2)
+                if sleeper.poll() is None:
+                    sleeper.kill()
+                    sleeper.wait(timeout=2)
+
+            self.assertIn("trạng thái AUTO NVHN bị lặp từ 5 lần liên tiếp", output)
+            self.assertIn("nvhn=3/20 progress=4/10", output)
+
+    def test_ubuntu_supervisor_restarts_worker_after_periodic_interval(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="nso-optimized-periodic-") as temporary:
+            root = Path(temporary)
+            runtime = root / "optimized-runtime"
+            scripts = runtime / "scripts"
+            workers = runtime / "workers"
+            worker = workers / "worker-01"
+            scripts.mkdir(parents=True)
+            (worker / "home").mkdir(parents=True)
+
+            shutil.copy2(
+                REPO_DIR / "optimized-runtime/scripts/supervise-workers.sh",
+                scripts / "supervise-workers.sh",
+            )
+            marker = root / "restart-marker.txt"
+            write_script(
+                scripts / "start-workers.sh",
+                'if [[ "$*" == *"worker-01"* ]]; then printf "%s\\n" "$*" >>"$TEST_RESTART_MARKER"; fi\n',
+            )
+
+            process_title = f"OptimizedMain {worker}"
+            sleeper = subprocess.Popen(
+                ["bash", "-c", f"exec -a {shlex.quote(process_title)} sleep 60"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            pid_file = worker / "bot.pid"
+            pid_file.write_text(f"{sleeper.pid}\n", encoding="utf-8")
+            os.utime(pid_file, (time.time() - 10, time.time() - 10))
+            (worker / "stdout.log").write_text("AUTO NVHN STATUS: fresh\n", encoding="utf-8")
+
+            env = {
+                **os.environ,
+                "OPTIMIZED_WORKERS_DIR": str(workers),
+                "TEST_RESTART_MARKER": str(marker),
+                "STALE_LOG_SECONDS": "0",
+                "REPEATED_STATUS_LIMIT": "0",
+                "PERIODIC_RESTART_SECONDS": "1",
+                "CHECK_INTERVAL": "1",
+                "START_DELAY": "0",
+            }
+            supervisor = subprocess.Popen(
+                [str(scripts / "supervise-workers.sh")],
+                cwd=root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output = ""
+            try:
+                deadline = time.time() + 6
+                while time.time() < deadline:
+                    if marker.is_file() and "worker-01" in marker.read_text(encoding="utf-8"):
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("Ubuntu supervisor không restart worker đến chu kỳ định kỳ")
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.terminate()
+                try:
+                    output, _ = supervisor.communicate(timeout=4)
+                except subprocess.TimeoutExpired:
+                    supervisor.kill()
+                    output, _ = supervisor.communicate(timeout=2)
+                if sleeper.poll() is None:
+                    sleeper.kill()
+                    sleeper.wait(timeout=2)
+
+            self.assertIn("đã đến chu kỳ restart định kỳ", output)
+            self.assertIn("ngưỡng 1s", output)
+
     def test_windows_supervisor_restarts_worker_with_stale_stdout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="nso-optimized-win-stale-") as temporary:
             root = Path(temporary)
@@ -285,6 +440,205 @@ class OptimizedSupervisorWatchdogTest(unittest.TestCase):
                 self.fail(failure_message + "\n" + output)
             self.assertIn("log im lặng đủ 1s", output)
             self.assertIn("stdout.log không đổi", output)
+
+    def test_windows_supervisor_restarts_worker_with_repeated_status(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="nso-optimized-win-repeat-") as temporary:
+            root = Path(temporary)
+            runtime = root / "optimized-runtime"
+            windows = runtime / "windows"
+            workers = runtime / "workers"
+            worker = workers / "worker-01"
+            (runtime / "src").mkdir(parents=True)
+            (runtime / "src" / "OptimizedMain.java").write_text("", encoding="utf-8")
+            (runtime / "overrides").mkdir()
+            (root / "src").mkdir()
+            (runtime / "build" / "classes").mkdir(parents=True)
+            (runtime / "build" / "classes" / "OptimizedMain.class").touch()
+            (worker / "home").mkdir(parents=True)
+            windows.mkdir(parents=True)
+            win_manager = windows / "win_manager.py"
+            shutil.copy2(REPO_DIR / "optimized-runtime/windows/win_manager.py", win_manager)
+
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            marker = root / "restart-marker.txt"
+            write_script(
+                bin_dir / "java",
+                'printf "%s\\n" "$*" >>"$TEST_RESTART_MARKER"\nexec sleep 60\n',
+            )
+
+            sleeper = subprocess.Popen(
+                ["bash", "-c", f"exec -a {shlex.quote(f'OptimizedMain {worker}')} sleep 60"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            (worker / "bot.pid").write_text(f"{sleeper.pid}\n", encoding="utf-8")
+            (worker / "stdout.log").write_text(
+                "\n".join(
+                    f"AUTO NVHN STATUS: username=test nv=char level=10 map=1 state=đang đánh "
+                    f"nvhn=3/20 progress=4/10 hp={100 - index}/100 xu=0 yen=0"
+                    for index in range(5)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "TEST_RESTART_MARKER": str(marker),
+                "STALE_LOG_SECONDS": "0",
+                "REPEATED_STATUS_LIMIT": "5",
+            }
+            supervisor = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(win_manager),
+                    "supervise",
+                    "--delay",
+                    "0",
+                    "--interval",
+                    "1",
+                    "1",
+                ],
+                cwd=root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            restarted_pid = None
+            output = ""
+            try:
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if marker.is_file() and marker.read_text(encoding="utf-8").strip():
+                        try:
+                            restarted_pid = int((worker / "bot.pid").read_text(encoding="utf-8"))
+                        except (ValueError, OSError):
+                            pass
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("Windows supervisor không restart worker có trạng thái lặp")
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.terminate()
+                try:
+                    output, _ = supervisor.communicate(timeout=4)
+                except subprocess.TimeoutExpired:
+                    supervisor.kill()
+                    output, _ = supervisor.communicate(timeout=2)
+                if sleeper.poll() is None:
+                    sleeper.kill()
+                    sleeper.wait(timeout=2)
+                if restarted_pid is not None:
+                    try:
+                        os.kill(restarted_pid, 9)
+                    except OSError:
+                        pass
+
+            self.assertIn("trạng thái AUTO NVHN bị lặp từ 5 lần liên tiếp", output)
+            self.assertIn("nvhn=3/20 progress=4/10", output)
+
+    def test_windows_supervisor_restarts_worker_after_periodic_interval(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="nso-optimized-win-periodic-") as temporary:
+            root = Path(temporary)
+            runtime = root / "optimized-runtime"
+            windows = runtime / "windows"
+            workers = runtime / "workers"
+            worker = workers / "worker-01"
+            (runtime / "src").mkdir(parents=True)
+            (runtime / "src" / "OptimizedMain.java").write_text("", encoding="utf-8")
+            (runtime / "overrides").mkdir()
+            (root / "src").mkdir()
+            (runtime / "build" / "classes").mkdir(parents=True)
+            (runtime / "build" / "classes" / "OptimizedMain.class").touch()
+            (worker / "home").mkdir(parents=True)
+            windows.mkdir(parents=True)
+            win_manager = windows / "win_manager.py"
+            shutil.copy2(REPO_DIR / "optimized-runtime/windows/win_manager.py", win_manager)
+
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            marker = root / "restart-marker.txt"
+            write_script(
+                bin_dir / "java",
+                'printf "%s\\n" "$*" >>"$TEST_RESTART_MARKER"\nexec sleep 60\n',
+            )
+
+            sleeper = subprocess.Popen(
+                ["bash", "-c", f"exec -a {shlex.quote(f'OptimizedMain {worker}')} sleep 60"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            pid_file = worker / "bot.pid"
+            pid_file.write_text(f"{sleeper.pid}\n", encoding="utf-8")
+            os.utime(pid_file, (time.time() - 10, time.time() - 10))
+            (worker / "stdout.log").write_text("AUTO NVHN STATUS: fresh\n", encoding="utf-8")
+
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+                "TEST_RESTART_MARKER": str(marker),
+                "STALE_LOG_SECONDS": "0",
+                "REPEATED_STATUS_LIMIT": "0",
+                "PERIODIC_RESTART_SECONDS": "1",
+            }
+            supervisor = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(win_manager),
+                    "supervise",
+                    "--delay",
+                    "0",
+                    "--interval",
+                    "1",
+                    "1",
+                ],
+                cwd=root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            restarted_pid = None
+            output = ""
+            try:
+                deadline = time.time() + 8
+                while time.time() < deadline:
+                    if marker.is_file() and marker.read_text(encoding="utf-8").strip():
+                        try:
+                            restarted_pid = int(pid_file.read_text(encoding="utf-8"))
+                        except (ValueError, OSError):
+                            pass
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail("Windows supervisor không restart worker đến chu kỳ định kỳ")
+            finally:
+                if supervisor.poll() is None:
+                    supervisor.terminate()
+                try:
+                    output, _ = supervisor.communicate(timeout=4)
+                except subprocess.TimeoutExpired:
+                    supervisor.kill()
+                    output, _ = supervisor.communicate(timeout=2)
+                if sleeper.poll() is None:
+                    sleeper.kill()
+                    sleeper.wait(timeout=2)
+                if restarted_pid is not None:
+                    try:
+                        os.kill(restarted_pid, 9)
+                    except OSError:
+                        pass
+
+            self.assertIn("đã đến chu kỳ restart định kỳ", output)
+            self.assertIn("ngưỡng 1s", output)
 
 
 if __name__ == "__main__":

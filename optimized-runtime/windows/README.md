@@ -47,7 +47,8 @@ python optimized-runtime\windows\win_manager.py build
 :: 2. Chia account thành 10 workers (mặc định sẽ tự build luôn)
 python optimized-runtime\windows\win_manager.py build-workers 10
 
-:: 3. Chạy Supervisor bằng server TK (restart nếu stdout.log im lặng 300 giây)
+:: 3. Chạy Supervisor bằng server TK (restart nếu stdout.log im lặng 300 giây
+::    hoặc trạng thái tiến độ AUTO NVHN lặp 5 lần liên tiếp)
 python optimized-runtime\windows\win_manager.py supervise --server tk --delay 30
 
 :: 4. Xem bảng trạng thái các worker
@@ -70,6 +71,15 @@ python optimized-runtime\windows\win_manager.py logs 1
 Supervisor kiểm tra `stdout.log` mỗi 20 giây. Nếu worker còn process nhưng log
 không thay đổi ít nhất 300 giây, worker sẽ được dừng và khởi động lại. Có thể
 đổi ngưỡng bằng biến môi trường `STALE_LOG_SECONDS`; đặt `0` để tắt watchdog log.
+Nếu cùng một đoạn tiến độ `AUTO NVHN STATUS` (`nvhn=x/20` và `progress=x/y`)
+hoặc cùng một sự kiện `AUTO NVHN` lặp liên tiếp 5 lần trong đoạn log gần nhất,
+worker cũng được khởi động lại. Đổi ngưỡng bằng `REPEATED_STATUS_LIMIT`; đặt
+`0` để tắt kiểm tra lặp.
+
+Supervisor cũng restart từng worker sau 3 giờ tính từ lần worker được start gần
+nhất, không phụ thuộc log đang bình thường hay stale. Khi chạy qua Web Dashboard,
+đặt giá trị trong ô **Restart worker định kỳ** rồi bấm **Lưu cấu hình restart**.
+Khi chạy trực tiếp, có thể dùng `PERIODIC_RESTART_SECONDS=10800`.
 
 Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trước
 khi Build & Chạy. Lựa chọn được lưu lại cho supervisor và các lần restart worker.

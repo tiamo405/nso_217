@@ -5,6 +5,8 @@ let buildActive = false;
 let scheduleDirty = false;
 let scheduleSaving = false;
 let scheduleRevision = 0;
+let supervisorSettingsDirty = false;
+let supervisorSettingsSaving = false;
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -117,12 +119,16 @@ async function refreshStatus() {
     const supervisor = data.supervisor;
     $("#server-select").value = data.server || supervisor.server || "tk";
 
+    if (!supervisorSettingsDirty && !supervisorSettingsSaving) {
+      $("#periodic-restart-hours").value = supervisor.periodic_restart_hours ?? 3;
+    }
+
     $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : "STOPPED";
     $("#supervisor-state").style.color = supervisor.running ? "var(--accent)" : "var(--danger)";
 
     $("#supervisor-detail").textContent = supervisor.running
-      ? `Supervisor PID ${supervisor.pid} · Tự chạy lại: ${supervisor.desired ? "Bật" : "Tắt"}`
-      : `Đang dừng${supervisor.stale_pid ? " (Có PID cũ)" : ""} · Tự chạy lại: ${supervisor.desired ? "Bật" : "Tắt"}`;
+      ? `Supervisor PID ${supervisor.pid} · Tự chạy lại: ${supervisor.desired ? "Bật" : "Tắt"} · Restart định kỳ: ${supervisor.periodic_restart_hours ? `${supervisor.periodic_restart_hours}h` : "Tắt"}`
+      : `Đang dừng${supervisor.stale_pid ? " (Có PID cũ)" : ""} · Tự chạy lại: ${supervisor.desired ? "Bật" : "Tắt"} · Restart định kỳ: ${supervisor.periodic_restart_hours ? `${supervisor.periodic_restart_hours}h` : "Tắt"}`;
 
     $("#running-count").textContent = data.totals.running;
     $("#stopped-count").textContent = data.totals.stopped;
@@ -145,6 +151,8 @@ async function refreshStatus() {
     $("#run-button").disabled = buildActive;
     $("#account-file").disabled = buildActive;
     $("#account-form button").disabled = buildActive;
+    $("#periodic-restart-hours").disabled = buildActive || supervisorSettingsSaving;
+    $("#save-supervisor-settings").disabled = buildActive || supervisorSettingsSaving;
 
     if (data.active_job && !stream) watchBuild(data.active_job);
 
@@ -227,9 +235,17 @@ async function supervisorAction(action, button) {
   button.disabled = true;
   try {
     const options = { method: "POST" };
-    if (action === "start") options.json = { server: $("#server-select").value };
+    if (action === "start") {
+      const periodicHours = readPeriodicRestartHours();
+      if (periodicHours === null) return;
+      options.json = {
+        server: $("#server-select").value,
+        periodic_restart_hours: periodicHours,
+      };
+    }
     await api(`/api/supervisor/${action}`, options);
     notify(`Đã gửi lệnh ${action} supervisor`);
+    if (action === "start") supervisorSettingsDirty = false;
     await refreshStatus();
   } catch (error) {
     notify(error.message, true);
@@ -238,8 +254,48 @@ async function supervisorAction(action, button) {
   }
 }
 
+function readPeriodicRestartHours() {
+  const value = Number.parseInt($("#periodic-restart-hours").value, 10);
+  if (!Number.isInteger(value) || value < 0 || value > 168) {
+    notify("Số giờ restart phải từ 0 đến 168", true);
+    return null;
+  }
+  return value;
+}
+
+async function saveSupervisorSettings() {
+  if (supervisorSettingsSaving) return;
+  const periodicHours = readPeriodicRestartHours();
+  if (periodicHours === null) return;
+
+  supervisorSettingsSaving = true;
+  $("#save-supervisor-settings").disabled = true;
+  try {
+    const result = await api("/api/supervisor/settings", {
+      method: "POST",
+      json: { periodic_restart_hours: periodicHours },
+    });
+    supervisorSettingsDirty = false;
+    if (result.requires_restart) {
+      notify("Đã lưu. Supervisor đang chạy; hãy Stop rồi Start Supervisor để áp dụng cấu hình mới.");
+    } else {
+      notify("Đã lưu cấu hình restart định kỳ.");
+    }
+    await refreshStatus();
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    supervisorSettingsSaving = false;
+    $("#save-supervisor-settings").disabled = false;
+  }
+}
+
 $("#start-supervisor").addEventListener("click", (event) => supervisorAction("start", event.currentTarget));
 $("#stop-supervisor").addEventListener("click", (event) => supervisorAction("stop", event.currentTarget));
+$("#save-supervisor-settings").addEventListener("click", saveSupervisorSettings);
+$("#periodic-restart-hours").addEventListener("input", () => {
+  supervisorSettingsDirty = true;
+});
 $("#refresh-button").addEventListener("click", refreshStatus);
 
 $("#account-form").addEventListener("submit", async (event) => {

@@ -25,6 +25,11 @@ class BuildRequest(BaseModel):
 
 class SupervisorRequest(BaseModel):
     server: Literal["ninjamobile", "tk"] = "tk"
+    periodic_restart_hours: Optional[int] = Field(default=None, ge=0, le=168)
+
+
+class SupervisorSettingsRequest(BaseModel):
+    periodic_restart_hours: int = Field(default=3, ge=0, le=168)
 
 
 class ScheduleRequest(BaseModel):
@@ -110,7 +115,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def start_supervisor(body: Optional[SupervisorRequest] = None) -> Dict[str, Any]:
         require_idle()
         selected_server = body.server if body is not None else manager.selected_server()
-        return await manager.start_supervisor(server=selected_server)
+        periodic_hours = body.periodic_restart_hours if body is not None else None
+        return await manager.start_supervisor(
+            server=selected_server,
+            periodic_restart_hours=periodic_hours,
+        )
+
+    @app.post("/api/supervisor/settings")
+    async def update_supervisor_settings(body: SupervisorSettingsRequest) -> Dict[str, Any]:
+        require_idle()
+        was_running = manager.supervisor_status()["running"]
+        manager.set_periodic_restart_hours(body.periodic_restart_hours)
+        result = manager.supervisor_status()
+        result["requires_restart"] = was_running
+        return result
 
     @app.post("/api/supervisor/stop")
     async def stop_supervisor() -> Dict[str, Any]:

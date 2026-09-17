@@ -107,9 +107,21 @@ try:
     STALE_LOG_SECONDS = max(0, int(os.environ.get("STALE_LOG_SECONDS", "300")))
 except ValueError:
     STALE_LOG_SECONDS = 300
+try:
+    REPEATED_STATUS_LIMIT = max(0, int(os.environ.get("REPEATED_STATUS_LIMIT", "5")))
+except ValueError:
+    REPEATED_STATUS_LIMIT = 5
+try:
+    PERIODIC_RESTART_SECONDS = max(0, int(os.environ.get("PERIODIC_RESTART_SECONDS", "10800")))
+except ValueError:
+    PERIODIC_RESTART_SECONDS = 10800
+
+WATCHDOG_LOG_SCAN_BYTES = 4 * 1024 * 1024
 
 RE_CHAR_STATUS = re.compile(r"AUTO NVHN STATUS:.*?nv=([a-zA-Z0-9_]+)")
 RE_CHAR_CHOOSE = re.compile(r"AUTO NVHN: (?:chọn|chuẩn bị) nhân vật ([a-zA-Z0-9_]+)")
+RE_NVHN_PROGRESS = re.compile(r"nvhn=[0-9]+/20")
+RE_TASK_PROGRESS = re.compile(r"progress=[0-9]+/[0-9]+")
 
 
 def get_java_bin(name: str = "java") -> str:
@@ -290,6 +302,103 @@ def stale_log_reason(log_file: Path) -> Optional[str]:
         return None
     if age >= STALE_LOG_SECONDS:
         return f"stdout.log không đổi {age}s (ngưỡng {STALE_LOG_SECONDS}s)"
+    return None
+
+
+def periodic_restart_reason(pid_file: Path) -> Optional[str]:
+    """Return a reason when a live worker reached its periodic restart age."""
+    if PERIODIC_RESTART_SECONDS <= 0:
+        return None
+    try:
+        age = max(0, int(time.time() - pid_file.stat().st_mtime))
+    except OSError:
+        return None
+    if age >= PERIODIC_RESTART_SECONDS:
+        return (
+            f"worker đã chạy {age}s "
+            f"(ngưỡng {PERIODIC_RESTART_SECONDS}s)"
+        )
+    return None
+
+
+def _read_watchdog_log_tail(log_file: Path) -> List[str]:
+    """Read only the recent log segment used by the repeated-status watchdog."""
+    try:
+        with log_file.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            start = max(0, size - WATCHDOG_LOG_SCAN_BYTES)
+            stream.seek(start)
+            raw = stream.read()
+    except OSError:
+        return []
+
+    lines = raw.splitlines()
+    # The first line may be cut in half when the file is larger than the scan
+    # window. It cannot be used to determine a complete repeated sequence.
+    if start > 0 and lines:
+        lines = lines[1:]
+    return [line.decode("utf-8", errors="replace") for line in lines]
+
+
+def repeated_status_reason(log_file: Path) -> Optional[str]:
+    """Return a reason when task progress is repeated for too many log entries.
+
+    We compare stable progress fields instead of the whole raw line because
+    status lines legitimately change volatile values such as HP, currency, or
+    timestamps while the task progress remains unchanged.
+    """
+    if REPEATED_STATUS_LIMIT <= 0 or not log_file.is_file():
+        return None
+
+    last_key: Optional[str] = None
+    repeated = 0
+    last_status: Optional[str] = None
+
+    for line in _read_watchdog_log_tail(log_file):
+        if line.startswith("===== START "):
+            last_key = None
+            repeated = 0
+            last_status = None
+            continue
+
+        prep_marker = "AUTO NVHN PREP: đang tới Okaza"
+        if prep_marker in line:
+            status_start = line.find("AUTO NVHN PREP:")
+            prep_status = line[status_start:].strip()
+            key = f"prep {prep_status}"
+            last_status = prep_status
+        elif line.startswith("AUTO NVHN STATUS:"):
+            nvhn_match = RE_NVHN_PROGRESS.search(line)
+            progress_match = RE_TASK_PROGRESS.search(line)
+            if not nvhn_match or not progress_match:
+                last_key = None
+                repeated = 0
+                last_status = None
+                continue
+
+            # Compare the complete task-progress segment. Other fields on the
+            # line (HP, xu, yen, etc.) are volatile and are not progress.
+            key = f"{nvhn_match.group(0)} {progress_match.group(0)}"
+            last_status = line
+        elif line.startswith("AUTO NVHN "):
+            # Catch other exact AUTO NVHN event lines as well. Comparing only
+            # this subsystem's events avoids restarting on repeated generic
+            # JVM/network log lines while still detecting a retry loop.
+            key = f"event {line.strip()}"
+            last_status = line
+        else:
+            continue
+
+        if key == last_key:
+            repeated += 1
+        else:
+            last_key = key
+            repeated = 1
+
+        if repeated >= REPEATED_STATUS_LIMIT:
+            return f"{key} | {last_status}"
+
     return None
 
 
@@ -1091,8 +1200,29 @@ def _cmd_supervise_inner(args: Any) -> int:
                 if not is_expected_worker_process(pid, worker_dir):
                     continue
 
+                periodic_reason = periodic_restart_reason(pid_file)
+                if periodic_reason is not None:
+                    _safe_print(
+                        f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                        f"{worker_dir.name} đã đến chu kỳ restart định kỳ; đang restart."
+                    )
+                    _safe_print(f"Lý do: {periodic_reason}")
+                    restart_stale_worker(worker_dir)
+                    continue
+
                 reason = stale_log_reason(worker_dir / "stdout.log")
                 if reason is None:
+                    repeated_reason = repeated_status_reason(worker_dir / "stdout.log")
+                    if repeated_reason is None:
+                        continue
+
+                    _safe_print(
+                        f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] "
+                        f"{worker_dir.name} có trạng thái AUTO NVHN bị lặp từ "
+                        f"{REPEATED_STATUS_LIMIT} lần liên tiếp; đang restart."
+                    )
+                    _safe_print(f"Trạng thái bị lặp: {repeated_reason}")
+                    restart_stale_worker(worker_dir)
                     continue
 
                 _safe_print(

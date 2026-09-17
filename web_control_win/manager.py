@@ -20,6 +20,8 @@ from server_config import DEFAULT_SERVER, normalize_server
 from .config import Settings
 
 WORKER_RE = re.compile(r"^worker-([0-9]+)$")
+DEFAULT_PERIODIC_RESTART_HOURS = 3
+MAX_PERIODIC_RESTART_HOURS = 168
 
 
 class ControlError(RuntimeError):
@@ -207,6 +209,32 @@ class WindowsHeadlessManager:
         state.setdefault("server", self.selected_server())
         self._write_state(state)
 
+    def periodic_restart_hours(self) -> int:
+        """Configured per-worker periodic restart interval; zero disables it."""
+        raw = self._read_state().get(
+            "periodic_restart_hours", DEFAULT_PERIODIC_RESTART_HOURS
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = DEFAULT_PERIODIC_RESTART_HOURS
+        return max(0, min(value, MAX_PERIODIC_RESTART_HOURS))
+
+    def set_periodic_restart_hours(self, hours: int) -> int:
+        """Persist the periodic restart interval in whole hours."""
+        try:
+            value = int(hours)
+        except (TypeError, ValueError) as exc:
+            raise ControlError("Số giờ restart định kỳ không hợp lệ") from exc
+        if value < 0 or value > MAX_PERIODIC_RESTART_HOURS:
+            raise ControlError(
+                f"Số giờ restart định kỳ phải từ 0 đến {MAX_PERIODIC_RESTART_HOURS}"
+            )
+        state = self._read_state()
+        state["periodic_restart_hours"] = value
+        self._write_state(state)
+        return value
+
     def supervisor_status(self) -> Dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and supervisor_pid_is_valid(pid, self.settings.win_manager_py)
@@ -217,6 +245,7 @@ class WindowsHeadlessManager:
             "stale_pid": stale,
             "desired": self.desired_supervisor(),
             "server": self.selected_server(),
+            "periodic_restart_hours": self.periodic_restart_hours(),
             "log": str(self.supervisor_log),
         }
 
@@ -235,9 +264,15 @@ class WindowsHeadlessManager:
         return data
 
     async def start_supervisor(
-        self, *, remember: bool = True, server: Optional[str] = None
+        self,
+        *,
+        remember: bool = True,
+        server: Optional[str] = None,
+        periodic_restart_hours: Optional[int] = None,
     ) -> Dict[str, Any]:
         async with self.control_lock:
+            if periodic_restart_hours is not None:
+                self.set_periodic_restart_hours(periodic_restart_hours)
             current = self.supervisor_status()
             requested_server = (
                 self.selected_server() if server is None else self.set_server(server)
@@ -285,13 +320,17 @@ class WindowsHeadlessManager:
             "--delay", "30",
             "--interval", "20",
         ]
+        supervisor_env = self.settings.command_env(selected_server)
+        supervisor_env["PERIODIC_RESTART_SECONDS"] = str(
+            self.periodic_restart_hours() * 60 * 60
+        )
 
         try:
             try:
                 self._supervisor_process = subprocess.Popen(
                     cmd,
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(selected_server),
+                    env=supervisor_env,
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,
