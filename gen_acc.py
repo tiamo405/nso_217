@@ -10,9 +10,9 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
     for i in range(0, 0):
         writer.writerow([f"luongclone{i:03d}", PASSWORD])
 
-    for i in range(1, 201):
+    for i in range(1, 751):
         writer.writerow([f"luongdzvd{i}", PASSWORD])
 
 print(f"Da tao xong file {OUTPUT_FILE}")
-print("Range: luongdzvd1-200")
+print("Range: luongdzvd1-750")
 print(f"Password: {PASSWORD}")

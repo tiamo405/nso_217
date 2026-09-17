@@ -1,12 +1,12 @@
 {
   "enabled": true,
   "mode": "daily",
-  "daily_time": "18:22",
+  "daily_time": "00:22",
   "interval_hours": 6,
   "worker_count": 100,
-  "server": "tk",
+  "server": "ninjamobile",
   "auto_ta_thu": false,
   "current_phase": "nvhn",
-  "last_run_at": "2026-09-16T18:22:05+07:00",
-  "next_run_at": "2026-09-17T18:22:00+07:00"
+  "last_run_at": "2026-09-17T00:22:14+07:00",
+  "next_run_at": "2026-09-18T00:22:00+07:00"
 }
