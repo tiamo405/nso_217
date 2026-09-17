@@ -5,10 +5,11 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUNTIME_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 WORKERS_DIR=${OPTIMIZED_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 CHECK_INTERVAL=${CHECK_INTERVAL:-20}
-START_DELAY=${START_DELAY:-30}
+START_DELAY=${START_DELAY:-15}
 REPEATED_STATUS_LIMIT=${REPEATED_STATUS_LIMIT:-5}
 STALE_LOG_SECONDS=${STALE_LOG_SECONDS:-300}
 PERIODIC_RESTART_SECONDS=${PERIODIC_RESTART_SECONDS:-10800}
+REPEATED_STATUS_WINDOW_LINES=${REPEATED_STATUS_WINDOW_LINES:-20}
 SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
 SERVER_NAME=${NSO_SERVER:-tk}
 
@@ -37,6 +38,7 @@ Examples:
   REPEATED_STATUS_LIMIT=5 $(basename "$0") # restart nếu trạng thái tiến độ lặp 5 lần
   STALE_LOG_SECONDS=300 $(basename "$0") # restart nếu stdout.log im lặng 300s
   PERIODIC_RESTART_SECONDS=10800 $(basename "$0") # restart worker sau 3 giờ
+  REPEATED_STATUS_WINDOW_LINES=20 $(basename "$0") # cửa sổ phát hiện NPC25
   $(basename "$0") --server ninjamobile # chạy bằng server NinjaMobile
 EOF
 }
@@ -109,6 +111,10 @@ if ! [[ "$PERIODIC_RESTART_SECONDS" =~ ^[0-9]+$ ]]; then
     echo "PERIODIC_RESTART_SECONDS phải là số giây không âm." >&2
     exit 1
 fi
+if ! [[ "$REPEATED_STATUS_WINDOW_LINES" =~ ^[1-9][0-9]*$ ]]; then
+    echo "REPEATED_STATUS_WINDOW_LINES phải là số nguyên dương." >&2
+    exit 1
+fi
 
 mkdir -p "$WORKERS_DIR"
 if [[ -f "$SUPERVISOR_PID_FILE" ]]; then
@@ -133,10 +139,32 @@ find_repeated_status() {
     [[ -f "$log_file" ]] || return 1
     # Only scan the recent segment so a large append-only log does not make
     # every supervisor cycle read the complete file.
-    tail -c 4M -- "$log_file" | awk -v limit="$REPEATED_STATUS_LIMIT" '
+    tail -c 4M -- "$log_file" | awk \
+        -v limit="$REPEATED_STATUS_LIMIT" \
+        -v window="$REPEATED_STATUS_WINDOW_LINES" \
+        -v npc25_message="AUTO NVHN NPC25: [Hãy nhận nhiệm vụ mỗi ngày từ ta rồi mới sử dụng tính năng này.]" '
+        {
+            line_number++
+            expired = line_number - window
+            if (npc25_lines[expired]) {
+                npc25_count--
+                delete npc25_lines[expired]
+            }
+            if (index($0, npc25_message) > 0) {
+                npc25_lines[line_number] = 1
+                npc25_count++
+                npc25_last_status = $0
+            }
+        }
         /^===== START / {
             last_key = ""
             repeated = 0
+            line_number = 0
+            npc25_count = 0
+            npc25_last_status = ""
+            for (idx in npc25_lines) {
+                delete npc25_lines[idx]
+            }
             next
         }
         index($0, "AUTO NVHN PREP: đang tới Okaza") > 0 {
@@ -193,6 +221,10 @@ find_repeated_status() {
             last_status = $0
         }
         END {
+            if (limit > 0 && npc25_count >= limit) {
+                print "NPC25 lặp " npc25_count "/" limit " lần trong " window " dòng gần nhất: " npc25_last_status
+                exit 0
+            }
             if (repeated >= limit) {
                 print last_key " | " last_status
                 exit 0

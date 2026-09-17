@@ -112,6 +112,12 @@ try:
 except ValueError:
     REPEATED_STATUS_LIMIT = 5
 try:
+    REPEATED_STATUS_WINDOW_LINES = max(
+        1, int(os.environ.get("REPEATED_STATUS_WINDOW_LINES", "20"))
+    )
+except ValueError:
+    REPEATED_STATUS_WINDOW_LINES = 20
+try:
     PERIODIC_RESTART_SECONDS = max(0, int(os.environ.get("PERIODIC_RESTART_SECONDS", "10800")))
 except ValueError:
     PERIODIC_RESTART_SECONDS = 10800
@@ -122,6 +128,9 @@ RE_CHAR_STATUS = re.compile(r"AUTO NVHN STATUS:.*?nv=([a-zA-Z0-9_]+)")
 RE_CHAR_CHOOSE = re.compile(r"AUTO NVHN: (?:chọn|chuẩn bị) nhân vật ([a-zA-Z0-9_]+)")
 RE_NVHN_PROGRESS = re.compile(r"nvhn=[0-9]+/20")
 RE_TASK_PROGRESS = re.compile(r"progress=[0-9]+/[0-9]+")
+NPC25_BLOCK_MESSAGE = (
+    "AUTO NVHN NPC25: [Hãy nhận nhiệm vụ mỗi ngày từ ta rồi mới sử dụng tính năng này.]"
+)
 
 
 def get_java_bin(name: str = "java") -> str:
@@ -354,13 +363,32 @@ def repeated_status_reason(log_file: Path) -> Optional[str]:
     last_key: Optional[str] = None
     repeated = 0
     last_status: Optional[str] = None
+    npc25_window: List[str] = []
+    npc25_reason: Optional[str] = None
+    npc25_last_line: Optional[str] = None
 
     for line in _read_watchdog_log_tail(log_file):
         if line.startswith("===== START "):
             last_key = None
             repeated = 0
             last_status = None
+            npc25_window.clear()
+            npc25_last_line = None
             continue
+
+        npc25_window.append(line)
+        if len(npc25_window) > REPEATED_STATUS_WINDOW_LINES:
+            del npc25_window[0]
+        npc25_count = sum(NPC25_BLOCK_MESSAGE in item for item in npc25_window)
+        if NPC25_BLOCK_MESSAGE in line:
+            npc25_last_line = line.strip()
+        if REPEATED_STATUS_LIMIT > 0 and npc25_count >= REPEATED_STATUS_LIMIT:
+            npc25_reason = (
+                f"NPC25 lặp {npc25_count}/{REPEATED_STATUS_LIMIT} lần trong "
+                f"{REPEATED_STATUS_WINDOW_LINES} dòng gần nhất: {npc25_last_line}"
+            )
+        else:
+            npc25_reason = None
 
         prep_marker = "AUTO NVHN PREP: đang tới Okaza"
         if prep_marker in line:
@@ -396,8 +424,10 @@ def repeated_status_reason(log_file: Path) -> Optional[str]:
             last_key = key
             repeated = 1
 
-        if repeated >= REPEATED_STATUS_LIMIT:
-            return f"{key} | {last_status}"
+    if npc25_reason is not None:
+        return npc25_reason
+    if repeated >= REPEATED_STATUS_LIMIT and last_key is not None:
+        return f"{last_key} | {last_status}"
 
     return None
 

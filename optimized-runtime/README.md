@@ -66,8 +66,10 @@ không thay đổi ít nhất 300 giây, worker sẽ được dừng và khởi 
 đổi ngưỡng bằng `STALE_LOG_SECONDS`; đặt `0` để tắt watchdog log. Ngoài ra,
 nếu cùng một đoạn tiến độ `AUTO NVHN STATUS` (`nvhn=x/20` và `progress=x/y`)
 hoặc cùng một sự kiện `AUTO NVHN` lặp liên tiếp 5 lần trong đoạn log gần nhất,
-worker cũng được khởi động lại. Đổi ngưỡng bằng `REPEATED_STATUS_LIMIT`; đặt
-`0` để tắt kiểm tra lặp.
+worker cũng được khởi động lại. Riêng thông báo NPC25 “Hãy nhận nhiệm vụ mỗi
+ngày...” được đếm trong 20 dòng gần nhất nên vẫn phát hiện được dù xen giữa có
+status/log khác. Đổi ngưỡng bằng `REPEATED_STATUS_LIMIT`; đặt `0` để tắt kiểm
+tra lặp.
 
 | Biến | Mặc định | Ý nghĩa |
 | :--- | :--- | :--- |

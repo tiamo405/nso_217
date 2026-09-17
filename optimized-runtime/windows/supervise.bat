@@ -5,5 +5,5 @@ set PYTHONIOENCODING=utf-8:replace
 set PYTHONUTF8=1
 cd /d "%~dp0"
 
-python "%~dp0win_manager.py" supervise --delay 30 --interval 20
+python "%~dp0win_manager.py" supervise --delay 15 --interval 20
 pause
