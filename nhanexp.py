@@ -30,14 +30,13 @@ Lưu ý:
 
 import argparse
 import csv
-import sys
 import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-import importlib
 
 from hoatdong import NSOActivityClient, NSOMessage, NSOReader
+from map_graph import MAP_GRAPH, find_map_path
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -47,20 +46,19 @@ DEFAULT_PORT = 14444
 DEFAULT_DELAY = 11.0
 TONE_MAP_ID = 22
 TAJIMA_NPC_ID = 12
+OKANECHAN_NPC_ID = 24
 STATUS_MENU_ID = 6
 OFFLINE_EXP_MENU_ID = 7
 FREE_EXP_OPTION_ID = 0
 VILLAGE_MAPS = {10, 17, 22, 32, 38, 43, 48}
 VILLAGE_MENU_IDS = {10: 1, 17: 2, 22: 3, 32: 4, 38: 5, 43: 6, 48: 7}
-
-# Tái sử dụng graph đã port trực tiếp từ TileMap.fieldBZ của Java client.
-PYTHON_WORKER_DIR = ROOT_DIR / "python-worker"
-if str(PYTHON_WORKER_DIR) not in sys.path:
-    sys.path.insert(0, str(PYTHON_WORKER_DIR))
-# from models.map_graph import MAP_GRAPH, find_map_path  # noqa: E402
-MAP_GRAPH = importlib.import_module("models.map_graph").MAP_GRAPH
-find_map_path = importlib.import_module("models.map_graph").find_map_path
-
+# Okanechan có thể có ở làng hoặc trường tùy phiên bản/server. Ưu tiên
+# kiểm tra map hiện tại, sau đó lần lượt tìm ở các map làng/trường.
+OKANECHAN_SEARCH_MAPS = (22, 10, 17, 32, 38, 43, 48, 1, 27, 72)
+EXCHANGE_RECEIVED = "received"
+EXCHANGE_NOT_RECEIVED = "not_received"
+EXCHANGE_UNKNOWN = "unknown"
+EXCHANGE_NOT_ATTEMPTED = "not_attempted"
 
 @dataclass
 class Waypoint:
@@ -139,6 +137,7 @@ class OfflineExpClient(NSOActivityClient):
     def __init__(self, host: str, port: int):
         super().__init__(host, port)
         self.map_state = MapState()
+        self.exchange_status = EXCHANGE_NOT_ATTEMPTED
 
     def select_character_and_load_map(self, character_name: str) -> bool:
         if not any(name == character_name for name, _, _ in self.characters):
@@ -269,14 +268,14 @@ class OfflineExpClient(NSOActivityClient):
                     return True
         return False
 
-    def move_to_tone(self, max_steps: int = 20) -> bool:
+    def move_to_map(self, target_map_id: int, max_steps: int = 20) -> bool:
         for _ in range(max_steps):
             current = self.map_state.map_id
-            if current == TONE_MAP_ID:
+            if current == target_map_id:
                 return True
-            path = find_map_path(current, TONE_MAP_ID)
+            path = find_map_path(current, target_map_id)
             if not path or len(path) < 2:
-                print(f"    ❌ Không tìm được đường map {current} → {TONE_MAP_ID}")
+                print(f"    ❌ Không tìm được đường map {current} → {target_map_id}")
                 return False
             next_map = path[1]
             neighbors = MAP_GRAPH.get(current, [])
@@ -317,7 +316,26 @@ class OfflineExpClient(NSOActivityClient):
             if not self._wait_for_map_change(current):
                 print(f"    ❌ Timeout chuyển map {current} → {next_map}")
                 return False
-        return self.map_state.map_id == TONE_MAP_ID
+        return self.map_state.map_id == target_map_id
+
+    def move_to_tone(self, max_steps: int = 20) -> bool:
+        return self.move_to_map(TONE_MAP_ID, max_steps)
+
+    def move_to_okanechan(self, max_steps: int = 20) -> bool:
+        """Tìm một map có Okanechan rồi di chuyển tới đó."""
+        if self.map_state.find_npc(OKANECHAN_NPC_ID) is not None:
+            return True
+
+        checked_maps = {self.map_state.map_id}
+        for target_map_id in OKANECHAN_SEARCH_MAPS:
+            if target_map_id in checked_maps:
+                continue
+            checked_maps.add(target_map_id)
+            if not self.move_to_map(target_map_id, max_steps):
+                continue
+            if self.map_state.find_npc(OKANECHAN_NPC_ID) is not None:
+                return True
+        return False
 
     def open_tajima(self) -> bool:
         npc = self.map_state.find_npc(TAJIMA_NPC_ID)
@@ -421,6 +439,111 @@ class OfflineExpClient(NSOActivityClient):
             return received_exp or no_exp, text
         return False, "timeout chờ kết quả nhận Exp Offline"
 
+    @staticmethod
+    def _read_utf_list(data: bytes):
+        reader = NSOReader(data)
+        values = []
+        while reader.remaining():
+            values.append(reader.read_utf())
+        return values
+
+    def request_okanechan_menu(self, timeout: float = 12):
+        message = NSOMessage(self.CMD_OPEN_MENU)
+        message.write_short(OKANECHAN_NPC_ID)
+        self.send(message)
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            command, data = self.receive(max(0.2, deadline - time.time()))
+            if command is None:
+                break
+            if command == self.CMD_SERVER_ERROR:
+                return None, self._read_server_error(data)
+            if command in (self.CMD_OPEN_MENU, self.CMD_DYNAMIC_MENU):
+                try:
+                    return self._read_utf_list(data), None
+                except Exception as exc:
+                    return None, f"Menu Okanechan không hợp lệ: {exc}"
+        return None, "timeout chờ menu Okanechan"
+
+    def _wait_for_exchange_response(self, timeout: float = 8):
+        deadline = time.time() + timeout
+        response_commands = {
+            self.CMD_SERVER_ERROR,
+            -7,
+            38,
+            39,
+            self.CMD_DYNAMIC_MENU,
+            self.CMD_OPEN_MENU,
+        }
+        while time.time() < deadline:
+            command, data = self.receive(
+                min(0.75, max(0.2, deadline - time.time()))
+            )
+            if command is None:
+                break
+            if command in response_commands:
+                return command, data or b""
+        return None, None
+
+    def _classify_exchange_response(self, command: int, data: bytes):
+        if command == self.CMD_SERVER_ERROR:
+            return EXCHANGE_NOT_RECEIVED, self._read_server_error(data)
+        if command == -7:
+            if len(data) == 4:
+                delta = NSOReader(data).read_int()
+                return EXCHANGE_RECEIVED, f"Xu +{delta}, Yên -{delta}"
+            return EXCHANGE_RECEIVED, "server đã cập nhật Xu/Yên"
+        if command == 38:
+            reader = NSOReader(data)
+            reader.read_short()  # NPC ID
+            return EXCHANGE_NOT_RECEIVED, reader.read_utf()
+        if command == 39:
+            reader = NSOReader(data)
+            reader.read_short()  # NPC ID
+            return EXCHANGE_UNKNOWN, reader.read_utf()
+        return EXCHANGE_UNKNOWN, f"server trả command {command}"
+
+    def exchange_yen_to_xu(self):
+        """Bấm Đổi Yên qua Xu và trả kết quả nhận/không nhận rõ ràng."""
+        self.exchange_status = EXCHANGE_NOT_ATTEMPTED
+        npc = self.map_state.find_npc(OKANECHAN_NPC_ID)
+        if npc is None:
+            return False, "Không tìm thấy Okanechan (NPC 24)"
+
+        self.move_character(npc.x, self.map_state.char_y)
+        time.sleep(0.8)
+        options, error = self.request_okanechan_menu()
+        if options is None:
+            return False, error
+
+        target_index = next(
+            (
+                index for index, option in enumerate(options)
+                if "doi yen qua xu" in normalize_text(option)
+            ),
+            None,
+        )
+        if target_index is None:
+            return False, "Không tìm thấy nút 'Đổi Yên qua Xu'"
+
+        self._choose_npc_menu(OKANECHAN_NPC_ID, target_index)
+        command, data = self._wait_for_exchange_response()
+        if command is None:
+            self.exchange_status = EXCHANGE_UNKNOWN
+            return True, "⚠️ Đổi Yên qua Xu: CHƯA XÁC ĐỊNH (server chưa trả kết quả)"
+
+        try:
+            status, message = self._classify_exchange_response(command, data)
+        except Exception as exc:
+            status, message = EXCHANGE_UNKNOWN, f"không đọc được response: {exc}"
+        self.exchange_status = status
+        if status == EXCHANGE_RECEIVED:
+            return True, f"✅ Đổi Yên qua Xu: ĐÃ NHẬN ĐƯỢC ({message})"
+        if status == EXCHANGE_NOT_RECEIVED:
+            return True, f"❌ Đổi Yên qua Xu: KHÔNG NHẬN ĐƯỢC — {message}"
+        return True, f"⚠️ Đổi Yên qua Xu: CHƯA XÁC ĐỊNH — {message}"
+
 
 def build_parser():
     parser = argparse.ArgumentParser(
@@ -488,6 +611,18 @@ def process_character(client: OfflineExpClient, level: int):
     if not ok:
         return False, result
     print(f"    🎁 Đã chọn 0 Lượng = 100%: {result}")
+
+    print("    🔎 Tìm NPC Okanechan để đổi Yên qua Xu...")
+    if not client.move_to_okanechan():
+        return False, "Không tìm thấy/không đi được tới Okanechan (NPC 24)"
+    print(f"    ✅ Đã tới Okanechan tại map {client.map_state.map_id}")
+    # Bỏ packet di chuyển còn tồn trước khi mở menu, để log bên dưới chỉ tập
+    # trung vào menu và response của thao tác Đổi Yên qua Xu.
+    client.drain(1.0)
+    ok, result = client.exchange_yen_to_xu()
+    if not ok:
+        return False, result
+    print(f"    {result}")
     return True, result
 
 
@@ -513,7 +648,15 @@ def main():
 
     print(f"NSO NHẬN EXP OFFLINE: {len(accounts)} tài khoản; "
           f"mode={'CHỈ XEM' if args.dry_run else 'CẬP NHẬT + NHẬN EXP'}")
-    totals = {"characters": 0, "success": 0, "failed": 0}
+    totals = {
+        "characters": 0,
+        "success": 0,
+        "failed": 0,
+        "exchange_received": 0,
+        "exchange_not_received": 0,
+        "exchange_unknown": 0,
+        "exchange_not_attempted": 0,
+    }
     failures = []
 
     for account_number, (username, password) in enumerate(accounts, start=1):
@@ -546,6 +689,7 @@ def main():
                 target = "BẬT" if level >= 42 else "TẮT"
                 print(f"  [{index}] {name} lv{level} ({school}) → cần {target}")
                 totals["characters"] += 1
+                totals["exchange_not_attempted"] += 1
             continue
 
         print(f"  ⏳ Chờ {max(0, args.login_delay):g} giây trước nhân vật đầu tiên...")
@@ -554,12 +698,14 @@ def main():
             name, level, school = characters[index]
             print(f"  [{index}] {name} lv{level} ({school})")
             client = OfflineExpClient(args.host, args.port)
+            character_started = False
             try:
                 if not client.connect() or not client.login(username, password):
                     raise RuntimeError("Không kết nối/đăng nhập lại được")
                 if not client.select_character_and_load_map(name):
                     raise RuntimeError("Không chọn được nhân vật hoặc tải map")
                 totals["characters"] += 1
+                character_started = True
                 ok, reason = process_character(client, level)
                 if ok:
                     totals["success"] += 1
@@ -572,6 +718,8 @@ def main():
                 failures.append(FailureRecord(username, index, name, str(exc)))
                 print(f"    ❌ Lỗi xử lý: {exc}")
             finally:
+                if character_started:
+                    totals[f"exchange_{client.exchange_status}"] += 1
                 client.disconnect()
             if position + 1 < len(indexes):
                 print(f"  ⏳ Chờ {max(0, args.character_delay):g} giây trước nhân vật tiếp...")
@@ -579,9 +727,14 @@ def main():
         if account_number < len(accounts):
             time.sleep(max(0, args.account_delay))
 
-    print("\nTỔNG KẾT: "
-          f"nhân vật={totals['characters']}, thành công={totals['success']}, "
+    print("\nTỔNG KẾT XỬ LÝ: "
+          f"nhân vật={totals['characters']}, hoàn tất luồng={totals['success']}, "
           f"lỗi={totals['failed']}")
+    print("TỔNG KẾT ĐỔI YÊN QUA XU: "
+          f"đã nhận={totals['exchange_received']}, "
+          f"không nhận={totals['exchange_not_received']}, "
+          f"chưa xác định={totals['exchange_unknown']}, "
+          f"chưa thực hiện={totals['exchange_not_attempted']}")
     if failures:
         print(f"\nDANH SÁCH CẦN CHẠY LẠI ({len(failures)}):")
         for failure in failures:
