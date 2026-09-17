@@ -138,10 +138,17 @@ def is_pid_running(pid: int) -> bool:
     try:
         import psutil  # type: ignore
 
-        if psutil.pid_exists(pid):
+        try:
+            if not psutil.pid_exists(pid):
+                return False
             p = psutil.Process(pid)
             return p.is_running() and p.status() != psutil.STATUS_ZOMBIE
-        return False
+        except psutil.NoSuchProcess:
+            # The process can exit between pid_exists() and Process(pid).
+            return False
+        except psutil.AccessDenied:
+            # The PID is alive, but cannot be inspected further here.
+            return True
     except ImportError:
         pass
 
@@ -696,7 +703,16 @@ def restart_stale_worker(worker_dir: Path) -> int:
 
     if not is_expected_worker_process(pid, worker_dir):
         pid_file.unlink(missing_ok=True)
-        return 0
+        # The worker can exit between cmd_start() and this watchdog pass.
+        # Treat the PID as stale and start the worker immediately instead of
+        # waiting for the next supervisor iteration.
+        class DummyArgs:
+            pass
+
+        start_req = DummyArgs()
+        start_req.workers = [worker_name]
+        start_req.delay = 0
+        return _cmd_start_inner(start_req)
 
     if not kill_pid(pid):
         _safe_print(f"[{worker_name}] Khong dung duoc PID {pid}, bo qua restart.")
@@ -1181,6 +1197,10 @@ def main() -> None:
     # restart
     p_restart = subparsers.add_parser("restart", help="Khởi động lại workers")
     p_restart.add_argument("workers", nargs="*", help="Số thứ tự worker")
+    # Restart is implemented as stop + start.  _cmd_start_inner expects a
+    # delay attribute, so define it explicitly here; a single-worker restart
+    # should return promptly instead of inheriting the 30s start delay.
+    p_restart.add_argument("--delay", type=int, default=0, help="Giây giãn cách giữa các worker")
     p_restart.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
 
     # status
