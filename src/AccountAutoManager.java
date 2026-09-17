@@ -317,6 +317,46 @@ public final class AccountAutoManager implements Runnable {
         skipCurrentCharacter("NPC báo chưa đạt cấp 30, bỏ qua nhân vật. " + message);
     }
 
+    /**
+     * NPC 25 reports that the character has not unlocked enough main-story
+     * areas for a daily mission. This is a terminal condition for the current
+     * character; retrying the same NPC request only floods the log.
+     */
+    public static synchronized void onDailyTaskUnavailable(String message) {
+        // NPC responses can arrive after the current Auto has already changed
+        // (for example while switching characters or while Stanima is active).
+        // Never let a late/unrelated NPC25 response advance the account runner.
+        if (!enabled || switching || Code.fieldAB != Code.fieldAD || !isCurrentCharacter()) {
+            return;
+        }
+        skipCurrentCharacter("NPC25 không có NVHN phù hợp với tiến trình, chuyển nhân vật. " + message);
+    }
+
+    /**
+     * Handles the server telling us to accept the daily task before using it.
+     * This normally means a stale local TaskOrder; recover once, then abandon
+     * only the current character if the server repeats the rejection.
+     */
+    public static synchronized void onDailyTaskRequiresAcceptance(String message) {
+        if (!enabled || switching || Code.fieldAB != Code.fieldAD || !isCurrentCharacter()) {
+            return;
+        }
+        if (Code.fieldAD.recoverTaskAcceptanceRequired()) {
+            System.out.println("AUTO NVHN: server yêu cầu nhận lại NVHN, đã xóa task cục bộ và sẽ nhận lại. " + message);
+            return;
+        }
+        skipCurrentCharacter("NPC25 vẫn yêu cầu nhận NVHN sau khi phục hồi, chuyển nhân vật. " + message);
+    }
+
+    private static boolean isCurrentCharacter() {
+        if (characterNames == null || characterIndex < 0 || characterIndex >= characterNames.length) {
+            return false;
+        }
+        Char me = Char.getMyChar();
+        return me != null && characterNames[characterIndex] != null
+                && characterNames[characterIndex].equals(me.cName);
+    }
+
     public static synchronized void onDailyTasksFinished() {
         if (!enabled || switching) {
             return;

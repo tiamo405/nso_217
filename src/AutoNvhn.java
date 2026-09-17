@@ -1,13 +1,14 @@
 public final class AutoNvhn extends Auto {
-   public static boolean fieldAV;
+   public static volatile boolean fieldAV;
    private static String[] fieldAW;
-   private static int fieldAX;
-   private TaskOrder fieldAY;
+   private static volatile int fieldAX;
+   private volatile TaskOrder fieldAY;
    private long lastStatusLog;
    private int lastYen;
    private int lastXu;
    private int lastLuong;
-   private boolean waitingForNewTask;
+   private volatile boolean waitingForNewTask;
+   private volatile boolean taskAcceptanceRecoveryUsed;
    private long lastReturnTaskLog;
    private boolean didDailyWorkThisRun;
 
@@ -50,6 +51,23 @@ public final class AutoNvhn extends Auto {
               && (message.indexOf("luyện tập") >= 0 || message.indexOf("quay lại đây") >= 0);
    }
 
+   /**
+    * NPC 25 sends this when the character has not unlocked enough main-story
+    * areas for a daily mission. Retrying the same menu request cannot change
+    * that prerequisite, so the account runner must skip this character.
+    */
+   public static boolean isDailyTaskUnavailableMessage(String message) {
+      return message != null
+              && message.indexOf("không có nhiệm vụ phù hợp với cấp độ và tiến trình") >= 0
+              && message.indexOf("hoàn thành nhiệm vụ chính tuyến") >= 0;
+   }
+
+   public static boolean isTaskAcceptanceRequiredMessage(String message) {
+      return message != null
+              && message.indexOf("Hãy nhận nhiệm vụ mỗi ngày từ ta") >= 0
+              && message.indexOf("sử dụng tính năng này") >= 0;
+   }
+
    public final void fieldAD() {
       fieldAX = 0;
       this.fieldAY = Char.fieldAM(0);
@@ -59,6 +77,7 @@ public final class AutoNvhn extends Auto {
       this.lastXu = me.xu;
       this.lastLuong = me.luong;
       this.waitingForNewTask = false;
+      this.taskAcceptanceRecoveryUsed = false;
       this.lastReturnTaskLog = 0L;
       this.didDailyWorkThisRun = this.fieldAY != null;
       super.fieldAD();
@@ -117,9 +136,9 @@ public final class AutoNvhn extends Auto {
             }
 
             GameScr.fieldAC("Đi làm NV " + fieldAX + "/20");
-            // Phải chọn "Đi làm NV" để server chuyển bot sang trạng thái
-            // thực hiện nhiệm vụ. Chỉ đổi khu hiện tại sẽ không rời map trường.
-            GameScr.fieldAB(25, GameScr.fieldGH, 3);
+            // fieldAY đã tồn tại nghĩa là server đã cấp nhiệm vụ. Không gửi
+            // thêm menu action 3: server coi action này là một tính năng chỉ
+            // được dùng sau khi nhận NVHN và sẽ trả về cảnh báo lặp vô hạn.
             TileMap.fieldAF();
             this.fieldAB(super.fieldAC);
             return;
@@ -159,6 +178,37 @@ public final class AutoNvhn extends Auto {
          AccountAutoManager.onDailyTasksFinished();
       }
 
+   }
+
+   /**
+    * Recovers one stale local task after NPC25 says the daily task must be
+    * accepted first. The next tick will request a fresh task from the server.
+    * A second occurrence is handled by AccountAutoManager as a terminal
+    * character failure, so this cannot become another retry loop.
+    */
+   public final boolean recoverTaskAcceptanceRequired() {
+      if (this.taskAcceptanceRecoveryUsed) {
+         return false;
+      }
+      this.taskAcceptanceRecoveryUsed = true;
+      MyVector tasks = Char.getMyChar().taskOrders;
+      for (int index = tasks.size() - 1; index >= 0; --index) {
+         TaskOrder current = (TaskOrder) tasks.elementAt(index);
+         if (current != null && current.taskId == 0 && current.count < current.maxCount) {
+            tasks.removeElementAt(index);
+         }
+      }
+      this.fieldAY = null;
+      this.waitingForNewTask = false;
+      fieldAV = false;
+      Char.getMyChar().gameAC(21);
+      LockGame.fieldAL();
+      return true;
+   }
+
+   /** Clears the one-shot recovery gate after the server sends a new task. */
+   public final void onDailyTaskReceived() {
+      this.taskAcceptanceRecoveryUsed = false;
    }
 
    private int getCharacterSchoolMap() {

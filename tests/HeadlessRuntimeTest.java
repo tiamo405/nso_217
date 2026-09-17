@@ -130,6 +130,20 @@ public final class HeadlessRuntimeTest {
         // The shutdown hook must mark this last attempt interrupted.
     }
 
+    private static void dailyTaskMessageClassification() {
+        String unavailable = "Hiện tại không có nhiệm vụ phù hợp với cấp độ và tiến trình của con. "
+                + "Hãy hoàn thành nhiệm vụ chính tuyến để mở khóa thêm khu vực.";
+        String acceptanceRequired = "Hãy nhận nhiệm vụ mỗi ngày từ ta rồi mới sử dụng tính năng này.";
+        check(AutoNvhn.isDailyTaskUnavailableMessage(unavailable),
+                "NPC25 unavailable daily-task message must be recognized");
+        check(AutoNvhn.isTaskAcceptanceRequiredMessage(acceptanceRequired),
+                "NPC25 task-acceptance message must be recognized");
+        check(!AutoNvhn.isDailyTaskUnavailableMessage("Đây là lần nhận nhiệm vụ thứ 1 trong ngày hôm nay."),
+                "normal NPC25 task message must not be treated as unavailable");
+        check(!AutoNvhn.isTaskAcceptanceRequiredMessage("Đây là lần nhận nhiệm vụ thứ 1 trong ngày hôm nay."),
+                "normal NPC25 task message must not require recovery");
+    }
+
     public static void main(String[] args) throws Exception {
         if (args.length > 0 && "baseline".equals(args[0])) {
             check(HeadlessTuning.tickMillis(30) == 30, "baseline respects RMS");
@@ -144,6 +158,7 @@ public final class HeadlessRuntimeTest {
         wireOrder();
         staleConnection();
         metricsLifecycle();
+        dailyTaskMessageClassification();
         System.out.println("PASS: queue lifecycle, handshake, wire FIFO, metrics lifecycle");
     }
 }

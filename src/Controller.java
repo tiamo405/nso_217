@@ -1556,6 +1556,16 @@ public final class Controller {
                                     LockGame.fieldAZ();
                                 }
                             } else if (var78.template.npcTemplateId == 25) {
+                                if (Code.fieldAB == Code.fieldAD
+                                        && AutoNvhn.isTaskAcceptanceRequiredMessage(utf13)) {
+                                    AccountAutoManager.onDailyTaskRequiresAcceptance(utf13);
+                                    return;
+                                }
+                                if (Code.fieldAB == Code.fieldAD
+                                        && AutoNvhn.isDailyTaskUnavailableMessage(utf13)) {
+                                    AccountAutoManager.onDailyTaskUnavailable(utf13);
+                                    return;
+                                }
                                 System.out.println("AUTO NVHN NPC25: [" + utf13 + "]");
                                 if (AutoNvhn.isBelowLevel30Message(utf13)) {
                                     AccountAutoManager.onCharacterBelowLevel30(utf13);
@@ -2540,7 +2550,11 @@ public final class Controller {
                     GameScr.gameAA(var84 > 0 ? "+" + var84 : "" + var84, Char.getMyChar().cx, Char.getMyChar().cy - Char.getMyChar().ch - 10, 0, -2, 1);
                     break;
                 case 96:
-                    Char.getMyChar().taskOrders.addElement(new TaskOrder(fieldAB.reader().readByte(), fieldAB.reader().readInt(), fieldAB.reader().readInt(), fieldAB.reader().readUTF(), fieldAB.reader().readUTF(), fieldAB.reader().readUnsignedByte(), fieldAB.reader().readUnsignedByte()));
+                    TaskOrder receivedTask = new TaskOrder(fieldAB.reader().readByte(), fieldAB.reader().readInt(), fieldAB.reader().readInt(), fieldAB.reader().readUTF(), fieldAB.reader().readUTF(), fieldAB.reader().readUnsignedByte(), fieldAB.reader().readUnsignedByte());
+                    Char.getMyChar().taskOrders.addElement(receivedTask);
+                    if (receivedTask.taskId == 0 && Code.fieldAB == Code.fieldAD) {
+                        Code.fieldAD.onDailyTaskReceived();
+                    }
                     Char.getMyChar().gameAC(21);
                     LockGame.fieldAL();
 
