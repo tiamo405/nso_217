@@ -79,6 +79,7 @@ tra lặp.
 | `STALE_LOG_SECONDS` | `300` | Restart nếu `stdout.log` không đổi; `0` để tắt |
 | `REPEATED_STATUS_LIMIT` | `5` | Restart nếu trạng thái/sự kiện `AUTO NVHN` lặp; `0` để tắt |
 | `PERIODIC_RESTART_SECONDS` | `10800` | Restart từng worker sau 3 giờ từ lần start gần nhất; `0` để tắt |
+| `START_DELAY` / `--delay` | `15` khi chạy script trực tiếp | Giãn cách giữa các worker khi Supervisor khởi động; Web Dashboard mặc định `30` giây |
 | `NSO_SKIP_PAINT`| `true` | Tắt hoàn toàn repaint & vẽ giao diện |
 | `NSO_SKIP_DECORATIONS` | `true` | Bỏ qua các hoạt ảnh đồ họa |
 | `NSO_LAZY_MAP` | `true` | Chỉ nạp map khi nhân vật bước vào map |

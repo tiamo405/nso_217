@@ -110,33 +110,46 @@ sys.exit(0)
             self.assertEqual(data["account"]["count"], 2)
             self.assertFalse(data["supervisor"]["running"])
             self.assertEqual(data["supervisor"]["periodic_restart_hours"], 3)
+            self.assertEqual(data["supervisor"]["worker_start_delay_seconds"], 30)
 
     async def test_supervisor_periodic_restart_settings(self) -> None:
         transport = ASGITransport(app=create_app(self.settings))
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             res = await client.post(
                 "/api/supervisor/settings",
-                json={"periodic_restart_hours": 3},
+                json={
+                    "periodic_restart_hours": 3,
+                    "worker_start_delay_seconds": 47,
+                },
             )
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json()["periodic_restart_hours"], 3)
+            self.assertEqual(res.json()["worker_start_delay_seconds"], 47)
             self.assertFalse(res.json()["requires_restart"])
 
             disabled = await client.post(
                 "/api/supervisor/settings",
-                json={"periodic_restart_hours": 0},
+                json={
+                    "periodic_restart_hours": 0,
+                    "worker_start_delay_seconds": 0,
+                },
             )
             self.assertEqual(disabled.status_code, 200)
             self.assertEqual(disabled.json()["periodic_restart_hours"], 0)
+            self.assertEqual(disabled.json()["worker_start_delay_seconds"], 0)
 
             invalid = await client.post(
                 "/api/supervisor/settings",
-                json={"periodic_restart_hours": 169},
+                json={
+                    "periodic_restart_hours": 169,
+                    "worker_start_delay_seconds": 3601,
+                },
             )
             self.assertEqual(invalid.status_code, 422)
 
         saved = json.loads((self.settings.web_runtime_dir / "state.json").read_text())
         self.assertEqual(saved["periodic_restart_hours"], 0)
+        self.assertEqual(saved["worker_start_delay_seconds"], 0)
 
     async def test_account_upload(self) -> None:
         transport = ASGITransport(app=create_app(self.settings))

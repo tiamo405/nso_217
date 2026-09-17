@@ -18,6 +18,10 @@ from .config import Settings
 
 
 WORKER_RE = re.compile(r"^worker-([0-9]+)$")
+DEFAULT_PERIODIC_RESTART_HOURS = 3
+MAX_PERIODIC_RESTART_HOURS = 168
+DEFAULT_WORKER_START_DELAY_SECONDS = 30
+MAX_WORKER_START_DELAY_SECONDS = 3600
 
 
 class ControlError(RuntimeError):
@@ -157,6 +161,59 @@ class HeadlessManager:
         state.setdefault("server", self.selected_server())
         self._write_state(state)
 
+    def periodic_restart_hours(self) -> int:
+        """Configured per-worker periodic restart interval; zero disables it."""
+        raw = self._read_state().get(
+            "periodic_restart_hours", DEFAULT_PERIODIC_RESTART_HOURS
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = DEFAULT_PERIODIC_RESTART_HOURS
+        return max(0, min(value, MAX_PERIODIC_RESTART_HOURS))
+
+    def set_periodic_restart_hours(self, hours: int) -> int:
+        """Persist the periodic restart interval in whole hours."""
+        try:
+            value = int(hours)
+        except (TypeError, ValueError) as exc:
+            raise ControlError("Số giờ restart định kỳ không hợp lệ") from exc
+        if value < 0 or value > MAX_PERIODIC_RESTART_HOURS:
+            raise ControlError(
+                f"Số giờ restart định kỳ phải từ 0 đến {MAX_PERIODIC_RESTART_HOURS}"
+            )
+        state = self._read_state()
+        state["periodic_restart_hours"] = value
+        self._write_state(state)
+        return value
+
+    def worker_start_delay_seconds(self) -> int:
+        """Configured delay between starting consecutive workers."""
+        raw = self._read_state().get(
+            "worker_start_delay_seconds", DEFAULT_WORKER_START_DELAY_SECONDS
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = DEFAULT_WORKER_START_DELAY_SECONDS
+        return max(0, min(value, MAX_WORKER_START_DELAY_SECONDS))
+
+    def set_worker_start_delay_seconds(self, seconds: int) -> int:
+        """Persist the delay between consecutive worker starts."""
+        try:
+            value = int(seconds)
+        except (TypeError, ValueError) as exc:
+            raise ControlError("Giãn cách khởi động worker không hợp lệ") from exc
+        if value < 0 or value > MAX_WORKER_START_DELAY_SECONDS:
+            raise ControlError(
+                "Giãn cách khởi động worker phải từ "
+                f"0 đến {MAX_WORKER_START_DELAY_SECONDS} giây"
+            )
+        state = self._read_state()
+        state["worker_start_delay_seconds"] = value
+        self._write_state(state)
+        return value
+
     def supervisor_status(self) -> dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and self._supervisor_pid_is_valid(pid)
@@ -167,13 +224,24 @@ class HeadlessManager:
             "stale_pid": stale,
             "desired": self.desired_supervisor(),
             "server": self.selected_server(),
+            "periodic_restart_hours": self.periodic_restart_hours(),
+            "worker_start_delay_seconds": self.worker_start_delay_seconds(),
             "log": str(self.supervisor_log),
         }
 
     async def start_supervisor(
-        self, *, remember: bool = True, server: str | None = None
+        self,
+        *,
+        remember: bool = True,
+        server: str | None = None,
+        periodic_restart_hours: int | None = None,
+        worker_start_delay_seconds: int | None = None,
     ) -> dict[str, Any]:
         async with self.control_lock:
+            if periodic_restart_hours is not None:
+                self.set_periodic_restart_hours(periodic_restart_hours)
+            if worker_start_delay_seconds is not None:
+                self.set_worker_start_delay_seconds(worker_start_delay_seconds)
             current = self.supervisor_status()
             requested_server = (
                 self.selected_server() if server is None else self.set_server(server)
@@ -222,10 +290,19 @@ class HeadlessManager:
         log_stream = self.supervisor_log.open("ab", buffering=0)
         try:
             try:
+                command = [
+                    str(self._script("supervise-workers.sh")),
+                    "--delay",
+                    str(self.worker_start_delay_seconds()),
+                ]
+                environment = self.settings.command_env(selected_server)
+                environment["PERIODIC_RESTART_SECONDS"] = str(
+                    self.periodic_restart_hours() * 60 * 60
+                )
                 self._supervisor_process = subprocess.Popen(
-                    [str(self._script("supervise-workers.sh"))],
+                    command,
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(selected_server),
+                    env=environment,
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,

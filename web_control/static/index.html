@@ -37,6 +37,17 @@
             <div><p class="eyebrow">RUNTIME</p><h2>Supervisor</h2></div>
           </div>
           <p id="supervisor-detail" class="muted">Đang tải trạng thái…</p>
+          <div class="field-group">
+            <label for="periodic-restart-hours">Restart worker định kỳ (giờ, 0 = tắt)</label>
+            <input id="periodic-restart-hours" type="number" min="0" max="168" step="1" value="3">
+            <p class="muted">Tính từ lần khởi động gần nhất của từng worker.</p>
+          </div>
+          <div class="field-group">
+            <label for="worker-start-delay-seconds">Giãn cách khởi động worker tiếp theo (giây)</label>
+            <input id="worker-start-delay-seconds" type="number" min="0" max="3600" step="1" value="30">
+            <p class="muted">Thời gian chờ giữa các worker khi Supervisor khởi động; 0 = chạy liên tiếp.</p>
+          </div>
+          <button id="save-supervisor-settings" type="button" class="secondary">Lưu cấu hình Supervisor</button>
           <div class="button-row">
             <button id="start-supervisor" class="primary">Start supervisor</button>
             <button id="stop-supervisor" class="danger">Stop tất cả</button>
@@ -160,6 +171,6 @@
       </section>
     </section>
   </main>
-  <script src="/static/app.js?v=5" defer></script>
+  <script src="/static/app.js?v=6" defer></script>
 </body>
 </html>

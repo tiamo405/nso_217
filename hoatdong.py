@@ -11,6 +11,8 @@ Protocol được đối chiếu từ GameAssembly.dll/IL2CPP:
   - cmd 107, byte confirmId: xác nhận hộp thoại nhận gói
 
 Mặc định script xử lý mọi tài khoản trong account-hoatdong.csv và mọi nhân vật.
+Chạy ``python3 hoatdong.py 100`` để xử lý song song tối đa 100 tài khoản.
+Có thể truyền CSV sau số luồng: ``python3 hoatdong.py 100 accounts.csv``.
 Chạy ``python3 hoatdong.py --dry-run`` để chỉ xem trạng thái, không nhận quà.
 """
 
@@ -20,7 +22,8 @@ import random
 import socket
 import struct
 import time
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 
@@ -186,6 +189,16 @@ class FailureRecord:
     character_name: str | None
     stage: str
     reason: str
+
+
+@dataclass
+class AccountResult:
+    characters: int = 0
+    milestones: int = 0
+    attendance: int = 0
+    welfare: int = 0
+    failed: int = 0
+    failures: list[FailureRecord] = field(default_factory=list)
 
 
 class NSOActivityClient:
@@ -861,11 +874,128 @@ def discover_characters(host, port, username, password):
         client.disconnect()
 
 
+def process_account(account_number, account_count, host, port, username, password,
+                    dry_run, character_index, max_characters, login_delay,
+                    character_delay):
+    """Xử lý một tài khoản trong worker riêng.
+
+    Không chia nhỏ một tài khoản cho nhiều worker vì mỗi nhân vật cần một
+    phiên socket riêng và các request trong cùng phiên phải giữ đúng thứ tự.
+    """
+    result = AccountResult()
+    print(f"\n[{account_number}/{account_count}] Tài khoản {username}", flush=True)
+
+    characters = discover_characters(host, port, username, password)
+    if not characters:
+        result.failed += 1
+        result.failures.append(FailureRecord(
+            username, None, None, "Đăng nhập",
+            "Không đăng nhập được hoặc không lấy được danh sách nhân vật",
+        ))
+        return result
+
+    indexes = list(range(len(characters)))
+    if character_index is not None:
+        indexes = [character_index] if character_index < len(characters) else []
+    if max_characters:
+        indexes = indexes[:max_characters]
+    if not indexes:
+        print("  ⚠️ Không có nhân vật phù hợp để xử lý", flush=True)
+        result.failed += 1
+        result.failures.append(FailureRecord(
+            username, character_index, None, "Chọn nhân vật",
+            "Không có nhân vật phù hợp với bộ lọc đã chọn",
+        ))
+        return result
+
+    # discover_characters() vừa đăng nhập để lấy danh sách rồi ngắt kết nối.
+    # Chờ hơn 10 giây trước lần đăng nhập nhân vật đầu tiên để tránh rate limit.
+    print(f"  ⏳ Chờ {max(0, login_delay):g} giây trước khi đăng nhập nhân vật...",
+          flush=True)
+    time.sleep(max(0, login_delay))
+
+    for position, index in enumerate(indexes):
+        name, level, school = characters[index]
+        print(f"  [{index}] {name} lv{level} ({school})", flush=True)
+        client = NSOActivityClient(host, port)
+        current_stage = "Kết nối/đăng nhập nhân vật"
+        try:
+            if not client.connect() or not client.login(username, password):
+                result.failed += 1
+                result.failures.append(FailureRecord(
+                    username, index, name, current_stage,
+                    "Không kết nối hoặc đăng nhập lại được",
+                ))
+                continue
+            current_stage = "Chọn nhân vật"
+            if not client.select_character(index):
+                result.failed += 1
+                result.failures.append(FailureRecord(
+                    username, index, name, current_stage,
+                    "Không chọn được nhân vật",
+                ))
+                continue
+            result.characters += 1
+            client.drain()
+            current_stage = "Hoạt Động/Điểm Danh"
+            milestones, attendance, failed, failure_details = process_character(
+                client, dry_run
+            )
+            result.milestones += milestones
+            result.attendance += attendance
+            result.failed += failed
+            result.failures.extend(FailureRecord(
+                username, index, name, current_stage, reason
+            ) for reason in failure_details)
+            current_stage = "Phúc Lợi"
+            welfare, welfare_failed, failure_details = process_welfare(
+                client, dry_run
+            )
+            result.welfare += welfare
+            result.failed += welfare_failed
+            result.failures.extend(FailureRecord(
+                username, index, name, current_stage, reason
+            ) for reason in failure_details)
+        except Exception as exc:
+            result.failed += 1
+            result.failures.append(FailureRecord(
+                username, index, name, current_stage, str(exc),
+            ))
+            print(f"    ❌ Lỗi xử lý: {exc}", flush=True)
+        finally:
+            client.disconnect()
+        if position + 1 < len(indexes):
+            time.sleep(max(0, character_delay))
+
+    return result
+
+
+def run_account(account_number, account_count, host, port, username, password,
+                dry_run, character_index, max_characters, login_delay,
+                character_delay, account_delay, stagger_accounts):
+    result = process_account(
+        account_number, account_count, host, port, username, password,
+        dry_run, character_index, max_characters, login_delay, character_delay,
+    )
+    # Giữ tương thích với chế độ tuần tự cũ. Khi có nhiều worker, các tài
+    # khoản đã được tách độc lập nên không chặn worker khác bằng delay này.
+    if stagger_accounts and account_number < account_count:
+        time.sleep(max(0, account_delay))
+    return result
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Nhận quà Hoạt Động, Điểm Danh và Phúc Lợi NSO Mobile"
     )
-    parser.add_argument("csv_file", nargs="?", type=Path, default=DEFAULT_CSV)
+    parser.add_argument(
+        "worker_count_or_csv", nargs="?",
+        help="Số luồng, ví dụ 100; cũng có thể truyền đường dẫn CSV để chạy 1 luồng",
+    )
+    parser.add_argument(
+        "csv_file", nargs="?", type=Path,
+        help="Đường dẫn CSV (khi đối số trước là số luồng)",
+    )
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--dry-run", action="store_true",
@@ -879,14 +1009,31 @@ def build_parser():
     parser.add_argument("--character-delay", type=float, default=DEFAULT_LOGIN_DELAY,
                         help="Thời gian nghỉ giữa hai nhân vật (mặc định: 11 giây)")
     parser.add_argument("--account-delay", type=float, default=DEFAULT_LOGIN_DELAY,
-                        help="Thời gian nghỉ giữa hai tài khoản (mặc định: 11 giây)")
+                        help="Delay giữa tài khoản khi chạy 1 luồng (mặc định: 11 giây)")
     return parser
 
 
 def main():
     args = build_parser().parse_args()
-    if not args.csv_file.is_file():
-        print(f"❌ Không tìm thấy CSV: {args.csv_file}")
+    worker_count = 1
+    if args.worker_count_or_csv is None:
+        csv_file = DEFAULT_CSV
+    else:
+        try:
+            worker_count = int(args.worker_count_or_csv)
+        except ValueError:
+            if args.csv_file is not None:
+                print("❌ Cú pháp CSV không hợp lệ: hãy dùng 'hoatdong.py [số_luồng] [file.csv]'")
+                return 2
+            csv_file = Path(args.worker_count_or_csv)
+        else:
+            csv_file = args.csv_file or DEFAULT_CSV
+
+    if worker_count < 1:
+        print("❌ Số luồng phải lớn hơn hoặc bằng 1")
+        return 2
+    if not csv_file.is_file():
+        print(f"❌ Không tìm thấy CSV: {csv_file}")
         return 2
     if args.character_index is not None and args.character_index < 0:
         print("❌ --character-index không được âm")
@@ -896,12 +1043,13 @@ def main():
         return 2
 
     try:
-        accounts = read_accounts(args.csv_file)
+        accounts = read_accounts(csv_file)
     except Exception as exc:
         print(f"❌ Không đọc được CSV: {exc}")
         return 2
     print(f"NSO HOẠT ĐỘNG: {len(accounts)} tài khoản; "
-          f"mode={'CHỈ XEM' if args.dry_run else 'NHẬN QUÀ'}")
+          f"mode={'CHỈ XEM' if args.dry_run else 'NHẬN QUÀ'}; "
+          f"luồng yêu cầu={worker_count}")
 
     totals = {
         "characters": 0,
@@ -911,89 +1059,63 @@ def main():
         "failed": 0,
     }
     failures = []
-    for account_number, (username, password) in enumerate(accounts, start=1):
-        print(f"\n[{account_number}/{len(accounts)}] Tài khoản {username}")
-        characters = discover_characters(args.host, args.port, username, password)
-        if not characters:
-            totals["failed"] += 1
-            failures.append(FailureRecord(
-                username, None, None, "Đăng nhập",
-                "Không đăng nhập được hoặc không lấy được danh sách nhân vật",
-            ))
-            continue
-        indexes = list(range(len(characters)))
-        if args.character_index is not None:
-            indexes = [args.character_index] if args.character_index < len(characters) else []
-        if args.max_characters:
-            indexes = indexes[:args.max_characters]
-        if not indexes:
-            print("  ⚠️ Không có nhân vật phù hợp để xử lý")
-            totals["failed"] += 1
-            failures.append(FailureRecord(
-                username, args.character_index, None, "Chọn nhân vật",
-                "Không có nhân vật phù hợp với bộ lọc đã chọn",
-            ))
-            continue
+    if worker_count > len(accounts):
+        print(
+            f"⚠️ Số tài khoản ({len(accounts)}) ít hơn số luồng yêu cầu "
+            f"({worker_count}); chỉ dùng {len(accounts)} luồng hiệu dụng.",
+            flush=True,
+        )
+    if accounts:
+        effective_workers = min(worker_count, len(accounts))
+        print(f"🚀 Bắt đầu chạy song song {effective_workers} luồng", flush=True)
+        stagger_accounts = effective_workers == 1
 
-        # discover_characters() vừa đăng nhập để lấy danh sách rồi ngắt kết nối.
-        # Chờ hơn 10 giây trước lần đăng nhập nhân vật đầu tiên để tránh rate limit.
-        print(f"  ⏳ Chờ {max(0, args.login_delay):g} giây trước khi đăng nhập nhân vật...")
-        time.sleep(max(0, args.login_delay))
+        with ThreadPoolExecutor(
+            max_workers=effective_workers,
+            thread_name_prefix="hoatdong",
+        ) as executor:
+            jobs = {
+                executor.submit(
+                    run_account,
+                    account_number,
+                    len(accounts),
+                    args.host,
+                    args.port,
+                    username,
+                    password,
+                    args.dry_run,
+                    args.character_index,
+                    args.max_characters,
+                    args.login_delay,
+                    args.character_delay,
+                    args.account_delay,
+                    stagger_accounts,
+                ): username
+                for account_number, (username, password)
+                in enumerate(accounts, start=1)
+            }
 
-        for position, index in enumerate(indexes):
-            name, level, school = characters[index]
-            print(f"  [{index}] {name} lv{level} ({school})")
-            client = NSOActivityClient(args.host, args.port)
-            current_stage = "Kết nối/đăng nhập nhân vật"
-            try:
-                if not client.connect() or not client.login(username, password):
+            for future in as_completed(jobs):
+                username = jobs[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    # Bảo đảm một exception ngoài dự kiến của worker không
+                    # làm mất toàn bộ kết quả các tài khoản còn lại.
                     totals["failed"] += 1
                     failures.append(FailureRecord(
-                        username, index, name, current_stage,
-                        "Không kết nối hoặc đăng nhập lại được",
+                        username, None, None, "Worker",
+                        f"Worker dừng bất ngờ: {exc}",
                     ))
+                    print(f"❌ Worker tài khoản {username} lỗi: {exc}", flush=True)
                     continue
-                current_stage = "Chọn nhân vật"
-                if not client.select_character(index):
-                    totals["failed"] += 1
-                    failures.append(FailureRecord(
-                        username, index, name, current_stage,
-                        "Không chọn được nhân vật",
-                    ))
-                    continue
-                totals["characters"] += 1
-                client.drain()
-                current_stage = "Hoạt Động/Điểm Danh"
-                milestones, attendance, failed, failure_details = process_character(
-                    client, args.dry_run
-                )
-                totals["milestones"] += milestones
-                totals["attendance"] += attendance
-                totals["failed"] += failed
-                failures.extend(FailureRecord(
-                    username, index, name, current_stage, reason
-                ) for reason in failure_details)
-                current_stage = "Phúc Lợi"
-                welfare, welfare_failed, failure_details = process_welfare(
-                    client, args.dry_run
-                )
-                totals["welfare"] += welfare
-                totals["failed"] += welfare_failed
-                failures.extend(FailureRecord(
-                    username, index, name, current_stage, reason
-                ) for reason in failure_details)
-            except Exception as exc:
-                totals["failed"] += 1
-                failures.append(FailureRecord(
-                    username, index, name, current_stage, str(exc),
-                ))
-                print(f"    ❌ Lỗi xử lý: {exc}")
-            finally:
-                client.disconnect()
-            if position + 1 < len(indexes):
-                time.sleep(max(0, args.character_delay))
-        if account_number < len(accounts):
-            time.sleep(max(0, args.account_delay))
+
+                totals["characters"] += result.characters
+                totals["milestones"] += result.milestones
+                totals["attendance"] += result.attendance
+                totals["welfare"] += result.welfare
+                totals["failed"] += result.failed
+                failures.extend(result.failures)
 
     print("\nTỔNG KẾT: "
           f"nhân vật={totals['characters']}, rương={totals['milestones']}, "

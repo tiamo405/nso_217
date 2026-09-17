@@ -22,6 +22,8 @@ from .config import Settings
 WORKER_RE = re.compile(r"^worker-([0-9]+)$")
 DEFAULT_PERIODIC_RESTART_HOURS = 3
 MAX_PERIODIC_RESTART_HOURS = 168
+DEFAULT_WORKER_START_DELAY_SECONDS = 30
+MAX_WORKER_START_DELAY_SECONDS = 3600
 
 
 class ControlError(RuntimeError):
@@ -235,6 +237,33 @@ class WindowsHeadlessManager:
         self._write_state(state)
         return value
 
+    def worker_start_delay_seconds(self) -> int:
+        """Configured delay between starting consecutive workers."""
+        raw = self._read_state().get(
+            "worker_start_delay_seconds", DEFAULT_WORKER_START_DELAY_SECONDS
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = DEFAULT_WORKER_START_DELAY_SECONDS
+        return max(0, min(value, MAX_WORKER_START_DELAY_SECONDS))
+
+    def set_worker_start_delay_seconds(self, seconds: int) -> int:
+        """Persist the delay between consecutive worker starts."""
+        try:
+            value = int(seconds)
+        except (TypeError, ValueError) as exc:
+            raise ControlError("Giãn cách khởi động worker không hợp lệ") from exc
+        if value < 0 or value > MAX_WORKER_START_DELAY_SECONDS:
+            raise ControlError(
+                "Giãn cách khởi động worker phải từ "
+                f"0 đến {MAX_WORKER_START_DELAY_SECONDS} giây"
+            )
+        state = self._read_state()
+        state["worker_start_delay_seconds"] = value
+        self._write_state(state)
+        return value
+
     def supervisor_status(self) -> Dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and supervisor_pid_is_valid(pid, self.settings.win_manager_py)
@@ -246,6 +275,7 @@ class WindowsHeadlessManager:
             "desired": self.desired_supervisor(),
             "server": self.selected_server(),
             "periodic_restart_hours": self.periodic_restart_hours(),
+            "worker_start_delay_seconds": self.worker_start_delay_seconds(),
             "log": str(self.supervisor_log),
         }
 
@@ -269,10 +299,13 @@ class WindowsHeadlessManager:
         remember: bool = True,
         server: Optional[str] = None,
         periodic_restart_hours: Optional[int] = None,
+        worker_start_delay_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         async with self.control_lock:
             if periodic_restart_hours is not None:
                 self.set_periodic_restart_hours(periodic_restart_hours)
+            if worker_start_delay_seconds is not None:
+                self.set_worker_start_delay_seconds(worker_start_delay_seconds)
             current = self.supervisor_status()
             requested_server = (
                 self.selected_server() if server is None else self.set_server(server)
@@ -317,7 +350,7 @@ class WindowsHeadlessManager:
             sys.executable,
             str(self.settings.win_manager_py),
             "supervise",
-            "--delay", "30",
+            "--delay", str(self.worker_start_delay_seconds()),
             "--interval", "20",
         ]
         supervisor_env = self.settings.command_env(selected_server)

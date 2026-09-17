@@ -3,6 +3,8 @@ let refreshTimer = null;
 let stream = null;
 let buildActive = false;
 let currentTab = "nvhn"; // "nvhn" hoặc "ta_thu"
+let supervisorSettingsDirty = false;
+let supervisorSettingsSaving = false;
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -118,12 +120,18 @@ async function refreshStatus() {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
     $("#server-select").value = data.server || supervisor.server || "tk";
+    if (!supervisorSettingsDirty && !supervisorSettingsSaving) {
+      $("#periodic-restart-hours").value = supervisor.periodic_restart_hours ?? 3;
+      $("#worker-start-delay-seconds").value = supervisor.worker_start_delay_seconds ?? 30;
+    }
     const taThuSupervisor = data.ta_thu || { running: false };
     $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : (taThuSupervisor.running ? "TÀ THÚ" : "STOPPED");
     $("#supervisor-state").style.color = supervisor.running ? "var(--accent)" : (taThuSupervisor.running ? "var(--warning)" : "var(--danger)");
     let supDetail = supervisor.running
       ? `NVHN PID ${supervisor.pid} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`
       : `NVHN: dừng${supervisor.stale_pid ? " (PID cũ)" : ""} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`;
+    supDetail += ` · restart định kỳ: ${supervisor.periodic_restart_hours ? `${supervisor.periodic_restart_hours}h` : "tắt"}`;
+    supDetail += ` · giãn cách worker: ${supervisor.worker_start_delay_seconds ?? 30}s`;
     if (taThuSupervisor.running) {
       supDetail += ` | Tà Thú: PID ${taThuSupervisor.pid}`;
     } else {
@@ -146,6 +154,9 @@ async function refreshStatus() {
     $("#run-button").disabled = buildActive;
     $("#account-file").disabled = buildActive;
     $("#account-form button").disabled = buildActive;
+    $("#periodic-restart-hours").disabled = buildActive || supervisorSettingsSaving;
+    $("#worker-start-delay-seconds").disabled = buildActive || supervisorSettingsSaving;
+    $("#save-supervisor-settings").disabled = buildActive || supervisorSettingsSaving;
     if (data.active_job && !stream) watchBuild(data.active_job);
     if (currentTab === "ta_thu") {
       try {
@@ -201,12 +212,65 @@ async function supervisorAction(action, button) {
   button.disabled = true;
   try {
     const options = { method: "POST" };
-    if (action === "start") options.json = { server: $("#server-select").value };
+    if (action === "start") {
+      const settings = readSupervisorSettings();
+      if (settings === null) return;
+      options.json = {
+        server: $("#server-select").value,
+        periodic_restart_hours: settings.periodicHours,
+        worker_start_delay_seconds: settings.startDelaySeconds,
+      };
+    }
     await api(`/api/supervisor/${action}`, options);
     notify(action === "start" ? "Đã chạy supervisor" : "Đã dừng supervisor và worker");
+    if (action === "start") supervisorSettingsDirty = false;
     await refreshStatus();
   } catch (error) { notify(error.message, true); }
   finally { button.disabled = false; }
+}
+
+function readSupervisorSettings() {
+  const periodicHours = Number.parseInt($("#periodic-restart-hours").value, 10);
+  const startDelaySeconds = Number.parseInt($("#worker-start-delay-seconds").value, 10);
+  if (!Number.isInteger(periodicHours) || periodicHours < 0 || periodicHours > 168) {
+    notify("Số giờ restart phải từ 0 đến 168", true);
+    return null;
+  }
+  if (!Number.isInteger(startDelaySeconds) || startDelaySeconds < 0 || startDelaySeconds > 3600) {
+    notify("Giãn cách khởi động phải từ 0 đến 3600 giây", true);
+    return null;
+  }
+  return { periodicHours, startDelaySeconds };
+}
+
+async function saveSupervisorSettings() {
+  if (supervisorSettingsSaving) return;
+  const settings = readSupervisorSettings();
+  if (settings === null) return;
+
+  supervisorSettingsSaving = true;
+  $("#save-supervisor-settings").disabled = true;
+  try {
+    const result = await api("/api/supervisor/settings", {
+      method: "POST",
+      json: {
+        periodic_restart_hours: settings.periodicHours,
+        worker_start_delay_seconds: settings.startDelaySeconds,
+      },
+    });
+    supervisorSettingsDirty = false;
+    if (result.requires_restart) {
+      notify("Đã lưu. Supervisor đang chạy; hãy Stop rồi Start Supervisor để áp dụng.");
+    } else {
+      notify("Đã lưu cấu hình Supervisor.");
+    }
+    await refreshStatus();
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    supervisorSettingsSaving = false;
+    $("#save-supervisor-settings").disabled = false;
+  }
 }
 
 async function workerAction(name, action, button) {
@@ -306,6 +370,14 @@ $("#build-button").addEventListener("click", async () => {
 $("#run-button").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   await supervisorAction("start", button);
+});
+
+$("#save-supervisor-settings").addEventListener("click", saveSupervisorSettings);
+$("#periodic-restart-hours").addEventListener("input", () => {
+  supervisorSettingsDirty = true;
+});
+$("#worker-start-delay-seconds").addEventListener("input", () => {
+  supervisorSettingsDirty = true;
 });
 
 if ($("#stop-ta-thu-supervisor")) {

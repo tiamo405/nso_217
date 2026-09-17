@@ -5,7 +5,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Literal
+from typing import AsyncIterator, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -26,6 +26,13 @@ class BuildRequest(BaseModel):
 
 class SupervisorRequest(BaseModel):
     server: Literal["ninjamobile", "tk"] = "tk"
+    periodic_restart_hours: Optional[int] = Field(default=None, ge=0, le=168)
+    worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
+
+
+class SupervisorSettingsRequest(BaseModel):
+    periodic_restart_hours: int = Field(default=3, ge=0, le=168)
+    worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
 
 
 class ScheduleRequest(BaseModel):
@@ -133,13 +140,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 await manager.stop_ta_thu()
                 selected_server = body.server if body is not None else manager.selected_server()
-                result = await manager.start_supervisor(server=selected_server)
+                result = await manager.start_supervisor(
+                    server=selected_server,
+                    periodic_restart_hours=(
+                        body.periodic_restart_hours if body is not None else None
+                    ),
+                    worker_start_delay_seconds=(
+                        body.worker_start_delay_seconds if body is not None else None
+                    ),
+                )
             except Exception:
                 # Không dùng tiến độ cũ để tự chuyển Tà Thú sau Start thất bại.
                 manager._set_desired_supervisor(False)
                 raise
             scheduler.current_phase = "nvhn"
             scheduler._save()
+            return result
+
+    @app.post("/api/supervisor/settings")
+    async def update_supervisor_settings(
+        body: SupervisorSettingsRequest,
+    ) -> dict[str, object]:
+        async with scheduler.transition_lock:
+            require_idle()
+            was_running = manager.supervisor_status()["running"]
+            manager.set_periodic_restart_hours(body.periodic_restart_hours)
+            if body.worker_start_delay_seconds is not None:
+                manager.set_worker_start_delay_seconds(body.worker_start_delay_seconds)
+            result = manager.supervisor_status()
+            result["requires_restart"] = was_running
             return result
 
     @app.post("/api/supervisor/stop")

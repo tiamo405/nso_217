@@ -31,7 +31,7 @@ usage() {
 Usage: $(basename "$0") [--server ninjamobile|tk] [--delay seconds] [worker_number...]
 
 Examples:
-  $(basename "$0")                 # supervise all workers (default delay 3s between starts)
+  $(basename "$0")                 # supervise all workers (default delay 15s between starts)
   $(basename "$0") --delay 5       # supervise all workers, wait 5s between worker starts
   $(basename "$0") 3               # supervise only worker-03
   $(basename "$0") 1 2 3           # supervise worker-01, worker-02, worker-03

@@ -78,10 +78,12 @@ ngày...” được đếm trong 20 dòng gần nhất nên vẫn phát hiện 
 status/log khác. Đổi ngưỡng bằng `REPEATED_STATUS_LIMIT`; đặt `0` để tắt kiểm
 tra lặp.
 
-Supervisor cũng restart từng worker sau 3 giờ tính từ lần worker được start gần
-nhất, không phụ thuộc log đang bình thường hay stale. Khi chạy qua Web Dashboard,
-đặt giá trị trong ô **Restart worker định kỳ** rồi bấm **Lưu cấu hình restart**.
-Khi chạy trực tiếp, có thể dùng `PERIODIC_RESTART_SECONDS=10800`.
+Supervisor cũng restart từng worker sau khoảng thời gian cấu hình tính từ lần
+worker được start gần nhất, không phụ thuộc log đang bình thường hay stale. Khi
+chạy qua Web Dashboard, đặt **Restart worker định kỳ (giờ)** và **Giãn cách khởi
+động worker tiếp theo (giây)** rồi bấm **Lưu cấu hình Supervisor**. Nếu Supervisor
+đang chạy, cần Stop rồi Start lại để áp dụng. Khi chạy trực tiếp, có thể dùng
+`PERIODIC_RESTART_SECONDS=10800` và tham số `--delay 30`.
 
 Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trước
 khi Build & Chạy. Lựa chọn được lưu lại cho supervisor và các lần restart worker.

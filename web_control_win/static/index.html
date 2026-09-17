@@ -42,7 +42,10 @@
             <label for="periodic-restart-hours">Restart worker định kỳ (giờ, 0 = tắt)</label>
             <input id="periodic-restart-hours" type="number" min="0" max="168" step="1" value="3">
             <p class="muted">Tính từ lần khởi động gần nhất của từng worker.</p>
-            <button id="save-supervisor-settings" type="button" class="secondary">Lưu cấu hình restart</button>
+            <label for="worker-start-delay-seconds">Giãn cách khởi động worker tiếp theo (giây)</label>
+            <input id="worker-start-delay-seconds" type="number" min="0" max="3600" step="1" value="30">
+            <p class="muted">Thời gian chờ giữa các worker khi Supervisor khởi động; 0 = chạy liên tiếp.</p>
+            <button id="save-supervisor-settings" type="button" class="secondary">Lưu cấu hình Supervisor</button>
           </div>
           <div class="button-row">
             <button id="start-supervisor" class="primary">Start Supervisor</button>
@@ -181,6 +184,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3" defer></script>
+  <script src="/static/app.js?v=4" defer></script>
 </body>
 </html>

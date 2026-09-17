@@ -26,10 +26,12 @@ class BuildRequest(BaseModel):
 class SupervisorRequest(BaseModel):
     server: Literal["ninjamobile", "tk"] = "tk"
     periodic_restart_hours: Optional[int] = Field(default=None, ge=0, le=168)
+    worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
 
 
 class SupervisorSettingsRequest(BaseModel):
     periodic_restart_hours: int = Field(default=3, ge=0, le=168)
+    worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
 
 
 class ScheduleRequest(BaseModel):
@@ -116,9 +118,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         require_idle()
         selected_server = body.server if body is not None else manager.selected_server()
         periodic_hours = body.periodic_restart_hours if body is not None else None
+        start_delay = body.worker_start_delay_seconds if body is not None else None
         return await manager.start_supervisor(
             server=selected_server,
             periodic_restart_hours=periodic_hours,
+            worker_start_delay_seconds=start_delay,
         )
 
     @app.post("/api/supervisor/settings")
@@ -126,6 +130,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         require_idle()
         was_running = manager.supervisor_status()["running"]
         manager.set_periodic_restart_hours(body.periodic_restart_hours)
+        if body.worker_start_delay_seconds is not None:
+            manager.set_worker_start_delay_seconds(body.worker_start_delay_seconds)
         result = manager.supervisor_status()
         result["requires_restart"] = was_running
         return result

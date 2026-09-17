@@ -70,6 +70,8 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         write_script(
             scripts / "supervise-workers.sh",
             'mkdir -p "$HEADLESS_WORKERS_DIR"\n'
+            'printf "%s\\n" "$*" >"$HEADLESS_WORKERS_DIR/supervisor.args"\n'
+            'printf "%s\\n" "${PERIODIC_RESTART_SECONDS:-}" >"$HEADLESS_WORKERS_DIR/supervisor.periodic"\n'
             'printf "%s\\n" "$$" >"$HEADLESS_WORKERS_DIR/supervisor.pid"\n'
             'cleanup() { rm -f "$HEADLESS_WORKERS_DIR/supervisor.pid"; exit 0; }\n'
             "trap cleanup INT TERM\n"
@@ -135,12 +137,16 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status_response.status_code, 200)
             self.assertEqual(status_response.json()["workers"][0]["name"], "worker-01")
             self.assertEqual(status_response.json()["workers"][0]["char_name"], "fmgmza")
+            self.assertEqual(status_response.json()["supervisor"]["periodic_restart_hours"], 3)
+            self.assertEqual(status_response.json()["supervisor"]["worker_start_delay_seconds"], 30)
 
             # Check index.html table header and buttons
             index_html = (static_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn("<th>Nhân vật</th>", index_html)
             self.assertIn('id="build-button"', index_html)
             self.assertIn('id="run-button"', index_html)
+            self.assertIn('id="periodic-restart-hours"', index_html)
+            self.assertIn('id="worker-start-delay-seconds"', index_html)
 
             invalid_csv = await client.post(
                 "/api/accounts/upload",
@@ -236,9 +242,46 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         started = await manager.start_supervisor()
         self.assertTrue(started["running"])
         self.assertTrue(manager.desired_supervisor())
+        self.assertIn("--delay 30", (self.settings.workers_dir / "supervisor.args").read_text())
+        self.assertEqual(
+            (self.settings.workers_dir / "supervisor.periodic").read_text().strip(),
+            "10800",
+        )
         stopped = await manager.stop_supervisor()
         self.assertFalse(stopped["running"])
         self.assertFalse(manager.desired_supervisor())
+
+    async def test_supervisor_settings_are_saved_and_used_on_next_start(self) -> None:
+        app = create_app(self.settings)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/supervisor/settings",
+                json={
+                    "periodic_restart_hours": 8,
+                    "worker_start_delay_seconds": 47,
+                },
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            data = response.json()
+            self.assertEqual(data["periodic_restart_hours"], 8)
+            self.assertEqual(data["worker_start_delay_seconds"], 47)
+            self.assertFalse(data["requires_restart"])
+
+        manager = app.state.manager
+        try:
+            started = await manager.start_supervisor()
+            self.assertTrue(started["running"])
+            self.assertIn(
+                "--delay 47",
+                (self.settings.workers_dir / "supervisor.args").read_text(),
+            )
+            self.assertEqual(
+                (self.settings.workers_dir / "supervisor.periodic").read_text().strip(),
+                "28800",
+            )
+        finally:
+            await manager.stop_supervisor()
 
     async def test_completed_start_does_not_trigger_ta_thu(self) -> None:
         home = self.settings.workers_dir / "worker-01" / "home"
