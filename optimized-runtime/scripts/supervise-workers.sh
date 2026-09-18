@@ -231,7 +231,7 @@ find_repeated_status() {
             }
             exit 1
         }
-    ' "$log_file"
+    '
 }
 
 find_stale_log() {
