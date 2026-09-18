@@ -136,9 +136,9 @@ public final class AutoNvhn extends Auto {
             }
 
             GameScr.fieldAC("Đi làm NV " + fieldAX + "/20");
-            // fieldAY đã tồn tại nghĩa là server đã cấp nhiệm vụ. Không gửi
-            // thêm menu action 3: server coi action này là một tính năng chỉ
-            // được dùng sau khi nhận NVHN và sẽ trả về cảnh báo lặp vô hạn.
+            // fieldAY đã tồn tại nghĩa là server đã cấp nhiệm vụ. Chọn đúng
+            // nút "Đi làm NV" để server chuyển nhân vật sang map nhiệm vụ.
+            GameScr.fieldAB(25, GameScr.fieldGH, 3);
             TileMap.fieldAF();
             this.fieldAB(super.fieldAC);
             return;

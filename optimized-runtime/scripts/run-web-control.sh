@@ -32,6 +32,6 @@ else
 fi
 
 exec "$PYTHON_BIN" -m uvicorn web_control.app:app \
-    --host 127.0.0.1 \
+    --host 0.0.0.0 \
     --port "$port" \
     --workers 1

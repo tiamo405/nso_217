@@ -1,7 +1,7 @@
 import csv
 
 PASSWORD = "ngan2021"  # đổi tay ở đây nếu muốn
-OUTPUT_FILE = "account-hoatdong.csv"
+OUTPUT_FILE = "account.csv"
 
 with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
@@ -10,7 +10,7 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
     for i in range(0, 0):
         writer.writerow([f"luongclone{i:03d}", PASSWORD])
 
-    for i in range(1, 3000):
+    for i in range(1, 451):
         writer.writerow([f"luongdzvd{i}", PASSWORD])
 
 print(f"Da tao xong file {OUTPUT_FILE}")
