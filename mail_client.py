@@ -152,6 +152,17 @@ class NSOMailClient:
         self.mails = []
         self._recv_buffer = bytearray()
         self._bag_full = False
+        self.last_mail_stats = {
+            "claimed": 0,
+            "deleted": 0,
+            "failed": 0,
+            "kept": 0,
+            "bag_full": 0,
+            "bag_full_mail_ids": [],
+            "rewards": [],
+        }
+        self.last_mail_errors = []
+        self.last_mail_rewards = []
 
     # ─── Low-level ───────────────────────────
 
@@ -489,7 +500,15 @@ class NSOMailClient:
                 try:
                     msg_text = NSOReader(data).read_utf()
                     print(f"  [mail] ← Server: {msg_text}")
-                    if "hành trang không đủ chỗ" in msg_text.lower():
+                    normalized = msg_text.casefold()
+                    if any(phrase in normalized for phrase in (
+                            "hành trang không đủ chỗ",
+                            "hành trang đầy",
+                            "không đủ chỗ trong hành trang",
+                            "túi đồ không đủ chỗ",
+                            "rương đầy",
+                            "chật rương",
+                    )):
                         self._bag_full = True
                         return None
                     if any(k in msg_text.lower() for k in ["thư", "hành trang", "đính kèm", "vật phẩm"]):
@@ -548,6 +567,60 @@ class NSOMailClient:
             ]
         return mail
 
+    @staticmethod
+    def _format_mail_reward(detail):
+        """Tạo log đầy đủ phần thưởng trong nội dung thư.
+
+        Thông báo -26 sau khi nhận thường chỉ nói một loại tiền (ví dụ
+        ``50.000.000 yên``). Payload đọc thư mới là nơi chứa toàn bộ yên,
+        xu, lượng, EXP và danh sách item đính kèm.
+        """
+        rewards = []
+        for key, label in (("luong", "lượng"), ("xu", "xu"),
+                           ("yen", "yên"), ("exp", "EXP")):
+            value = detail.get(key, 0)
+            if value:
+                rewards.append(f"{label}={value:,}".replace(",", "."))
+        for item in detail.get("items", []):
+            locked = ", khóa" if item.get("is_lock") else ""
+            rewards.append(
+                f"item_id={item['template_id']} x{item['quantity']}{locked}"
+            )
+        return ", ".join(rewards) if rewards else "không có phần thưởng chi tiết"
+
+    def _record_mail_reward(self, detail):
+        """Lưu và in chi tiết quà, không làm thay đổi trạng thái nhận thư."""
+        record = {
+            "mail_id": detail["mail_id"],
+            "title": detail.get("title", ""),
+            "luong": detail.get("luong", 0),
+            "xu": detail.get("xu", 0),
+            "yen": detail.get("yen", 0),
+            "exp": detail.get("exp", 0),
+            "content": detail.get("content", ""),
+            "items": [dict(item) for item in detail.get("items", [])],
+        }
+        self.last_mail_rewards.append(record)
+        print(
+            f"  🎁 Chi tiết quà thư id={record['mail_id']} "
+            f"({record['title']}): {self._format_mail_reward(detail)}"
+        )
+        return record
+
+    def _try_record_read_mail_reward(self, mail_id):
+        """Đọc lại thư đã mở để lấy chi tiết quà, không làm fail mail."""
+        try:
+            self.read_mail(mail_id)
+            data = self._wait_mail_packet(self.MAIL_READ, mail_id)
+            if data is None:
+                raise RuntimeError("không nhận được payload chi tiết")
+            detail = self._parse_mail_read(data)
+            if detail.get("has_attachments"):
+                return self._record_mail_reward(detail)
+        except (RuntimeError, ValueError, EOFError, OSError) as exc:
+            print(f"  ⚠️ Không đọc được chi tiết quà thư {mail_id}: {exc}")
+        return None
+
     def _parse_mail_action_result(self, data):
         """Parse response theo từng handler native của mobile."""
         if len(data) < 5:
@@ -570,8 +643,32 @@ class NSOMailClient:
             return None
         return action, mail_id, r.read_boolean()
 
-    def receive_all_mail(self, delete_after_claim=False):
-        """Nhận từng thư; CHỈ XÓA khi quà trong thư đã được nhận thành công."""
+    def receive_all_mail(self, delete_after_claim=False,
+                         include_read_mail_details=False):
+        """Nhận thư an toàn và lưu lại thống kê chi tiết của lượt chạy.
+
+        Thư còn quà nhưng chưa nhận sẽ chỉ bị xóa sau khi nhận thành công.
+        Nếu hành trang đầy hoặc nhận quà thất bại, thư được giữ nguyên. Thư
+        đã nhận từ trước thì không còn quà để mất và sẽ được xóa khi bật
+        ``delete_after_claim``. ``include_read_mail_details`` dùng cho luồng
+        giftcode để đọc lại thư đã mở và log đầy đủ item đính kèm.
+
+        Giá trị trả về vẫn giữ ba khóa cũ để không làm hỏng code gọi hiện tại;
+        thống kê chi tiết nằm trong ``last_mail_stats`` và
+        ``last_mail_errors``.
+        """
+        self._bag_full = False
+        self.last_mail_errors = []
+        self.last_mail_stats = {
+            "claimed": 0,
+            "deleted": 0,
+            "failed": 0,
+            "kept": 0,
+            "bag_full": 0,
+            "bag_full_mail_ids": [],
+            "rewards": [],
+        }
+        self.last_mail_rewards = []
         mails = self.request_mail_list()
         result = {"claimed": 0, "deleted": 0, "failed": 0}
         deleted_ids = set()
@@ -579,23 +676,33 @@ class NSOMailClient:
             mail_id = mail["mail_id"]
             title = mail.get("title", f"id={mail_id}")
             try:
+                has_attachments = mail.get("has_attachments", False)
+                # Thư mới chưa đọc sẽ trả payload đầy đủ gồm toàn bộ phần
+                # thưởng. Với thư đã đọc, chỉ đọc lại khi caller bật
+                # include_read_mail_details; cờ is_received vẫn lấy từ mail
+                # list để quyết định claim/xóa.
                 if not mail["is_read"]:
                     self.read_mail(mail_id)
                     data = self._wait_mail_packet(self.MAIL_READ, mail_id)
                     if data is None:
                         raise RuntimeError("Không nhận được phản hồi đọc thư")
-                    self._parse_mail_read(data)
+                    detail = self._parse_mail_read(data)
+                    if has_attachments or detail.get("has_attachments"):
+                        self._record_mail_reward(detail)
 
-                has_attachments = mail.get("has_attachments", False)
                 claimed_success = False
 
                 if has_attachments:
-                    # Nếu hành trang đã đầy, dừng claim các thư có quà tiếp theo
-                    if self._bag_full:
-                        print(f"  ⚠️ Hành trang đầy, bỏ qua thư {mail_id} ({title}) -> GIỮ LẠI THƯ")
-                        continue
-
                     if not mail.get("is_received", False):
+                        # Sau khi một lần nhận báo đầy túi, giữ lại tất cả
+                        # thư còn quà phía sau để người dùng xử lý sau.
+                        if self._bag_full:
+                            print(f"  ⚠️ Hành trang đầy, bỏ qua thư {mail_id} ({title}) -> GIỮ LẠI THƯ")
+                            self.last_mail_stats["bag_full"] += 1
+                            self.last_mail_stats["bag_full_mail_ids"].append(mail_id)
+                            self.last_mail_stats["kept"] += 1
+                            continue
+
                         self.claim_mail_attachment(mail_id)
                         data = self._wait_mail_packet(self.MAIL_CLAIM_ATTACHMENTS,
                                                       mail_id, timeout=15)
@@ -608,25 +715,34 @@ class NSOMailClient:
                         else:
                             if self._bag_full:
                                 print(f"  ⚠️ Hành trang đầy! Chưa nhận được quà thư {mail_id} ({title}) -> GIỮ LẠI THƯ, KHÔNG XÓA")
+                                self.last_mail_stats["bag_full"] += 1
+                                self.last_mail_stats["bag_full_mail_ids"].append(mail_id)
                             else:
                                 print(f"  ⚠️ Nhận quà thư {mail_id} ({title}) không thành công -> GIỮ LẠI THƯ, KHÔNG XÓA")
+                                result["failed"] += 1
+                                self.last_mail_errors.append(
+                                    f"Thư {mail_id} ({title}) nhận quà không thành công"
+                                )
+                            self.last_mail_stats["kept"] += 1
                             continue
                     else:
-                        # Thư có quà nhưng server đánh dấu đã nhận từ trước -> KHÔNG tự ý xóa để tránh mất quà
-                        print(f"  ℹ️ Thư {mail_id} ({title}) đánh dấu đã nhận từ trước -> GIỮ NGUYÊN, KHÔNG XÓA")
-                        continue
+                        # Server đánh dấu đã nhận từ trước: không còn quà để
+                        # mất, nên xử lý xóa ở bước bên dưới.
+                        action = "XÓA THƯ" if delete_after_claim else "GIỮ LẠI THƯ"
+                        print(f"  ℹ️ Thư {mail_id} ({title}) đã nhận từ trước -> {action}")
 
-                # CHỈ XÓA KHI:
-                # 1. delete_after_claim == True
-                # 2. VÀ: Hoặc thư không có quà (thư tin nhắn/thông báo)
-                #        Hoặc thư có quà VÀ VỪA NHẬN THÀNH CÔNG trong phiên này
+                if (include_read_mail_details and has_attachments
+                        and mail["is_read"]
+                        and (claimed_success or mail.get("is_received", False))):
+                    self._try_record_read_mail_reward(mail_id)
+
+                # Chỉ xóa thư không còn quà hoặc vừa nhận quà thành công.
                 if delete_after_claim:
-                    can_delete = False
-                    if not has_attachments:
-                        can_delete = True
-                    elif claimed_success:
-                        can_delete = True
-
+                    can_delete = (
+                        not has_attachments
+                        or mail.get("is_received", False)
+                        or claimed_success
+                    )
                     if can_delete:
                         self.delete_mail(mail_id)
                         data = self._wait_mail_packet(self.MAIL_DELETE, mail_id)
@@ -634,8 +750,14 @@ class NSOMailClient:
                         if data is None or self._parse_mail_action_result(data) != expected:
                             raise RuntimeError("Xóa thư chưa thành công")
                         deleted_ids.add(mail_id)
+                    else:
+                        self.last_mail_stats["kept"] += 1
+                else:
+                    self.last_mail_stats["kept"] += 1
             except (RuntimeError, ValueError, EOFError, OSError) as exc:
                 result["failed"] += 1
+                self.last_mail_stats["kept"] += 1
+                self.last_mail_errors.append(f"Thư {mail_id} ({title}): {exc}")
                 print(f"  ❌ Thư {mail_id}: {exc}")
 
         # Xác minh thư đã xóa không còn xuất hiện trong danh sách server.
@@ -643,9 +765,15 @@ class NSOMailClient:
             remaining_ids = {mail["mail_id"] for mail in self.request_mail_list()}
             result["deleted"] = len(deleted_ids - remaining_ids)
             result["failed"] += len(deleted_ids & remaining_ids)
+            self.last_mail_stats["kept"] += len(deleted_ids & remaining_ids)
             for mail_id in sorted(deleted_ids & remaining_ids):
+                self.last_mail_errors.append(f"Thư {mail_id} vẫn còn sau yêu cầu xóa")
                 print(f"  ❌ Thư {mail_id} vẫn còn sau yêu cầu xóa")
+        self.last_mail_stats.update(result)
+        self.last_mail_stats["rewards"] = list(self.last_mail_rewards)
         print(f"  Kết quả: nhận={result['claimed']}, xóa={result['deleted']}, "
+              f"giữ lại={self.last_mail_stats['kept']}, "
+              f"chật rương={self.last_mail_stats['bag_full']}, "
               f"lỗi={result['failed']}")
         return result
 

@@ -11,6 +11,7 @@ Protocol được đối chiếu từ GameAssembly.dll/IL2CPP:
   - cmd 107, byte confirmId: xác nhận hộp thoại nhận gói
 
 Mặc định script xử lý mọi tài khoản trong account-hoatdong.csv và mọi nhân vật.
+Trong mỗi nhân vật, thứ tự là Hoạt Động/Điểm Danh → Phúc Lợi → Thư.
 Chạy ``python3 hoatdong.py 100`` để xử lý song song tối đa 100 tài khoản.
 Có thể truyền CSV sau số luồng: ``python3 hoatdong.py 100 accounts.csv``.
 Chạy ``python3 hoatdong.py --dry-run`` để chỉ xem trạng thái, không nhận quà.
@@ -26,6 +27,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
+
+from mail_client import NSOMailClient
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -197,8 +200,13 @@ class AccountResult:
     milestones: int = 0
     attendance: int = 0
     welfare: int = 0
+    mail_claimed: int = 0
+    mail_deleted: int = 0
+    mail_kept: int = 0
+    mail_bag_full: int = 0
     failed: int = 0
     failures: list[FailureRecord] = field(default_factory=list)
+    mail_bag_full_records: list[str] = field(default_factory=list)
 
 
 class NSOActivityClient:
@@ -874,6 +882,33 @@ def discover_characters(host, port, username, password):
         client.disconnect()
 
 
+def receive_mail_on_session(client: NSOActivityClient):
+    """Chạy MailClient trên phiên nhân vật hiện tại.
+
+    Mail và Hoạt Động dùng cùng socket, key và bộ đếm mã hóa. Dùng lại
+    ``NSOMailClient`` giúp giữ nguyên parser/protocol thư, nhưng không phải
+    đăng nhập và chọn nhân vật lần nữa. Sau bước này nhân vật sẽ được đóng nên
+    buffer mail còn dư (nếu server gửi kèm packet nền) không làm ảnh hưởng
+    sang nhân vật khác.
+    """
+    mail_client = NSOMailClient(client.host, client.port)
+    mail_client.sock = client.sock
+    mail_client.connected = client.sock is not None
+    mail_client.key = client.key
+    mail_client.key_pos_r = client.key_read_position
+    mail_client.key_pos_w = client.key_write_position
+    try:
+        mail_client.receive_all_mail(delete_after_claim=True)
+        return dict(mail_client.last_mail_stats), list(mail_client.last_mail_errors)
+    finally:
+        client.key_read_position = mail_client.key_pos_r
+        client.key_write_position = mail_client.key_pos_w
+        if not mail_client.connected:
+            # recv_packet() đã đóng socket khi gặp lỗi kết nối; tránh để phần
+            # xử lý cuối phiên tiếp tục dùng một socket đã hỏng.
+            client.sock = None
+
+
 def process_account(account_number, account_count, host, port, username, password,
                     dry_run, character_index, max_characters, login_delay,
                     character_delay):
@@ -956,6 +991,30 @@ def process_account(account_number, account_count, host, port, username, passwor
             result.failures.extend(FailureRecord(
                 username, index, name, current_stage, reason
             ) for reason in failure_details)
+            current_stage = "Thư"
+            if dry_run:
+                print("    🔎 Dry-run Thư: không nhận hoặc xóa thư")
+            else:
+                try:
+                    mail_stats, mail_errors = receive_mail_on_session(client)
+                    result.mail_claimed += mail_stats.get("claimed", 0)
+                    result.mail_deleted += mail_stats.get("deleted", 0)
+                    result.mail_kept += mail_stats.get("kept", 0)
+                    result.mail_bag_full += mail_stats.get("bag_full", 0)
+                    result.failed += mail_stats.get("failed", 0)
+                    result.mail_bag_full_records.extend(
+                        f"{username} | nhân vật=[{index}] {name} | thư={mail_id}"
+                        for mail_id in mail_stats.get("bag_full_mail_ids", [])
+                    )
+                    result.failures.extend(FailureRecord(
+                        username, index, name, current_stage, reason
+                    ) for reason in mail_errors)
+                except Exception as exc:
+                    result.failed += 1
+                    result.failures.append(FailureRecord(
+                        username, index, name, current_stage, str(exc),
+                    ))
+                    print(f"    ❌ Lỗi xử lý thư: {exc}")
         except Exception as exc:
             result.failed += 1
             result.failures.append(FailureRecord(
@@ -1004,6 +1063,8 @@ def build_parser():
                         help="Chỉ xử lý nhân vật ở index này (mặc định: tất cả)")
     parser.add_argument("--max-characters", type=int, default=0,
                         help="Giới hạn số nhân vật mỗi tài khoản; 0 là không giới hạn")
+    parser.add_argument("--max-accounts", type=int, default=0,
+                        help="Giới hạn số tài khoản cần chạy; 0 là không giới hạn")
     parser.add_argument("--login-delay", type=float, default=DEFAULT_LOGIN_DELAY,
                         help="Thời gian nghỉ sau khi lấy danh sách nhân vật (mặc định: 11 giây)")
     parser.add_argument("--character-delay", type=float, default=DEFAULT_LOGIN_DELAY,
@@ -1041,9 +1102,14 @@ def main():
     if args.max_characters < 0:
         print("❌ --max-characters không được âm")
         return 2
+    if args.max_accounts < 0:
+        print("❌ --max-accounts không được âm")
+        return 2
 
     try:
         accounts = read_accounts(csv_file)
+        if args.max_accounts:
+            accounts = accounts[:args.max_accounts]
     except Exception as exc:
         print(f"❌ Không đọc được CSV: {exc}")
         return 2
@@ -1056,9 +1122,14 @@ def main():
         "milestones": 0,
         "attendance": 0,
         "welfare": 0,
+        "mail_claimed": 0,
+        "mail_deleted": 0,
+        "mail_kept": 0,
+        "mail_bag_full": 0,
         "failed": 0,
     }
     failures = []
+    mail_bag_full_records = []
     if worker_count > len(accounts):
         print(
             f"⚠️ Số tài khoản ({len(accounts)}) ít hơn số luồng yêu cầu "
@@ -1114,13 +1185,25 @@ def main():
                 totals["milestones"] += result.milestones
                 totals["attendance"] += result.attendance
                 totals["welfare"] += result.welfare
+                totals["mail_claimed"] += result.mail_claimed
+                totals["mail_deleted"] += result.mail_deleted
+                totals["mail_kept"] += result.mail_kept
+                totals["mail_bag_full"] += result.mail_bag_full
                 totals["failed"] += result.failed
                 failures.extend(result.failures)
+                mail_bag_full_records.extend(result.mail_bag_full_records)
 
     print("\nTỔNG KẾT: "
           f"nhân vật={totals['characters']}, rương={totals['milestones']}, "
           f"điểm danh={totals['attendance']}, phúc lợi={totals['welfare']}, "
+          f"thư nhận={totals['mail_claimed']}, thư xóa={totals['mail_deleted']}, "
+          f"thư giữ lại={totals['mail_kept']}, "
+          f"chật rương={totals['mail_bag_full']}, "
           f"lỗi/chưa nhận={totals['failed']}")
+    if mail_bag_full_records:
+        print(f"\nTHƯ GIỮ LẠI DO CHẬT RƯƠNG ({len(mail_bag_full_records)} thư):")
+        for record in mail_bag_full_records:
+            print(f"  - {record}")
     if failures:
         retry_accounts = list(dict.fromkeys(item.username for item in failures))
         print(f"\nDANH SÁCH CẦN CHẠY LẠI ({len(failures)} mục):")
