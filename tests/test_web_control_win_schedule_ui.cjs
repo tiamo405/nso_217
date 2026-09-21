@@ -11,6 +11,7 @@ const saved = {
   start_time: '01:00',
   repeat_hours: 6,
   worker_count: 10,
+  worker_start_delay_seconds: 30,
 };
 
 function setup() {
@@ -42,6 +43,7 @@ function setup() {
     element('#schedule-enabled').checked = true;
     element('#schedule-start-time').value = '12:30';
     element('#schedule-repeat-hours').value = '3';
+    element('#schedule-worker-start-delay-seconds').value = '45';
     element('#schedule-form').listeners.input();
   }
   return {
@@ -58,6 +60,7 @@ test('polling keeps unsaved checkbox and worker count', () => {
   assert.equal(ui.element('#schedule-enabled').checked, true);
   assert.equal(ui.element('#schedule-start-time').value, '12:30');
   assert.equal(ui.element('#schedule-repeat-hours').value, '3');
+  assert.equal(ui.element('#schedule-worker-start-delay-seconds').value, '45');
 });
 
 test('save sends edited values and ignores an older status response', async () => {
@@ -72,6 +75,7 @@ test('save sends edited values and ignores an older status response', async () =
   assert.equal(payload.enabled, true);
   assert.equal(payload.start_time, '12:30');
   assert.equal(payload.repeat_hours, 3);
+  assert.equal(payload.worker_start_delay_seconds, 45);
   assert.equal(ui.element("#schedule-form button[type='submit']").disabled, true);
   request.respond(payload);
   await saving;

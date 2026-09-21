@@ -185,6 +185,7 @@ sys.exit(0)
                     "start_time": "02:00",
                     "repeat_hours": 8,
                     "worker_count": 15,
+                    "worker_start_delay_seconds": 47,
                 },
             )
             self.assertEqual(res.status_code, 200)
@@ -194,9 +195,15 @@ sys.exit(0)
             self.assertEqual(data["start_time"], "02:00")
             self.assertEqual(data["repeat_hours"], 8)
             self.assertEqual(data["worker_count"], 15)
+            self.assertEqual(data["worker_start_delay_seconds"], 47)
 
         saved = json.loads((self.settings.web_runtime_dir / "schedule.json").read_text())
         self.assertEqual(saved["worker_count"], 15)
+        self.assertEqual(saved["worker_start_delay_seconds"], 47)
+        manager_state = json.loads(
+            (self.settings.web_runtime_dir / "state.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manager_state["worker_start_delay_seconds"], 47)
         # Một app mới phải đọc lại lịch đã lưu, kể cả sau khi tắt lịch.
         async with AsyncClient(
             transport=ASGITransport(app=create_app(self.settings)), base_url="http://test"

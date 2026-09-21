@@ -193,6 +193,7 @@ function renderSchedule(schedule) {
     $("#schedule-start-time").value = schedule.start_time || schedule.daily_time || "01:00";
     $("#schedule-repeat-hours").value = schedule.repeat_hours || schedule.interval_hours || 6;
     $("#schedule-worker-count").value = schedule.worker_count || 10;
+    $("#schedule-worker-start-delay-seconds").value = schedule.worker_start_delay_seconds ?? 30;
     $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
   }
 
@@ -418,8 +419,14 @@ $("#schedule-form").addEventListener("submit", async (event) => {
       start_time: $("#schedule-start-time").value,
       repeat_hours: Number($("#schedule-repeat-hours").value),
       worker_count: Number($("#schedule-worker-count").value),
+      worker_start_delay_seconds: Number($("#schedule-worker-start-delay-seconds").value),
       server: $("#schedule-server").value,
     };
+    if (!Number.isInteger(payload.worker_start_delay_seconds)
+        || payload.worker_start_delay_seconds < 0
+        || payload.worker_start_delay_seconds > 3600) {
+      throw new Error("Giãn cách worker phải từ 0 đến 3600 giây");
+    }
     const updated = await api("/api/schedule", { method: "POST", json: payload });
     scheduleSaving = false;
     if (revision === scheduleRevision) scheduleDirty = false;

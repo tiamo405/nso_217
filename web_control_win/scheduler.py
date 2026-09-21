@@ -10,7 +10,11 @@ from typing import Any, Dict, Literal, Optional
 from server_config import DEFAULT_SERVER, normalize_server
 
 from .jobs import WindowsBuildJobManager
-from .manager import ControlError, WindowsHeadlessManager
+from .manager import (
+    DEFAULT_WORKER_START_DELAY_SECONDS,
+    ControlError,
+    WindowsHeadlessManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +46,11 @@ class WindowsScheduleManager:
         self.worker_count: int = 10
         self.server: str = manager.selected_server() if manager is not None else DEFAULT_SERVER
         self.auto_ta_thu: bool = True
+        self.worker_start_delay_seconds: int = (
+            manager.worker_start_delay_seconds()
+            if manager is not None
+            else DEFAULT_WORKER_START_DELAY_SECONDS
+        )
         self.current_phase: Literal["nvhn", "ta_thu"] = "nvhn"
         self.last_run_at: Optional[str] = None
         self.next_run_at: Optional[str] = None
@@ -72,6 +81,15 @@ class WindowsScheduleManager:
             except ValueError:
                 pass
             self.auto_ta_thu = bool(data.get("auto_ta_thu", True))
+            raw_delay = data.get(
+                "worker_start_delay_seconds", self.worker_start_delay_seconds
+            )
+            try:
+                self.worker_start_delay_seconds = max(0, min(int(raw_delay), 3600))
+            except (TypeError, ValueError):
+                self.worker_start_delay_seconds = DEFAULT_WORKER_START_DELAY_SECONDS
+            if self.manager is not None:
+                self.manager.set_worker_start_delay_seconds(self.worker_start_delay_seconds)
             phase = data.get("current_phase", "nvhn")
             self.current_phase = phase if phase in {"nvhn", "ta_thu"} else "nvhn"
             self.last_run_at = data.get("last_run_at")
@@ -91,7 +109,11 @@ class WindowsScheduleManager:
             if not self._valid_timestamp(self.next_run_at):
                 self._update_next_run()
 
-        if loaded and ("start_time" not in data or "repeat_hours" not in data):
+        if loaded and (
+            "start_time" not in data
+            or "repeat_hours" not in data
+            or "worker_start_delay_seconds" not in data
+        ):
             self._save()
 
     def _save(self) -> None:
@@ -106,6 +128,7 @@ class WindowsScheduleManager:
             "daily_time": self.start_time,
             "interval_hours": self.repeat_hours,
             "worker_count": self.worker_count,
+            "worker_start_delay_seconds": self.worker_start_delay_seconds,
             "server": self.server,
             "auto_ta_thu": self.auto_ta_thu,
             "current_phase": self.current_phase,
@@ -174,6 +197,7 @@ class WindowsScheduleManager:
             "daily_time": self.start_time,
             "interval_hours": self.repeat_hours,
             "worker_count": self.worker_count,
+            "worker_start_delay_seconds": self.worker_start_delay_seconds,
             "server": self.server,
             "auto_ta_thu": self.auto_ta_thu,
             "current_phase": self.current_phase,
@@ -193,6 +217,7 @@ class WindowsScheduleManager:
         *,
         start_time: str | None = None,
         repeat_hours: int | None = None,
+        worker_start_delay_seconds: int | None = None,
     ) -> Dict[str, Any]:
         selected_start_time = start_time if start_time is not None else daily_time
         selected_repeat_hours = repeat_hours if repeat_hours is not None else interval_hours
@@ -206,6 +231,13 @@ class WindowsScheduleManager:
             raise ControlError(str(exc)) from exc
         if selected_repeat_hours < 1 or selected_repeat_hours > 72:
             raise ControlError("Chu kỳ lặp lại phải từ 1 đến 72 giờ")
+
+        if worker_start_delay_seconds is not None:
+            if worker_start_delay_seconds < 0 or worker_start_delay_seconds > 3600:
+                raise ControlError("Giãn cách khởi động worker phải từ 0 đến 3600 giây")
+            self.worker_start_delay_seconds = int(worker_start_delay_seconds)
+            if self.manager is not None:
+                self.manager.set_worker_start_delay_seconds(self.worker_start_delay_seconds)
 
         self.enabled = enabled
         self.start_time = f"{parsed_time.hour:02d}:{parsed_time.minute:02d}"

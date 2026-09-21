@@ -44,6 +44,7 @@ class ScheduleRequest(BaseModel):
     daily_time: Optional[str] = None
     interval_hours: Optional[int] = Field(default=None, ge=1, le=72)
     worker_count: Optional[int] = 10
+    worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
     auto_ta_thu: bool = True
     server: Literal["ninjamobile", "tk"] = "tk"
 
@@ -124,6 +125,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 else (body.interval_hours if body.interval_hours is not None else 6)
             ),
             worker_count=body.worker_count if body.worker_count is not None else 10,
+            worker_start_delay_seconds=body.worker_start_delay_seconds,
             auto_ta_thu=body.auto_ta_thu,
             server=body.server,
         )
@@ -142,6 +144,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 periodic_restart_hours=periodic_hours,
                 worker_start_delay_seconds=start_delay,
             )
+            scheduler.worker_start_delay_seconds = manager.worker_start_delay_seconds()
             scheduler.current_phase = "nvhn"
             scheduler._save()
             return result
@@ -153,6 +156,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         manager.set_periodic_restart_hours(body.periodic_restart_hours)
         if body.worker_start_delay_seconds is not None:
             manager.set_worker_start_delay_seconds(body.worker_start_delay_seconds)
+            scheduler.worker_start_delay_seconds = manager.worker_start_delay_seconds()
+            scheduler._save()
         result = manager.supervisor_status()
         result["requires_restart"] = was_running
         return result

@@ -187,6 +187,7 @@ function renderSchedule(schedule) {
     $("#schedule-start-time").value = schedule.start_time || schedule.daily_time || "01:00";
     $("#schedule-repeat-hours").value = schedule.repeat_hours || schedule.interval_hours || 6;
     $("#schedule-worker-count").value = schedule.worker_count || 10;
+    $("#schedule-worker-start-delay-seconds").value = schedule.worker_start_delay_seconds ?? 30;
     $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
   }
 
@@ -430,6 +431,14 @@ $("#schedule-form").addEventListener("submit", async (event) => {
   const startTime = $("#schedule-start-time").value;
   const repeatHours = parseInt($("#schedule-repeat-hours").value, 10);
   const workerCount = parseInt($("#schedule-worker-count").value, 10);
+  const workerStartDelaySeconds = parseInt($("#schedule-worker-start-delay-seconds").value, 10);
+
+  if (!Number.isInteger(workerStartDelaySeconds) || workerStartDelaySeconds < 0 || workerStartDelaySeconds > 3600) {
+    notify("Giãn cách worker phải từ 0 đến 3600 giây", true);
+    scheduleSaving = false;
+    button.disabled = false;
+    return;
+  }
 
   try {
     const updated = await api("/api/schedule", {
@@ -440,6 +449,7 @@ $("#schedule-form").addEventListener("submit", async (event) => {
         start_time: startTime,
         repeat_hours: repeatHours,
         worker_count: workerCount,
+        worker_start_delay_seconds: workerStartDelaySeconds,
         server: $("#schedule-server").value,
       },
     });

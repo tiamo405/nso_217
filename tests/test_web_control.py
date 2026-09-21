@@ -385,6 +385,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "start_time": "01:00",
                     "repeat_hours": 6,
                     "worker_count": 15,
+                    "worker_start_delay_seconds": 47,
                     "auto_ta_thu": True,
                 },
             )
@@ -395,6 +396,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data["start_time"], "01:00")
             self.assertEqual(data["repeat_hours"], 6)
             self.assertEqual(data["worker_count"], 15)
+            self.assertEqual(data["worker_start_delay_seconds"], 47)
             self.assertTrue(data["auto_ta_thu"])
             self.assertIsNotNone(data["next_run_at"])
 
@@ -406,6 +408,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "start_time": "02:30",
                     "repeat_hours": 4,
                     "worker_count": 20,
+                    "worker_start_delay_seconds": 12,
                     "auto_ta_thu": False,
                 },
             )
@@ -415,6 +418,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data_interval["start_time"], "02:30")
             self.assertEqual(data_interval["repeat_hours"], 4)
             self.assertEqual(data_interval["worker_count"], 20)
+            self.assertEqual(data_interval["worker_start_delay_seconds"], 12)
             self.assertFalse(data_interval["auto_ta_thu"])
 
             # Cập nhật tham số sai định dạng

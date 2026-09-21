@@ -46,6 +46,7 @@ class ScheduleRequest(BaseModel):
     daily_time: Optional[str] = None
     interval_hours: Optional[int] = Field(default=None, ge=1, le=72)
     worker_count: int = 10
+    worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
     auto_ta_thu: bool = True
     server: Literal["ninjamobile", "tk"] = "tk"
 
@@ -138,6 +139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else (body.interval_hours if body.interval_hours is not None else 6)
             ),
             worker_count=body.worker_count,
+            worker_start_delay_seconds=body.worker_start_delay_seconds,
             auto_ta_thu=body.auto_ta_thu,
             server=body.server,
         )
@@ -158,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         body.worker_start_delay_seconds if body is not None else None
                     ),
                 )
+                scheduler.worker_start_delay_seconds = manager.worker_start_delay_seconds()
             except Exception:
                 # Không dùng tiến độ cũ để tự chuyển Tà Thú sau Start thất bại.
                 manager._set_desired_supervisor(False)
@@ -176,6 +179,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             manager.set_periodic_restart_hours(body.periodic_restart_hours)
             if body.worker_start_delay_seconds is not None:
                 manager.set_worker_start_delay_seconds(body.worker_start_delay_seconds)
+                scheduler.worker_start_delay_seconds = manager.worker_start_delay_seconds()
+                scheduler._save()
             result = manager.supervisor_status()
             result["requires_restart"] = was_running
             return result

@@ -48,13 +48,14 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 5. Cấu hình **Hẹn giờ & Tự động (GMT+7)**:
    - **Giờ chạy đầu tiên**: đến mốc này hệ thống sẽ build lại từ đầu (xóa worker done, compile, chia lại account và run supervisor).
    - **Lặp lại sau (giờ)**: sau mỗi lần lịch được kích hoạt, hệ thống chờ đúng số giờ này rồi build & run lại toàn bộ worker. Hai giá trị này luôn dùng cùng nhau, không còn là hai chế độ loại trừ.
+   - **Giãn cách worker (giây)**: thời gian chờ giữa hai worker khi lịch tự động khởi động NVHN hoặc Tà Thú; `0` để chạy liên tiếp.
    - **Bật tự động Build & Run NVHN**: bật chu kỳ ở trên.
    - **Auto Tà Thú khi NVHN xong**: Khi toàn bộ worker hoàn tất NVHN (2/2 lượt), hệ thống tự động build và chạy supervisor Tà Thú (`ta-thu-runtime/`).
    - **Ưu tiên NVHN**: Khi đến mốc hẹn giờ của ngày hôm sau, hệ thống tự động ngắt toàn bộ tiến trình Tà Thú để ưu tiên Build & Run lại NVHN.
 6. Xem status, tên nhân vật đang chạy, live log; Stop, Start hoặc Restart từng worker.
 7. Stop tất cả sẽ dừng cả supervisor NVHN và Tà Thú, đồng thời ghi nhớ không tự bật lại sau reboot.
 
-Trong panel **Supervisor**, có thể cấu hình:
+Trong panel **Supervisor**, có thể cấu hình các giá trị tương tự cho lần chạy thủ công:
 
 - **Restart worker định kỳ (giờ)**: tính từ lần khởi động gần nhất của từng worker; `0` để tắt.
 - **Giãn cách khởi động worker tiếp theo (giây)**: thời gian chờ giữa các worker khi Supervisor khởi động; `0` để chạy liên tiếp.

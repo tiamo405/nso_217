@@ -607,7 +607,7 @@ class HeadlessManager:
             log_stream = self.ta_thu_supervisor_log.open("ab", buffering=0)
             try:
                 subprocess.Popen(
-                    [str(sup_script)],
+                    [str(sup_script), "--delay", str(self.worker_start_delay_seconds())],
                     cwd=self.settings.repo_dir,
                     env=self.settings.command_env(),
                     stdin=subprocess.DEVNULL,

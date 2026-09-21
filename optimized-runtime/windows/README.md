@@ -88,6 +88,11 @@ chạy qua Web Dashboard, đặt **Restart worker định kỳ (giờ)** và **G
 Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trước
 khi Build & Chạy. Lựa chọn được lưu lại cho supervisor và các lần restart worker.
 
+Trong panel **Hẹn giờ & Tự động**, trường **Giãn cách worker khi tự động (giây)**
+được dùng cho cả lúc lịch build/chạy lại NVHN và lúc chuyển sang Tà Thú. Giá trị
+`0` nghĩa là khởi động liên tiếp. Cấu hình này được lưu khi reload dashboard;
+ô tương ứng trong panel Supervisor cũng được đồng bộ.
+
 Dashboard Windows cũng hỗ trợ chu kỳ tự động NVHN -> Tà Thú. Khi bật **Auto
 Tà Thú khi NVHN xong (2 lượt)**, đến giờ định kỳ hệ thống sẽ dừng cả hai runtime,
 build và chạy lại NVHN. Khi toàn bộ worker NVHN có `worker.done` sau lượt 2 và
