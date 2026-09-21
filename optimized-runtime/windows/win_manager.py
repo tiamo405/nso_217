@@ -1350,7 +1350,7 @@ def main() -> None:
     p_start = subparsers.add_parser("start", help="Khởi động workers")
     p_start.add_argument("workers", nargs="*", help="Số thứ tự worker cần start (ví dụ 1 2 3)")
     p_start.add_argument("--delay", type=int, default=None, help="Giây giãn cách giữa các worker")
-    p_start.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
+    p_start.add_argument("--server", choices=("ninjamobile", "ninjamobileSV4", "tk"), default=None, help="Server: ninjamobile, ninjamobileSV4 hoặc tk")
 
     # stop
     p_stop = subparsers.add_parser("stop", help="Dừng workers")
@@ -1363,7 +1363,7 @@ def main() -> None:
     # delay attribute, so define it explicitly here; a single-worker restart
     # should return promptly instead of inheriting the 30s start delay.
     p_restart.add_argument("--delay", type=int, default=0, help="Giây giãn cách giữa các worker")
-    p_restart.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
+    p_restart.add_argument("--server", choices=("ninjamobile", "ninjamobileSV4", "tk"), default=None, help="Server: ninjamobile, ninjamobileSV4 hoặc tk")
 
     # status
     p_status = subparsers.add_parser("status", help="Xem trạng thái workers")
@@ -1374,7 +1374,7 @@ def main() -> None:
     p_sup.add_argument("workers", nargs="*", help="Danh sách worker cần giám sát")
     p_sup.add_argument("--delay", type=int, default=30, help="Giãn cách khởi động giữa các worker (giây)")
     p_sup.add_argument("--interval", type=int, default=20, help="Chu kỳ kiểm tra (giây)")
-    p_sup.add_argument("--server", choices=("ninjamobile", "tk"), default=None, help="Server: ninjamobile hoặc tk")
+    p_sup.add_argument("--server", choices=("ninjamobile", "ninjamobileSV4", "tk"), default=None, help="Server: ninjamobile, ninjamobileSV4 hoặc tk")
 
     # reset
     subparsers.add_parser("reset", help="Reset marker hoàn tất để chạy lại")

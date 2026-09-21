@@ -14,7 +14,8 @@ python ta-thu-runtime\windows\ta_thu_manager.py status --json
 python ta-thu-runtime\windows\ta_thu_manager.py stop
 ```
 
-Server được chọn qua biến môi trường `NSO_SERVER=tk` hoặc
-`NSO_SERVER=ninjamobile`; Web Dashboard tự truyền lựa chọn đang lưu. Trạng thái
+Server được chọn qua biến môi trường `NSO_SERVER=tk`, `NSO_SERVER=ninjamobile`
+hoặc `NSO_SERVER=ninjamobileSV4` (nsm4.ninjasm.net); Web Dashboard tự truyền
+lựa chọn đang lưu. Trạng thái
 theo ngày được giữ ở `ta-thu-runtime\ta-thu-state`, nên build lại worker không
 làm Tà Thú chạy trùng lần trong cùng ngày.

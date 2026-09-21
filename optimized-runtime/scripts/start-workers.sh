@@ -15,9 +15,10 @@ SERVER_NAME=${NSO_SERVER:-tk}
 normalize_server() {
     case "${1,,}" in
         ninjamobile|ninja) SERVER_NAME=ninjamobile ;;
+        ninjamobilesv4|"ninja mobile sv4"|ninja-sv4|nsm4.ninjasm.net) SERVER_NAME=ninjamobileSV4 ;;
         tk|truyenky|truyen-ky) SERVER_NAME=tk ;;
         *)
-            echo "Server không hợp lệ: $1 (chọn ninjamobile hoặc tk)." >&2
+            echo "Server không hợp lệ: $1 (chọn ninjamobile, ninjamobileSV4 hoặc tk)." >&2
             exit 1
             ;;
     esac
@@ -38,7 +39,7 @@ is_optimized_worker_pid() {
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--server ninjamobile|tk] [--delay seconds] [worker_number...]
+Usage: $(basename "$0") [--server ninjamobile|ninjamobileSV4|tk] [--delay seconds] [worker_number...]
 
 Examples:
   $(basename "$0")                 # start all workers
@@ -46,6 +47,7 @@ Examples:
   $(basename "$0") 3 8 10          # start worker-03, worker-08, worker-10
   $(basename "$0") --delay 5       # start all, wait 5s between workers
   $(basename "$0") --server tk     # chạy bằng server Truyền Kỳ
+  $(basename "$0") --server ninjamobileSV4 # chạy bằng NinjaMobile SV4
 EOF
 }
 

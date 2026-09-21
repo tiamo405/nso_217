@@ -43,7 +43,7 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 
 1. Upload `account.csv` có header `username,password`.
 2. Chọn số worker.
-3. Chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trong ô Server.
+3. Chọn **TK (Truyền Kỳ)**, **NinjaMobile** hoặc **NinjaMobile SV4** trong ô Server.
 4. Nhấn **Chỉ Build** để compile và chia worker; nhấn **Run workers** để khởi động supervisor với server đã chọn.
 5. Cấu hình **Hẹn giờ & Tự động (GMT+7)**:
    - **Giờ chạy đầu tiên**: đến mốc này hệ thống sẽ build lại từ đầu (xóa worker done, compile, chia lại account và run supervisor).

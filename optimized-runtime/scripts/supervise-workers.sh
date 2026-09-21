@@ -16,9 +16,10 @@ SERVER_NAME=${NSO_SERVER:-tk}
 normalize_server() {
     case "${1,,}" in
         ninjamobile|ninja) SERVER_NAME=ninjamobile ;;
+        ninjamobilesv4|"ninja mobile sv4"|ninja-sv4|nsm4.ninjasm.net) SERVER_NAME=ninjamobileSV4 ;;
         tk|truyenky|truyen-ky) SERVER_NAME=tk ;;
         *)
-            echo "Server không hợp lệ: $1 (chọn ninjamobile hoặc tk)." >&2
+            echo "Server không hợp lệ: $1 (chọn ninjamobile, ninjamobileSV4 hoặc tk)." >&2
             exit 1
             ;;
     esac
@@ -28,7 +29,7 @@ normalize_server "$SERVER_NAME"
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--server ninjamobile|tk] [--delay seconds] [worker_number...]
+Usage: $(basename "$0") [--server ninjamobile|ninjamobileSV4|tk] [--delay seconds] [worker_number...]
 
 Examples:
   $(basename "$0")                 # supervise all workers (default delay 15s between starts)
@@ -40,6 +41,7 @@ Examples:
   PERIODIC_RESTART_SECONDS=10800 $(basename "$0") # restart worker sau 3 giờ
   REPEATED_STATUS_WINDOW_LINES=20 $(basename "$0") # cửa sổ phát hiện NPC25
   $(basename "$0") --server ninjamobile # chạy bằng server NinjaMobile
+  $(basename "$0") --server ninjamobileSV4 # chạy bằng NinjaMobile SV4
 EOF
 }
 

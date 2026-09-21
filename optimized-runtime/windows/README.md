@@ -57,6 +57,8 @@ python optimized-runtime\windows\win_manager.py status
 :: 5. Khởi động các worker cụ thể bằng NinjaMobile
 python optimized-runtime\windows\win_manager.py start --server ninjamobile 1 2 3
 
+:: Có thể chọn NinjaMobile SV4 bằng --server ninjamobileSV4
+
 :: 6. Dừng tất cả worker
 python optimized-runtime\windows\win_manager.py stop
 
@@ -85,7 +87,8 @@ chạy qua Web Dashboard, đặt **Restart worker định kỳ (giờ)** và **G
 đang chạy, cần Stop rồi Start lại để áp dụng. Khi chạy trực tiếp, có thể dùng
 `PERIODIC_RESTART_SECONDS=10800` và tham số `--delay 30`.
 
-Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trước
+Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)**, **NinjaMobile** hoặc
+**NinjaMobile SV4 (nsm4.ninjasm.net)** trước
 khi Build & Chạy. Lựa chọn được lưu lại cho supervisor và các lần restart worker.
 
 Trong panel **Hẹn giờ & Tự động**, trường **Giãn cách worker khi tự động (giây)**

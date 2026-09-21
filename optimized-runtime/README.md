@@ -42,6 +42,9 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 # Hoặc chạy bằng NinjaMobile
 ./optimized-runtime/scripts/start-workers.sh --server ninjamobile
 
+# Hoặc NinjaMobile SV4 (nsm4.ninjasm.net)
+./optimized-runtime/scripts/start-workers.sh --server ninjamobileSV4
+
 # Xem trạng thái CPU, RAM và tiến độ
 ./optimized-runtime/scripts/status-workers.sh
 

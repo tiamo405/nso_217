@@ -109,6 +109,10 @@ public class UpdateServer {
         }
 
         value = value.trim().toLowerCase();
+        if (value.equals("ninjamobilesv4") || value.equals("ninja mobile sv4")
+                || value.equals("ninja-sv4") || value.equals("nsm4.ninjasm.net")) {
+            return "ninjamobilesv4";
+        }
         if (value.equals("ninjamobile") || value.equals("ninja") || value.equals("ninja mobile")) {
             return "ninjamobile";
         }
@@ -130,8 +134,13 @@ public class UpdateServer {
         for (int i = 0; i < UpdateServer.listName.length; ++i) {
             String name = UpdateServer.listName[i] == null ? "" : UpdateServer.listName[i].trim().toLowerCase();
             String ip = UpdateServer.listIP[i] == null ? "" : UpdateServer.listIP[i].trim().toLowerCase();
+            if (selected.equals("ninjamobilesv4")
+                    && (name.equals("ninjamobilesv4") || ip.equals("nsm4.ninjasm.net"))) {
+                selectedIndex = i;
+                break;
+            }
             if (selected.equals("ninjamobile")
-                    && (name.equals("ninjamobile") || ip.indexOf("ninjasm") >= 0)) {
+                    && (name.equals("ninjamobile") || ip.equals("nsm1.ninjasm.net"))) {
                 selectedIndex = i;
                 break;
             }
@@ -220,9 +229,11 @@ public class UpdateServer {
     static {
         // server ninjamobile
         // Base64("ninjamobile:Nsm1.ninjasm.net:14444:0")
+        // server ninjamobileSV4
+        // Base64("ninjamobileSV4:nsm4.ninjasm.net:14444:0")
         // server TK
         // Base64("TK:Nsotk1.nsotk.online:14444:0")
-        m = "bmluamFtb2JpbGU6TnNtMS5uaW5qYXNtLm5ldDoxNDQ0NDowLFRLOk5zb3RrMS5uc290ay5vbmxpbmU6MTQ0NDQ6MA==";
+        m = "bmluamFtb2JpbGU6TnNtMS5uaW5qYXNtLm5ldDoxNDQ0NDowLG5pbmphbW9iaWxlU1Y0Om5zbTQubmluamFzbS5uZXQ6MTQ0NDQ6MCxUSzpOc290azEubnNvdGsub25saW5lOjE0NDQ0OjA=";
         url = "";
     }
 
