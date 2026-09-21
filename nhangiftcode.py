@@ -49,11 +49,24 @@ _ITEM_MODULE = None
 
 
 def write_failed_accounts(path, failed_accounts):
-    """Ghi danh sách tài khoản lỗi để chạy lại ở lượt sau."""
+    """Ghi danh sách tài khoản chưa nhận giftcode để chạy lại."""
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(("username", "password", "reason"))
         writer.writerows(failed_accounts)
+
+
+def is_giftcode_mail(mail):
+    """Nhận diện riêng thư giftcode, không lẫn các thư quà khác."""
+    text = normalize_text(
+        f"{mail.get('title', '')} {mail.get('content', '')}"
+    )
+    return any(term in text for term in (
+        "ma qua tang",
+        "gift code",
+        "giftcode",
+        "trung thu",
+    ))
 
 
 def load_item_delete_module():
@@ -440,16 +453,18 @@ def main(argv=None):
         totals["mail_deleted"] += mail_stats.get("deleted", 0)
         totals["mail_kept"] += mail_stats.get("kept", 0)
         totals["mail_bag_full"] += mail_stats.get("bag_full", 0)
+        mail_results = mail_stats.get("mail_results", [])
+        gift_mail_records = [
+            mail for mail in mail_results if is_giftcode_mail(mail)
+        ]
+        gift_mail = next(
+            (
+                reward for reward in mail_stats.get("rewards", [])
+                if is_giftcode_mail(reward)
+            ),
+            None,
+        )
         if gift["status"] == GIFT_UNKNOWN:
-            gift_mail = next(
-                (
-                    reward for reward in mail_stats.get("rewards", [])
-                    if any(term in normalize_text(
-                        f"{reward.get('title', '')} {reward.get('content', '')}"
-                    ) for term in ("ma qua tang", "gift code", "giftcode", "trung thu"))
-                ),
-                None,
-            )
             if gift_mail is not None:
                 totals["gift_unknown"] -= 1
                 totals["gift_success"] += 1
@@ -463,33 +478,35 @@ def main(argv=None):
                     "  ⚠️ Đã đọc được chi tiết thư nhưng chưa nhận diện được "
                     "đó là thư giftcode."
                 )
-        account_errors = []
-        if cleaned["delete_failed"]:
-            account_errors.append(
-                f"xóa item thất bại={cleaned['delete_failed']}"
+
+        # Chỉ đưa vào file chạy lại khi riêng thư giftcode chưa nhận được.
+        # Các thư khác bị đầy rương/lỗi không làm tài khoản bị ghi lại.
+        not_received_gift_mails = [
+            mail for mail in gift_mail_records
+            if not mail.get("is_received") and not mail.get("claimed")
+        ]
+        gift_retry_reason = None
+        if not gift_mail_records:
+            gift_retry_reason = "không tìm thấy thư giftcode trong danh sách thư"
+        elif not_received_gift_mails:
+            mail_ids = ", ".join(
+                str(mail["mail_id"]) for mail in not_received_gift_mails
             )
-        if mail_stats.get("failed", 0):
-            account_errors.append(
-                f"xử lý thư lỗi={mail_stats['failed']}"
+            gift_retry_reason = (
+                f"chưa nhận được thư giftcode (mail_id={mail_ids})"
             )
-        if mail_stats.get("bag_full", 0):
-            account_errors.append(
-                f"chật rương thư={mail_stats['bag_full']}"
-            )
-        account_errors.extend(cleaned["mail_errors"])
-        if account_errors:
+        if gift_retry_reason:
             totals["failed"] += 1
             record_failure(
                 username,
                 password,
-                f"Nhân vật {gift['character_name']}: "
-                + "; ".join(account_errors),
+                f"Nhân vật {gift['character_name']}: {gift_retry_reason}",
             )
 
     try:
         write_failed_accounts(FAILED_ACCOUNTS_FILE, failed_accounts)
         print(
-            f"\n🔁 Đã ghi {len(failed_accounts)} tài khoản lỗi vào "
+            f"\n🔁 Đã ghi {len(failed_accounts)} tài khoản chưa nhận giftcode vào "
             f"{FAILED_ACCOUNTS_FILE}"
         )
     except OSError as exc:
