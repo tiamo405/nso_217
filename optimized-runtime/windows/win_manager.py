@@ -779,6 +779,8 @@ def _cmd_start_inner(args: Any) -> int:
             "-XX:CICompilerCount=2",
             "-Dnso.optimized=true",
             f"-Dnso.server={SERVER_NAME}",
+            f"-Dnso.worker.name={worker_name}",
+            f"-Dnso.nvhn.error.dir={RUNTIME_DIR / 'run' / 'nvhn-errors'}",
             f"-Dnso.tick.ms={NSO_TICK_MS}",
             "-Dnso.skip.paint=true",
             "-Dnso.skip.periodic.gc=true",

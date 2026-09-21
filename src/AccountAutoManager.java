@@ -1,6 +1,12 @@
 import java.io.InputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Vector;
 
 /** Sequential account/character runner for daily missions. */
@@ -329,7 +335,89 @@ public final class AccountAutoManager implements Runnable {
         if (!enabled || switching || Code.fieldAB != Code.fieldAD || !isCurrentCharacter()) {
             return;
         }
-        skipCurrentCharacter("NPC25 không có NVHN phù hợp với tiến trình, chuyển nhân vật. " + message);
+        Char current = Char.getMyChar();
+        String safeMessage = message == null ? "" : message.replace('\r', ' ').replace('\n', ' ');
+        writeDailyTaskUnavailableCsv(current, safeMessage);
+        skipCurrentCharacter("NPC25 không có NVHN phù hợp với tiến trình, chuyển nhân vật.");
+    }
+
+    /**
+     * Keeps the progression error separate from the noisy worker stdout log.
+     * Each worker gets its own CSV file so independent JVMs never append to a
+     * shared file. The optional directory is passed by both Linux and Windows
+     * launchers and is outside workers/ so rebuilding workers does not delete it.
+     */
+    private static void writeDailyTaskUnavailableCsv(Char current, String message) {
+        FileOutputStream output = null;
+        FileLock lock = null;
+        try {
+            String userHome = System.getProperty("user.home", ".");
+            String configuredDirectory = System.getProperty("nso.nvhn.error.dir");
+            File directory = configuredDirectory == null || configuredDirectory.length() == 0
+                    ? new File(userHome, "nvhn-errors")
+                    : new File(configuredDirectory);
+            if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory()) {
+                throw new Exception("không tạo được thư mục " + directory.getAbsolutePath());
+            }
+
+            String workerName = System.getProperty("nso.worker.name");
+            if (workerName == null || workerName.length() == 0) {
+                File home = new File(userHome);
+                File workerDirectory = home.getParentFile();
+                workerName = workerDirectory == null ? "unknown-worker" : workerDirectory.getName();
+            }
+            workerName = workerName.replaceAll("[^A-Za-z0-9._-]", "_");
+            File csvFile = new File(directory, workerName + ".csv");
+
+            output = new FileOutputStream(csvFile, true);
+            FileChannel channel = output.getChannel();
+            lock = channel.lock();
+            PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, "UTF-8"));
+            if (csvFile.length() == 0L) {
+                writer.println("timestamp,server,worker,username,character,character_index,character_total,level,map_id,map_name,error_code,message,pass");
+            }
+            writer.println(csvField(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ").format(new Date()))
+                    + "," + csvField(System.getProperty("nso.server", "unknown"))
+                    + "," + csvField(workerName)
+                    + "," + csvField(getCurrentUsername())
+                    + "," + csvField(current.cName)
+                    + "," + csvField(characterIndex + 1)
+                    + "," + csvField(characterNames.length)
+                    + "," + csvField(current.clevel)
+                    + "," + csvField(TileMap.mapID)
+                    + "," + csvField(TileMap.mapName)
+                    + "," + csvField("daily_task_unavailable")
+                    + "," + csvField(message)
+                    + "," + csvField(isSecondWorkerPass(userHome) ? "2" : "1"));
+            writer.flush();
+            System.out.println("AUTO NVHN: đã ghi lỗi tiến trình vào " + csvFile.getAbsolutePath()
+                    + " (" + getCurrentUsername() + "/" + current.cName + ")");
+        } catch (Exception ex) {
+            System.err.println("AUTO NVHN: không ghi được CSV lỗi tiến trình: " + ex.toString());
+        } finally {
+            if (lock != null) {
+                try {
+                    lock.release();
+                } catch (Exception ignored) {
+                }
+            }
+            if (output != null) {
+                try {
+                    output.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    private static boolean isSecondWorkerPass(String userHome) {
+        return new File(userHome, "worker.first-pass.done").isFile();
+    }
+
+    private static String csvField(Object value) {
+        String text = value == null ? "" : String.valueOf(value);
+        text = text.replace('\r', ' ').replace('\n', ' ');
+        return "\"" + text.replace("\"", "\"\"") + "\"";
     }
 
     /**
