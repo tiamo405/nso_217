@@ -170,6 +170,8 @@ for worker_dir in "${worker_dirs[@]}"; do
         "${java_opts_array[@]}" \
         "${OPTIMIZED_SYSTEM_PROPS[@]}" \
         "-Dnso.server=$SERVER_NAME" \
+        "-Dnso.worker.name=$worker_name" \
+        "-Dnso.nvhn.error.dir=$RUNTIME_DIR/run/nvhn-errors" \
         "-Duser.home=$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \
         OptimizedMain \

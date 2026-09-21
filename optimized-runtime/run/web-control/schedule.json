@@ -1,12 +1,15 @@
 {
-  "enabled": false,
-  "mode": "interval",
-  "daily_time": "00:22",
-  "interval_hours": 3,
-  "worker_count": 100,
+  "enabled": true,
+  "schedule_type": "start_then_repeat",
+  "start_time": "22:53",
+  "repeat_hours": 1,
+  "mode": "start_then_repeat",
+  "daily_time": "22:53",
+  "interval_hours": 1,
+  "worker_count": 1,
   "server": "ninjamobile",
-  "auto_ta_thu": false,
+  "auto_ta_thu": true,
   "current_phase": "nvhn",
-  "last_run_at": "2026-09-17T00:22:14+07:00",
-  "next_run_at": null
+  "last_run_at": "2026-09-20T22:53:07+07:00",
+  "next_run_at": "2026-09-20T23:53:07+07:00"
 }

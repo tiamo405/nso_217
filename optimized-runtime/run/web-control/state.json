@@ -1,1 +1,1 @@
-{"supervisor_desired": true, "server": "ninjamobile", "periodic_restart_hours": 3, "worker_start_delay_seconds": 15}
+{"supervisor_desired": false, "server": "ninjamobile", "periodic_restart_hours": 3, "worker_start_delay_seconds": 15}

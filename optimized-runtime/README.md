@@ -57,6 +57,22 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 ./optimized-runtime/scripts/stop-workers.sh
 ```
 
+### CSV lỗi NVHN theo worker
+
+Khi NPC25 trả về lỗi không có nhiệm vụ phù hợp với cấp độ/tiến trình, worker
+ghi một dòng vào file CSV riêng:
+
+```text
+optimized-runtime/run/nvhn-errors/worker-01.csv
+optimized-runtime/run/nvhn-errors/worker-02.csv
+```
+
+Các file này được tách theo worker để nhiều JVM không ghi chung một file. Thư
+mục nằm ngoài `workers/` nên không bị xóa khi chia/build lại worker. CSV gồm
+tài khoản, nhân vật, worker, server, level, map, lượt chạy và nội dung lỗi;
+không ghi password. Khi cần tổng hợp, import toàn bộ các file có mẫu
+`worker-*.csv` trong thư mục này.
+
 ---
 
 ## Cấu hình Biến môi trường (`optimized-runtime/scripts/tuning-options.sh`)

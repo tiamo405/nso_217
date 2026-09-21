@@ -88,6 +88,33 @@ chạy qua Web Dashboard, đặt **Restart worker định kỳ (giờ)** và **G
 Trong Web Dashboard có thể chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trước
 khi Build & Chạy. Lựa chọn được lưu lại cho supervisor và các lần restart worker.
 
+Dashboard Windows cũng hỗ trợ chu kỳ tự động NVHN -> Tà Thú. Khi bật **Auto
+Tà Thú khi NVHN xong (2 lượt)**, đến giờ định kỳ hệ thống sẽ dừng cả hai runtime,
+build và chạy lại NVHN. Khi toàn bộ worker NVHN có `worker.done` sau lượt 2 và
+Supervisor NVHN đã kết thúc, hệ thống dùng bộ điều khiển Python native của
+`ta-thu-runtime/windows/` để build và chạy Tà Thú. Bộ điều khiển này không phụ
+thuộc Git Bash/WSL; nó kiểm tra đúng Java process theo `-Dnso.runtime=ta-thu`
+trước khi stop/restart.
+
+Tà Thú dùng một lượt (`1/1`), marker cuối là
+`ta-thu-runtime/workers/worker-XX/worker.done`. Watchdog vẫn restart worker Tà
+Thú nếu log im lặng 300 giây hoặc trạng thái Tà Thú lặp liên tiếp. Đến lần lịch
+tiếp theo, Tà Thú bị dừng và chu kỳ NVHN mới bắt đầu.
+
+### CSV lỗi NVHN
+
+Nếu NPC25 báo nhân vật chưa mở khóa khu vực phù hợp, lỗi được ghi riêng theo
+worker tại:
+
+```text
+optimized-runtime\run\nvhn-errors\worker-01.csv
+optimized-runtime\run\nvhn-errors\worker-02.csv
+```
+
+Mỗi worker có một file riêng để tránh nhiều JVM ghi đồng thời vào cùng một CSV.
+Thư mục này nằm ngoài `workers` nên vẫn giữ dữ liệu sau khi Build Workers lại.
+Có thể import tất cả file `worker-*.csv`; dữ liệu không chứa password.
+
 1. **Chạy hoàn toàn ẩn (Headless No-Window)**:
    - Các worker Java chạy ngầm với cờ `DETACHED_PROCESS` & `CREATE_NO_WINDOW`, không làm lag màn hình hoặc bật lên hàng chục cửa sổ đen.
 2. **Tiết kiệm RAM tối đa**:
