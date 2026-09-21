@@ -36,10 +36,15 @@ class SupervisorSettingsRequest(BaseModel):
 
 class ScheduleRequest(BaseModel):
     enabled: bool = False
-    mode: Literal["daily", "interval"] = "daily"
-    daily_time: Optional[str] = "01:00"
-    interval_hours: Optional[int] = 6
+    # Cấu hình mới: chạy lần đầu tại start_time, sau đó lặp mỗi repeat_hours.
+    start_time: Optional[str] = None
+    repeat_hours: Optional[int] = Field(default=None, ge=1, le=72)
+    # Alias đọc request cũ để không làm hỏng client/schedule cũ.
+    mode: Optional[Literal["daily", "interval", "start_then_repeat"]] = None
+    daily_time: Optional[str] = None
+    interval_hours: Optional[int] = Field(default=None, ge=1, le=72)
     worker_count: Optional[int] = 10
+    auto_ta_thu: bool = True
     server: Literal["ninjamobile", "tk"] = "tk"
 
 
@@ -52,7 +57,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        await manager.reconcile()
+        # Khi dashboard khởi động lại trong pha Tà Thú, không được tự dựng
+        # lại Supervisor NVHN chỉ vì state supervisor_desired vẫn còn true.
+        if not (scheduler.auto_ta_thu and scheduler.current_phase == "ta_thu"):
+            await manager.reconcile()
         await scheduler.start_loop()
         yield
         await scheduler.stop_loop()
@@ -94,6 +102,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         data["server"] = manager.selected_server()
         data["account"] = manager.account_summary()
         data["schedule"] = scheduler.get_state()
+        data["current_phase"] = scheduler.current_phase
+        data["ta_thu"] = await manager.ta_thu_status()
         active = jobs.active_job()
         data["active_job"] = active.public() if active else None
         return data
@@ -107,23 +117,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return scheduler.update_config(
             enabled=body.enabled,
             mode=body.mode,
-            daily_time=body.daily_time or "01:00",
-            interval_hours=body.interval_hours if body.interval_hours is not None else 6,
+            start_time=body.start_time or body.daily_time or "01:00",
+            repeat_hours=(
+                body.repeat_hours
+                if body.repeat_hours is not None
+                else (body.interval_hours if body.interval_hours is not None else 6)
+            ),
             worker_count=body.worker_count if body.worker_count is not None else 10,
+            auto_ta_thu=body.auto_ta_thu,
             server=body.server,
         )
 
     @app.post("/api/supervisor/start")
     async def start_supervisor(body: Optional[SupervisorRequest] = None) -> Dict[str, Any]:
-        require_idle()
-        selected_server = body.server if body is not None else manager.selected_server()
-        periodic_hours = body.periodic_restart_hours if body is not None else None
-        start_delay = body.worker_start_delay_seconds if body is not None else None
-        return await manager.start_supervisor(
-            server=selected_server,
-            periodic_restart_hours=periodic_hours,
-            worker_start_delay_seconds=start_delay,
-        )
+        async with scheduler.transition_lock:
+            require_idle()
+            selected_server = body.server if body is not None else manager.selected_server()
+            periodic_hours = body.periodic_restart_hours if body is not None else None
+            start_delay = body.worker_start_delay_seconds if body is not None else None
+            if not await manager.stop_ta_thu():
+                raise ControlError("Không dừng được toàn bộ Tà Thú trước khi Start NVHN")
+            result = await manager.start_supervisor(
+                server=selected_server,
+                periodic_restart_hours=periodic_hours,
+                worker_start_delay_seconds=start_delay,
+            )
+            scheduler.current_phase = "nvhn"
+            scheduler._save()
+            return result
 
     @app.post("/api/supervisor/settings")
     async def update_supervisor_settings(body: SupervisorSettingsRequest) -> Dict[str, Any]:
@@ -138,8 +159,27 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/supervisor/stop")
     async def stop_supervisor() -> Dict[str, Any]:
+        async with scheduler.transition_lock:
+            require_idle()
+            if not await manager.stop_ta_thu():
+                raise ControlError("Không dừng được toàn bộ Tà Thú")
+            return await manager.stop_supervisor()
+
+    @app.get("/api/ta-thu/status")
+    async def ta_thu_status() -> Dict[str, Any]:
+        return await manager.ta_thu_status()
+
+    @app.post("/api/ta-thu/supervisor/stop")
+    async def stop_ta_thu_supervisor() -> Dict[str, Any]:
         require_idle()
-        return await manager.stop_supervisor()
+        stopped = await manager.stop_ta_thu()
+        return {"ok": stopped, "supervisor": manager.ta_thu_supervisor_status()}
+
+    @app.get("/api/ta-thu/workers/{worker_name}/logs")
+    async def ta_thu_worker_logs(
+        worker_name: str, kind: Literal["stdout", "error"] = "stdout", lines: int = 200
+    ) -> Dict[str, str]:
+        return {"content": manager.tail_ta_thu_log(worker_name, kind, lines=lines)}
 
     @app.post("/api/workers/{worker_name}/restart")
     async def restart_worker(worker_name: str) -> Dict[str, str]:
@@ -171,13 +211,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.post("/api/build")
     async def build(body: BuildRequest) -> Dict[str, Any]:
-        require_idle()
-        job = await jobs.create(
-            worker_count=body.worker_count,
-            start_after_build=body.start_after_build,
-            server=body.server,
-        )
-        return {"job": job.public()}
+        async with scheduler.transition_lock:
+            require_idle()
+            if not await manager.stop_ta_thu():
+                raise ControlError("Không dừng được toàn bộ Tà Thú trước khi Build NVHN")
+            scheduler.current_phase = "nvhn"
+            scheduler._save()
+            job = await jobs.create(
+                worker_count=body.worker_count,
+                start_after_build=body.start_after_build,
+                server=body.server,
+            )
+            return {"job": job.public()}
 
     @app.get("/api/build/{job_id}")
     async def get_build(job_id: str) -> Dict[str, Any]:

@@ -131,6 +131,12 @@ async function refreshStatus() {
       ? `Supervisor PID ${supervisor.pid} · Tự chạy lại: ${supervisor.desired ? "Bật" : "Tắt"} · Restart định kỳ: ${supervisor.periodic_restart_hours ? `${supervisor.periodic_restart_hours}h` : "Tắt"} · Giãn cách worker: ${supervisor.worker_start_delay_seconds ?? 30}s`
       : `Đang dừng${supervisor.stale_pid ? " (Có PID cũ)" : ""} · Tự chạy lại: ${supervisor.desired ? "Bật" : "Tắt"} · Restart định kỳ: ${supervisor.periodic_restart_hours ? `${supervisor.periodic_restart_hours}h` : "Tắt"} · Giãn cách worker: ${supervisor.worker_start_delay_seconds ?? 30}s`;
 
+    const taThu = data.ta_thu || { supervisor: { running: false }, totals: { running: 0, done: 0, total: 0 } };
+    const taThuTotals = taThu.totals || { running: 0, done: 0, total: 0 };
+    $("#ta-thu-detail").textContent = taThu.supervisor?.running
+      ? `Tà Thú đang chạy · Supervisor PID ${taThu.supervisor.pid} · Worker: ${taThuTotals.running || 0} chạy, ${taThuTotals.done || 0}/${taThuTotals.total || 0} done`
+      : `Tà Thú đang dừng · Worker: ${taThuTotals.done || 0}/${taThuTotals.total || 0} done`;
+
     $("#running-count").textContent = data.totals.running;
     $("#stopped-count").textContent = data.totals.stopped;
     $("#paused-count").textContent = data.totals.paused ?? 0;
@@ -177,20 +183,16 @@ function renderSchedule(schedule) {
   // Polling cập nhật trạng thái, nhưng giữ nguyên các giá trị chưa lưu.
   if (!scheduleDirty && !scheduleSaving) {
     $("#schedule-enabled").checked = schedule.enabled;
-    $("#schedule-mode").value = schedule.mode;
-    $("#schedule-daily-time").value = schedule.daily_time || "01:00";
-    $("#schedule-interval-hours").value = schedule.interval_hours || 6;
-  $("#schedule-worker-count").value = schedule.worker_count || 10;
-  $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
-
-    if (schedule.mode === "daily") {
-      $("#group-daily-time").classList.remove("hidden");
-      $("#group-interval-hours").classList.add("hidden");
-    } else {
-      $("#group-daily-time").classList.add("hidden");
-      $("#group-interval-hours").classList.remove("hidden");
-    }
+    $("#schedule-auto-ta-thu").checked = schedule.auto_ta_thu !== false;
+    $("#schedule-start-time").value = schedule.start_time || schedule.daily_time || "01:00";
+    $("#schedule-repeat-hours").value = schedule.repeat_hours || schedule.interval_hours || 6;
+    $("#schedule-worker-count").value = schedule.worker_count || 10;
+    $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
   }
+
+  $("#schedule-current-phase").textContent = schedule.current_phase === "ta_thu"
+    ? "Pha hiện tại: đang chạy Tà Thú 👹"
+    : "Pha hiện tại: đang chạy NVHN ⚔️";
 
   if (schedule.enabled && schedule.next_run_at) {
     const nextDate = new Date(schedule.next_run_at);
@@ -303,6 +305,18 @@ async function saveSupervisorSettings() {
 
 $("#start-supervisor").addEventListener("click", (event) => supervisorAction("start", event.currentTarget));
 $("#stop-supervisor").addEventListener("click", (event) => supervisorAction("stop", event.currentTarget));
+$("#stop-ta-thu-supervisor").addEventListener("click", async (event) => {
+  event.currentTarget.disabled = true;
+  try {
+    await api("/api/ta-thu/supervisor/stop", { method: "POST" });
+    notify("Đã dừng Supervisor Tà Thú");
+    await refreshStatus();
+  } catch (error) {
+    notify(error.message, true);
+  } finally {
+    event.currentTarget.disabled = false;
+  }
+});
 $("#save-supervisor-settings").addEventListener("click", saveSupervisorSettings);
 $("#periodic-restart-hours").addEventListener("input", () => {
   supervisorSettingsDirty = true;
@@ -404,16 +418,6 @@ for (const eventName of ["input", "change"]) {
   });
 }
 
-$("#schedule-mode").addEventListener("change", (event) => {
-  if (event.target.value === "daily") {
-    $("#group-daily-time").classList.remove("hidden");
-    $("#group-interval-hours").classList.add("hidden");
-  } else {
-    $("#group-daily-time").classList.add("hidden");
-    $("#group-interval-hours").classList.remove("hidden");
-  }
-});
-
 $("#schedule-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (scheduleSaving) return;
@@ -423,9 +427,8 @@ $("#schedule-form").addEventListener("submit", async (event) => {
   const button = $("#schedule-form button[type='submit']");
   button.disabled = true;
   const enabled = $("#schedule-enabled").checked;
-  const mode = $("#schedule-mode").value;
-  const dailyTime = $("#schedule-daily-time").value;
-  const intervalHours = parseInt($("#schedule-interval-hours").value, 10);
+  const startTime = $("#schedule-start-time").value;
+  const repeatHours = parseInt($("#schedule-repeat-hours").value, 10);
   const workerCount = parseInt($("#schedule-worker-count").value, 10);
 
   try {
@@ -433,11 +436,11 @@ $("#schedule-form").addEventListener("submit", async (event) => {
       method: "POST",
       json: {
         enabled,
-        mode,
-        daily_time: dailyTime,
-        interval_hours: intervalHours,
-      worker_count: workerCount,
-      server: $("#schedule-server").value,
+        auto_ta_thu: $("#schedule-auto-ta-thu").checked,
+        start_time: startTime,
+        repeat_hours: repeatHours,
+        worker_count: workerCount,
+        server: $("#schedule-server").value,
       },
     });
     scheduleSaving = false;

@@ -117,7 +117,9 @@ class WindowsBuildJobManager:
             should_restart = job.start_after_build
 
             try:
-                await job.append("Đang dừng supervisor và các worker cũ...")
+                await job.append("Đang dừng Tà Thú, supervisor và các worker cũ...")
+                if not await self.manager.stop_ta_thu():
+                    raise ControlError("Không dừng được toàn bộ Tà Thú trước khi build NVHN")
                 await self.manager.stop_supervisor(remember=False)
                 self.manager.set_server(job.server)
 

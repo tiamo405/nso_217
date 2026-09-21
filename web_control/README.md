@@ -46,7 +46,9 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 3. Chọn **TK (Truyền Kỳ)** hoặc **NinjaMobile** trong ô Server.
 4. Nhấn **Chỉ Build** để compile và chia worker; nhấn **Run workers** để khởi động supervisor với server đã chọn.
 5. Cấu hình **Hẹn giờ & Tự động (GMT+7)**:
-   - **Bật tự động Build & Run NVHN**: Tự động chạy lại từ đầu khi đến giờ hẹn (xóa worker done, compile, chia lại account và run supervisor).
+   - **Giờ chạy đầu tiên**: đến mốc này hệ thống sẽ build lại từ đầu (xóa worker done, compile, chia lại account và run supervisor).
+   - **Lặp lại sau (giờ)**: sau mỗi lần lịch được kích hoạt, hệ thống chờ đúng số giờ này rồi build & run lại toàn bộ worker. Hai giá trị này luôn dùng cùng nhau, không còn là hai chế độ loại trừ.
+   - **Bật tự động Build & Run NVHN**: bật chu kỳ ở trên.
    - **Auto Tà Thú khi NVHN xong**: Khi toàn bộ worker hoàn tất NVHN (2/2 lượt), hệ thống tự động build và chạy supervisor Tà Thú (`ta-thu-runtime/`).
    - **Ưu tiên NVHN**: Khi đến mốc hẹn giờ của ngày hôm sau, hệ thống tự động ngắt toàn bộ tiến trình Tà Thú để ưu tiên Build & Run lại NVHN.
 6. Xem status, tên nhân vật đang chạy, live log; Stop, Start hoặc Restart từng worker.
@@ -59,6 +61,9 @@ Trong panel **Supervisor**, có thể cấu hình:
 
 Nhấn **Lưu cấu hình Supervisor**. Nếu Supervisor đang chạy, cần Stop rồi Start lại
 để cấu hình mới được truyền vào tiến trình Supervisor.
+
+Nếu đã bật lịch build lại toàn bộ, nên đặt **Restart worker định kỳ** về `0` để
+không có hai bộ hẹn giờ cùng tác động lên worker gần cùng một thời điểm.
 
 **Start/Run** supervisor chạy tiếp tiến độ hiện có. Nếu toàn bộ worker đã hoàn
 thành 2/2 lượt, nhấn **Build** rồi **Run** để chạy lại từ đầu. Start thất bại

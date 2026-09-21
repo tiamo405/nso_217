@@ -7,6 +7,7 @@ import stat
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -16,6 +17,7 @@ from web_control.app import create_app
 from web_control.config import Settings
 from web_control.jobs import BuildJob
 from web_control.manager import ControlError, HeadlessManager
+from web_control.scheduler import TZ_VN
 
 
 def write_script(path: Path, body: str) -> None:
@@ -375,14 +377,13 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(initial["enabled"])
             self.assertEqual(initial["timezone"], "GMT+7")
 
-            # Cập nhật cấu hình daily 01:00 GMT+7 và bật auto Tà Thú
+            # Cấu hình giờ chạy đầu tiên + chu kỳ lặp và bật auto Tà Thú.
             update_res = await client.post(
                 "/api/schedule",
                 json={
                     "enabled": True,
-                    "mode": "daily",
-                    "daily_time": "01:00",
-                    "interval_hours": 6,
+                    "start_time": "01:00",
+                    "repeat_hours": 6,
                     "worker_count": 15,
                     "auto_ta_thu": True,
                 },
@@ -390,28 +391,29 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(update_res.status_code, 200, update_res.text)
             data = update_res.json()
             self.assertTrue(data["enabled"])
-            self.assertEqual(data["mode"], "daily")
-            self.assertEqual(data["daily_time"], "01:00")
+            self.assertEqual(data["schedule_type"], "start_then_repeat")
+            self.assertEqual(data["start_time"], "01:00")
+            self.assertEqual(data["repeat_hours"], 6)
             self.assertEqual(data["worker_count"], 15)
             self.assertTrue(data["auto_ta_thu"])
             self.assertIsNotNone(data["next_run_at"])
 
-            # Cập nhật chế độ interval
+            # Đổi cả hai giá trị trong cùng một lịch.
             interval_res = await client.post(
                 "/api/schedule",
                 json={
                     "enabled": True,
-                    "mode": "interval",
-                    "daily_time": "01:00",
-                    "interval_hours": 4,
+                    "start_time": "02:30",
+                    "repeat_hours": 4,
                     "worker_count": 20,
                     "auto_ta_thu": False,
                 },
             )
             self.assertEqual(interval_res.status_code, 200)
             data_interval = interval_res.json()
-            self.assertEqual(data_interval["mode"], "interval")
-            self.assertEqual(data_interval["interval_hours"], 4)
+            self.assertEqual(data_interval["schedule_type"], "start_then_repeat")
+            self.assertEqual(data_interval["start_time"], "02:30")
+            self.assertEqual(data_interval["repeat_hours"], 4)
             self.assertEqual(data_interval["worker_count"], 20)
             self.assertFalse(data_interval["auto_ta_thu"])
 
@@ -420,13 +422,55 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                 "/api/schedule",
                 json={
                     "enabled": True,
-                    "mode": "daily",
-                    "daily_time": "99:99",
-                    "interval_hours": 4,
+                    "start_time": "99:99",
+                    "repeat_hours": 4,
                     "worker_count": 10,
                 },
             )
             self.assertEqual(bad_res.status_code, 400)
+
+    async def test_schedule_runs_at_start_then_repeats_from_trigger(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.enabled = True
+        scheduler.start_time = "01:00"
+        scheduler.repeat_hours = 3
+        trigger_time = datetime.now(TZ_VN).replace(microsecond=0)
+        scheduler.next_run_at = (trigger_time - timedelta(seconds=1)).isoformat()
+
+        with patch.object(app.state.manager, "stop_ta_thu", new_callable=AsyncMock), patch.object(
+            app.state.jobs, "active_job", return_value=None
+        ), patch.object(app.state.jobs, "create", new_callable=AsyncMock) as create:
+            await scheduler._trigger_scheduled_run(trigger_time)
+
+        create.assert_awaited_once_with(
+            worker_count=scheduler.worker_count,
+            start_after_build=True,
+            server=scheduler.server,
+        )
+        self.assertEqual(scheduler.last_run_at, trigger_time.isoformat())
+        next_run = datetime.fromisoformat(scheduler.next_run_at)
+        self.assertEqual(next_run - trigger_time, timedelta(hours=3))
+
+        # Một instance mới đọc lại đúng lịch đang chờ, không quay về giờ mặc định.
+        restored = create_app(self.settings).state.scheduler.get_state()
+        self.assertEqual(restored["start_time"], "01:00")
+        self.assertEqual(restored["repeat_hours"], 3)
+        self.assertEqual(restored["next_run_at"], scheduler.next_run_at)
+
+    async def test_schedule_does_not_skip_when_build_is_active(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.enabled = True
+        scheduler.next_run_at = (
+            datetime.now(TZ_VN) - timedelta(minutes=1)
+        ).isoformat(timespec="seconds")
+        with patch.object(app.state.jobs, "active_job", return_value=object()), patch.object(
+            app.state.jobs, "create", new_callable=AsyncMock
+        ) as create:
+            await scheduler._trigger_scheduled_run()
+        create.assert_not_awaited()
+        self.assertGreater(datetime.fromisoformat(scheduler.next_run_at), datetime.now(TZ_VN))
 
     async def test_stop_ta_thu_supervisor_endpoint(self) -> None:
         ta_thu_dir = self.settings.ta_thu_dir

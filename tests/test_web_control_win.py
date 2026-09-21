@@ -6,14 +6,16 @@ import os
 import stat
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from httpx import ASGITransport, AsyncClient
 
 from web_control_win.app import create_app
 from web_control_win.config import Settings
 from web_control_win.manager import WindowsHeadlessManager
+from web_control_win.scheduler import TZ_VN
 
 
 class WebControlWinTest(unittest.IsolatedAsyncioTestCase):
@@ -109,6 +111,8 @@ sys.exit(0)
             self.assertEqual(data["totals"]["total"], 1)
             self.assertEqual(data["account"]["count"], 2)
             self.assertFalse(data["supervisor"]["running"])
+            self.assertIn("ta_thu", data)
+            self.assertEqual(data["schedule"]["current_phase"], "nvhn")
             self.assertEqual(data["supervisor"]["periodic_restart_hours"], 3)
             self.assertEqual(data["supervisor"]["worker_start_delay_seconds"], 30)
 
@@ -178,17 +182,17 @@ sys.exit(0)
                 "/api/schedule",
                 json={
                     "enabled": True,
-                    "mode": "interval",
-                    "daily_time": "02:00",
-                    "interval_hours": 8,
+                    "start_time": "02:00",
+                    "repeat_hours": 8,
                     "worker_count": 15,
                 },
             )
             self.assertEqual(res.status_code, 200)
             data = res.json()
             self.assertTrue(data["enabled"])
-            self.assertEqual(data["mode"], "interval")
-            self.assertEqual(data["interval_hours"], 8)
+            self.assertEqual(data["schedule_type"], "start_then_repeat")
+            self.assertEqual(data["start_time"], "02:00")
+            self.assertEqual(data["repeat_hours"], 8)
             self.assertEqual(data["worker_count"], 15)
 
         saved = json.loads((self.settings.web_runtime_dir / "schedule.json").read_text())
@@ -198,13 +202,98 @@ sys.exit(0)
             transport=ASGITransport(app=create_app(self.settings)), base_url="http://test"
         ) as client:
             restored = (await client.get("/api/schedule")).json()
-            for key in ("enabled", "mode", "daily_time", "interval_hours", "worker_count"):
+            for key in ("enabled", "schedule_type", "start_time", "repeat_hours", "worker_count"):
                 self.assertEqual(restored[key], data[key])
             restored["enabled"] = False
             self.assertEqual((await client.post("/api/schedule", json=restored)).status_code, 200)
         restored = create_app(self.settings).state.scheduler.get_state()
         self.assertFalse(restored["enabled"])
         self.assertEqual(restored["worker_count"], 15)
+
+    async def test_schedule_runs_at_start_then_repeats_from_trigger(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.enabled = True
+        scheduler.start_time = "01:00"
+        scheduler.repeat_hours = 3
+        trigger_time = datetime.now(TZ_VN).replace(microsecond=0)
+        scheduler.next_run_at = (trigger_time - timedelta(seconds=1)).isoformat()
+
+        with patch.object(app.state.jobs, "active_job", return_value=None), patch.object(
+            app.state.jobs, "create", new_callable=AsyncMock
+        ) as create:
+            await scheduler._trigger_scheduled_run()
+
+        create.assert_awaited_once_with(
+            worker_count=scheduler.worker_count,
+            start_after_build=True,
+            server=scheduler.server,
+        )
+        last_run = datetime.fromisoformat(scheduler.last_run_at)
+        next_run = datetime.fromisoformat(scheduler.next_run_at)
+        self.assertEqual(next_run - last_run, timedelta(hours=3))
+
+        restored = create_app(self.settings).state.scheduler.get_state()
+        self.assertEqual(restored["repeat_hours"], 3)
+        self.assertEqual(restored["next_run_at"], scheduler.next_run_at)
+
+    async def test_schedule_stops_ta_thu_before_starting_nvhn_cycle(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.enabled = True
+        scheduler.repeat_hours = 3
+        scheduler.next_run_at = datetime.now(TZ_VN).isoformat(timespec="seconds")
+        with patch.object(app.state.manager, "stop_ta_thu", new_callable=AsyncMock) as stop_ta_thu, patch.object(
+            app.state.jobs, "active_job", return_value=None
+        ), patch.object(app.state.jobs, "create", new_callable=AsyncMock) as create:
+            await scheduler._trigger_scheduled_run()
+
+        stop_ta_thu.assert_awaited_once()
+        create.assert_awaited_once_with(
+            worker_count=scheduler.worker_count,
+            start_after_build=True,
+            server=scheduler.server,
+        )
+        self.assertEqual(scheduler.current_phase, "nvhn")
+
+    async def test_auto_ta_thu_starts_after_all_nvhn_workers_done(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.auto_ta_thu = True
+        scheduler.current_phase = "nvhn"
+        app.state.manager._set_desired_supervisor(True)
+        with patch.object(
+            app.state.manager,
+            "status",
+            new_callable=AsyncMock,
+            return_value={
+                "totals": {"total": 1, "done": 1},
+                "supervisor": {"running": False},
+            },
+        ), patch.object(
+            app.state.manager,
+            "start_ta_thu",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as start_ta_thu:
+            await scheduler._check_auto_ta_thu()
+
+        start_ta_thu.assert_awaited_once_with(worker_count=scheduler.worker_count)
+        self.assertEqual(scheduler.current_phase, "ta_thu")
+
+    async def test_schedule_does_not_skip_when_build_is_active(self) -> None:
+        app = create_app(self.settings)
+        scheduler = app.state.scheduler
+        scheduler.enabled = True
+        scheduler.next_run_at = (
+            datetime.now(TZ_VN) - timedelta(minutes=1)
+        ).isoformat(timespec="seconds")
+        with patch.object(app.state.jobs, "active_job", return_value=object()), patch.object(
+            app.state.jobs, "create", new_callable=AsyncMock
+        ) as create:
+            await scheduler._trigger_scheduled_run()
+        create.assert_not_awaited()
+        self.assertGreater(datetime.fromisoformat(scheduler.next_run_at), datetime.now(TZ_VN))
 
     async def test_worker_actions(self) -> None:
         transport = ASGITransport(app=create_app(self.settings))
@@ -221,6 +310,21 @@ sys.exit(0)
             log_res = await client.get("/api/workers/worker-01/logs?kind=stdout")
             self.assertEqual(log_res.status_code, 200)
             self.assertIn("ninja_pro", log_res.json()["content"])
+
+    async def test_stop_all_also_stops_ta_thu(self) -> None:
+        app = create_app(self.settings)
+        with patch.object(app.state.manager, "stop_ta_thu", new_callable=AsyncMock) as stop_ta_thu, patch.object(
+            app.state.manager,
+            "stop_supervisor",
+            new_callable=AsyncMock,
+            return_value={"running": False},
+        ) as stop_nvhn:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/supervisor/stop")
+        self.assertEqual(response.status_code, 200)
+        stop_ta_thu.assert_awaited_once()
+        stop_nvhn.assert_awaited_once()
 
 
 if __name__ == "__main__":

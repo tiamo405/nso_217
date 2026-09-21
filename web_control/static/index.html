@@ -103,21 +103,13 @@
 
             <div class="schedule-inputs">
               <div class="field-group">
-                <label for="schedule-mode">Hình thức hẹn</label>
-                <select id="schedule-mode" class="custom-select">
-                  <option value="daily">Hàng ngày (cố định giờ)</option>
-                  <option value="interval">Lặp lại sau N giờ</option>
-                </select>
+                <label for="schedule-start-time">Giờ chạy đầu tiên (GMT+7)</label>
+                <input id="schedule-start-time" type="time" value="01:00">
               </div>
 
-              <div id="group-daily-time" class="field-group">
-                <label for="schedule-daily-time">Mốc giờ (GMT+7)</label>
-                <input id="schedule-daily-time" type="time" value="01:00">
-              </div>
-
-              <div id="group-interval-hours" class="field-group hidden">
-                <label for="schedule-interval-hours">Chu kỳ (giờ)</label>
-                <input id="schedule-interval-hours" type="number" min="1" max="72" value="6">
+              <div class="field-group">
+                <label for="schedule-repeat-hours">Lặp lại sau (giờ)</label>
+                <input id="schedule-repeat-hours" type="number" min="1" max="72" value="6">
               </div>
 
               <div class="field-group">
@@ -135,6 +127,8 @@
             </div>
 
             <div class="schedule-info muted">
+              <div>Lịch chạy: đến giờ đầu tiên sẽ build lại toàn bộ worker, sau đó lặp theo số giờ đã đặt.</div>
+              <div>Lưu ý: nếu bật lịch này, đặt Restart worker định kỳ = 0 ở panel Supervisor.</div>
               <div>Tiến trình: <strong id="schedule-current-phase">Nhiệm vụ hàng ngày</strong></div>
               <div>Lần chạy kế tiếp: <strong id="schedule-next-run">—</strong></div>
               <div>Lần chạy trước: <strong id="schedule-last-run">—</strong></div>

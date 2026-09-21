@@ -2,6 +2,9 @@ const $ = (selector) => document.querySelector(selector);
 let refreshTimer = null;
 let stream = null;
 let buildActive = false;
+let scheduleDirty = false;
+let scheduleSaving = false;
+let scheduleRevision = 0;
 let currentTab = "nvhn"; // "nvhn" hoặc "ta_thu"
 let supervisorSettingsDirty = false;
 let supervisorSettingsSaving = false;
@@ -116,6 +119,7 @@ function renderWorkers(workers, runtime = "nvhn") {
 }
 
 async function refreshStatus() {
+  const revision = scheduleRevision;
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
@@ -168,7 +172,9 @@ async function refreshStatus() {
     } else {
       renderWorkers(data.workers || [], "nvhn");
     }
-    if (data.schedule) renderSchedule(data.schedule);
+    if (data.schedule && revision === scheduleRevision && !scheduleSaving) {
+      renderSchedule(data.schedule);
+    }
     $("#last-refresh").textContent = `Cập nhật ${new Date().toLocaleTimeString("vi-VN")}`;
   } catch (error) {
     notify(error.message, true);
@@ -180,25 +186,19 @@ function renderSchedule(schedule) {
   badge.textContent = schedule.enabled ? "Đang bật" : "Tắt";
   badge.className = `badge ${schedule.enabled ? "badge-success" : "badge-muted"}`;
 
-  $("#schedule-enabled").checked = schedule.enabled;
-  $("#schedule-auto-ta-thu").checked = schedule.auto_ta_thu !== false;
-  $("#schedule-mode").value = schedule.mode;
-  $("#schedule-daily-time").value = schedule.daily_time || "01:00";
-  $("#schedule-interval-hours").value = schedule.interval_hours || 6;
-  $("#schedule-worker-count").value = schedule.worker_count || 10;
-  $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
+  // Polling không được ghi đè các ô người dùng đang sửa nhưng chưa lưu.
+  if (!scheduleDirty && !scheduleSaving) {
+    $("#schedule-enabled").checked = schedule.enabled;
+    $("#schedule-auto-ta-thu").checked = schedule.auto_ta_thu !== false;
+    $("#schedule-start-time").value = schedule.start_time || schedule.daily_time || "01:00";
+    $("#schedule-repeat-hours").value = schedule.repeat_hours || schedule.interval_hours || 6;
+    $("#schedule-worker-count").value = schedule.worker_count || 10;
+    $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
+  }
 
   const phaseLabel = schedule.current_phase === "ta_thu" ? "Đang chạy Tà Thú 👹" : "Nhiệm vụ hàng ngày ⚔️";
   $("#schedule-current-phase").textContent = phaseLabel;
   $("#schedule-current-phase").style.color = schedule.current_phase === "ta_thu" ? "var(--warning)" : "var(--accent)";
-
-  if (schedule.mode === "daily") {
-    $("#group-daily-time").classList.remove("hidden");
-    $("#group-interval-hours").classList.add("hidden");
-  } else {
-    $("#group-daily-time").classList.add("hidden");
-    $("#group-interval-hours").classList.remove("hidden");
-  }
 
   $("#schedule-next-run").textContent = schedule.enabled && schedule.next_run_at
     ? formatTimestamp(schedule.next_run_at)
@@ -396,37 +396,40 @@ if ($("#stop-ta-thu-supervisor")) {
   });
 }
 
-$("#schedule-mode").addEventListener("change", (event) => {
-  const mode = event.target.value;
-  if (mode === "daily") {
-    $("#group-daily-time").classList.remove("hidden");
-    $("#group-interval-hours").classList.add("hidden");
-  } else {
-    $("#group-daily-time").classList.add("hidden");
-    $("#group-interval-hours").classList.remove("hidden");
-  }
-});
+for (const eventName of ["input", "change"]) {
+  $("#schedule-form").addEventListener(eventName, () => {
+    scheduleDirty = true;
+    scheduleRevision += 1;
+  });
+}
 
 $("#schedule-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (scheduleSaving) return;
+  scheduleSaving = true;
+  scheduleDirty = true;
+  const revision = ++scheduleRevision;
   const saveBtn = $("#schedule-save-button");
   saveBtn.disabled = true;
   try {
     const payload = {
       enabled: $("#schedule-enabled").checked,
       auto_ta_thu: $("#schedule-auto-ta-thu").checked,
-      mode: $("#schedule-mode").value,
-      daily_time: $("#schedule-daily-time").value,
-      interval_hours: Number($("#schedule-interval-hours").value),
+      start_time: $("#schedule-start-time").value,
+      repeat_hours: Number($("#schedule-repeat-hours").value),
       worker_count: Number($("#schedule-worker-count").value),
       server: $("#schedule-server").value,
     };
     const updated = await api("/api/schedule", { method: "POST", json: payload });
+    scheduleSaving = false;
+    if (revision === scheduleRevision) scheduleDirty = false;
+    scheduleRevision += 1;
     renderSchedule(updated);
     notify("Đã lưu cấu hình hẹn giờ & Tà Thú!");
   } catch (error) {
     notify(error.message, true);
   } finally {
+    scheduleSaving = false;
     saveBtn.disabled = false;
   }
 });

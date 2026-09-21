@@ -37,9 +37,14 @@ class SupervisorSettingsRequest(BaseModel):
 
 class ScheduleRequest(BaseModel):
     enabled: bool
-    mode: Literal["daily", "interval"]
-    daily_time: str = "01:00"
-    interval_hours: int = 6
+    # Cấu hình mới: chạy lần đầu tại start_time, sau đó lặp mỗi repeat_hours.
+    start_time: Optional[str] = None
+    repeat_hours: Optional[int] = Field(default=None, ge=1, le=72)
+    # Đọc request cũ để người dùng không mất cấu hình khi frontend chưa được
+    # refresh đồng thời với backend.
+    mode: Optional[Literal["daily", "interval", "start_then_repeat"]] = None
+    daily_time: Optional[str] = None
+    interval_hours: Optional[int] = Field(default=None, ge=1, le=72)
     worker_count: int = 10
     auto_ta_thu: bool = True
     server: Literal["ninjamobile", "tk"] = "tk"
@@ -126,8 +131,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return scheduler.update_config(
             enabled=body.enabled,
             mode=body.mode,
-            daily_time=body.daily_time,
-            interval_hours=body.interval_hours,
+            start_time=body.start_time or body.daily_time or "01:00",
+            repeat_hours=(
+                body.repeat_hours
+                if body.repeat_hours is not None
+                else (body.interval_hours if body.interval_hours is not None else 6)
+            ),
             worker_count=body.worker_count,
             auto_ta_thu=body.auto_ta_thu,
             server=body.server,

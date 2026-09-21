@@ -26,6 +26,12 @@ DEFAULT_WORKER_START_DELAY_SECONDS = 30
 MAX_WORKER_START_DELAY_SECONDS = 3600
 
 
+def _creationflags_for_windows() -> int:
+    if os.name == "nt":
+        return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+    return 0
+
+
 class ControlError(RuntimeError):
     pass
 
@@ -119,6 +125,7 @@ class WindowsHeadlessManager:
         self.settings = settings
         self.control_lock = asyncio.Lock()
         self._supervisor_process: Optional[subprocess.Popen[bytes]] = None
+        self._ta_thu_supervisor_process: Optional[subprocess.Popen[bytes]] = None
         self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -158,6 +165,41 @@ class WindowsHeadlessManager:
             await process.wait()
             raise ControlError(f"Lệnh win_manager {args[0] if args else ''} quá thời gian")
 
+        return process.returncode or 0, stdout.decode("utf-8", errors="replace")
+
+    async def _run_ta_thu_manager(
+        self, *args: str, timeout: Optional[int] = None
+    ) -> Tuple[int, str]:
+        """Run the native cross-platform Tà Thú controller."""
+        manager_py = self.settings.ta_thu_manager_py
+        if not manager_py.is_file():
+            raise ControlError(f"Không tìm thấy Tà Thú manager: {manager_py}")
+        command = [sys.executable, str(manager_py), *args]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                cwd=self.settings.repo_dir,
+                env=self.settings.command_env(self.selected_server()),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except OSError as exc:
+            raise ControlError(f"Không thực thi được Tà Thú manager: {exc}") from exc
+        try:
+            stdout, _ = await asyncio.wait_for(
+                process.communicate(), timeout=timeout or self.settings.command_timeout
+            )
+        except TimeoutError:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                process.kill()
+            await process.wait()
+            raise ControlError("Lệnh Tà Thú manager quá thời gian")
         return process.returncode or 0, stdout.decode("utf-8", errors="replace")
 
     def _read_pid(self, path: Path) -> Optional[int]:
@@ -423,6 +465,148 @@ class WindowsHeadlessManager:
 
         self.supervisor_pid_file.unlink(missing_ok=True)
         return self.supervisor_status()
+
+    @property
+    def ta_thu_supervisor_pid_file(self) -> Path:
+        return self.settings.ta_thu_workers_dir / "supervisor.pid"
+
+    @property
+    def ta_thu_supervisor_log(self) -> Path:
+        return self.settings.web_runtime_dir / "ta-thu-supervisor.log"
+
+    def ta_thu_supervisor_status(self) -> Dict[str, Any]:
+        pid = self._read_pid(self.ta_thu_supervisor_pid_file)
+        running = pid is not None and is_pid_running(pid)
+        if running and not supervisor_pid_is_valid(pid, self.settings.ta_thu_manager_py):
+            running = False
+        stale = self.ta_thu_supervisor_pid_file.exists() and not running
+        return {
+            "running": running,
+            "pid": pid if running else None,
+            "stale_pid": stale,
+            "log": str(self.ta_thu_supervisor_log),
+        }
+
+    async def ta_thu_status(self) -> Dict[str, Any]:
+        if not self.settings.ta_thu_manager_py.is_file():
+            return {
+                "workers_dir": str(self.settings.ta_thu_workers_dir),
+                "workers": [],
+                "totals": {"running": 0, "stopped": 0, "paused": 0, "done": 0, "total": 0},
+                "supervisor": self.ta_thu_supervisor_status(),
+            }
+        code, output = await self._run_ta_thu_manager("status", "--json")
+        if code != 0:
+            raise ControlError(output.strip() or "Không đọc được trạng thái Tà Thú")
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise ControlError("Tà Thú manager trả về JSON không hợp lệ") from exc
+        data["supervisor"] = self.ta_thu_supervisor_status()
+        return data
+
+    async def start_ta_thu(self, worker_count: int = 10) -> bool:
+        async with self.control_lock:
+            if self.ta_thu_supervisor_status()["running"]:
+                return True
+            self.settings.ta_thu_root.mkdir(parents=True, exist_ok=True)
+            code, output = await self._run_ta_thu_manager(
+                "build-workers", str(worker_count), timeout=self.settings.build_timeout
+            )
+            self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
+            with self.ta_thu_supervisor_log.open("ab") as stream:
+                stream.write(output.encode("utf-8", errors="replace"))
+                if output and not output.endswith("\n"):
+                    stream.write(b"\n")
+            if code != 0:
+                return False
+
+            pid_file = self.ta_thu_supervisor_pid_file
+            if pid_file.exists() and not self.ta_thu_supervisor_status()["running"]:
+                pid_file.unlink(missing_ok=True)
+            log_stream = self.ta_thu_supervisor_log.open("ab", buffering=0)
+            command = [
+                sys.executable,
+                str(self.settings.ta_thu_manager_py),
+                "supervise",
+                "--delay", str(self.worker_start_delay_seconds()),
+                "--interval", "20",
+            ]
+            environment = self.settings.command_env(self.selected_server())
+            try:
+                self._ta_thu_supervisor_process = subprocess.Popen(
+                    command,
+                    cwd=self.settings.repo_dir,
+                    env=environment,
+                    stdin=subprocess.DEVNULL,
+                    stdout=log_stream,
+                    stderr=subprocess.STDOUT,
+                    creationflags=_creationflags_for_windows(),
+                )
+            except OSError:
+                log_stream.close()
+                return False
+            finally:
+                log_stream.close()
+
+            for _ in range(20):
+                await asyncio.sleep(0.2)
+                if self.ta_thu_supervisor_status()["running"]:
+                    return True
+            if self._ta_thu_supervisor_process.poll() is None:
+                kill_pid(self._ta_thu_supervisor_process.pid)
+            self._ta_thu_supervisor_process = None
+            return False
+
+    async def stop_ta_thu(self) -> bool:
+        async with self.control_lock:
+            status = self.ta_thu_supervisor_status()
+            pid = status["pid"]
+            if pid is not None:
+                kill_pid(int(pid))
+                for _ in range(30):
+                    if not is_pid_running(int(pid)):
+                        break
+                    await asyncio.sleep(0.1)
+            self._ta_thu_supervisor_process = None
+            try:
+                code, output = await self._run_ta_thu_manager("stop", timeout=30)
+            except ControlError:
+                code, output = 0, ""
+            if output:
+                self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
+                with self.ta_thu_supervisor_log.open("ab") as stream:
+                    stream.write(output.encode("utf-8", errors="replace"))
+                    if not output.endswith("\n"):
+                        stream.write(b"\n")
+            self.ta_thu_supervisor_pid_file.unlink(missing_ok=True)
+            if self.ta_thu_supervisor_status()["running"]:
+                return False
+            return code == 0
+
+    def ta_thu_worker_number(self, worker_name: str) -> int:
+        match = WORKER_RE.fullmatch(worker_name)
+        if not match:
+            raise ControlError("Tên Tà Thú worker không hợp lệ")
+        number = int(match.group(1))
+        worker_dir = (self.settings.ta_thu_workers_dir / f"worker-{number:02d}").resolve()
+        if worker_dir.parent != self.settings.ta_thu_workers_dir.resolve() or not worker_dir.is_dir():
+            raise ControlError("Không tìm thấy Tà Thú worker")
+        return number
+
+    def ta_thu_log_path(self, worker_name: str, kind: str) -> Path:
+        number = self.ta_thu_worker_number(worker_name)
+        filename = {"stdout": "stdout.log", "error": "java-errors.log"}.get(kind)
+        if filename is None:
+            raise ControlError("Loại log không hợp lệ")
+        return self.settings.ta_thu_workers_dir / f"worker-{number:02d}" / filename
+
+    def tail_ta_thu_log(self, worker_name: str, kind: str, lines: int = 200) -> str:
+        path = self.ta_thu_log_path(worker_name, kind)
+        if not path.is_file():
+            return ""
+        with path.open("r", encoding="utf-8", errors="replace") as stream:
+            return "".join(deque(stream, maxlen=max(1, min(lines, 2000))))
 
     def worker_number(self, worker_name: str) -> str:
         match = WORKER_RE.fullmatch(worker_name)

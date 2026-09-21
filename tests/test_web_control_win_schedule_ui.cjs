@@ -5,7 +5,13 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const vm = require('node:vm');
 
-const saved = { enabled: false, mode: 'daily', daily_time: '01:00', interval_hours: 6, worker_count: 10 };
+const saved = {
+  enabled: false,
+  schedule_type: 'start_then_repeat',
+  start_time: '01:00',
+  repeat_hours: 6,
+  worker_count: 10,
+};
 
 function setup() {
   const elements = new Map();
@@ -34,9 +40,9 @@ function setup() {
   function edit(count) {
     element('#schedule-worker-count').value = String(count);
     element('#schedule-enabled').checked = true;
-    element('#schedule-mode').value = 'interval';
+    element('#schedule-start-time').value = '12:30';
+    element('#schedule-repeat-hours').value = '3';
     element('#schedule-form').listeners.input();
-    element('#schedule-mode').listeners.change({ target: element('#schedule-mode') });
   }
   return {
     context, element, requests, edit,
@@ -44,13 +50,14 @@ function setup() {
   };
 }
 
-test('polling keeps unsaved checkbox, mode and worker count', () => {
+test('polling keeps unsaved checkbox and worker count', () => {
   const ui = setup();
   ui.edit(100);
   ui.context.renderSchedule(saved);
   assert.equal(ui.element('#schedule-worker-count').value, '100');
   assert.equal(ui.element('#schedule-enabled').checked, true);
-  assert.equal(ui.element('#schedule-mode').value, 'interval');
+  assert.equal(ui.element('#schedule-start-time').value, '12:30');
+  assert.equal(ui.element('#schedule-repeat-hours').value, '3');
 });
 
 test('save sends edited values and ignores an older status response', async () => {
@@ -63,6 +70,8 @@ test('save sends edited values and ignores an older status response', async () =
   const payload = JSON.parse(request.options.body);
   assert.equal(payload.worker_count, 100);
   assert.equal(payload.enabled, true);
+  assert.equal(payload.start_time, '12:30');
+  assert.equal(payload.repeat_hours, 3);
   assert.equal(ui.element("#schedule-form button[type='submit']").disabled, true);
   request.respond(payload);
   await saving;

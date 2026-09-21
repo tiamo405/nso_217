@@ -50,7 +50,9 @@
           <div class="button-row">
             <button id="start-supervisor" class="primary">Start Supervisor</button>
             <button id="stop-supervisor" class="danger">Stop Tất Cả</button>
+            <button id="stop-ta-thu-supervisor" class="danger" style="background:#5c1d24; border-color:#822a36;">Stop Tà Thú</button>
           </div>
+          <p id="ta-thu-detail" class="muted">Tà Thú: chưa chạy</p>
         </article>
 
         <!-- Account panel -->
@@ -101,23 +103,22 @@
               <span>Bật tự động Build & Run NVHN</span>
             </label>
 
+            <label class="checkbox">
+              <input id="schedule-auto-ta-thu" type="checkbox" checked>
+              <span>Auto Tà Thú khi NVHN xong (2 lượt)</span>
+            </label>
+
+            <p id="schedule-current-phase" class="muted">Pha hiện tại: NVHN</p>
+
             <div class="schedule-time-row">
-              <div class="field-group" style="flex:1;">
-                <label for="schedule-mode">Chế độ</label>
-                <select id="schedule-mode">
-                  <option value="daily">Hàng ngày cố định</option>
-                  <option value="interval">Lặp lại chu kỳ</option>
-                </select>
-              </div>
-
               <div id="group-daily-time" class="field-group" style="flex:1;">
-                <label for="schedule-daily-time">Giờ chạy (GMT+7)</label>
-                <input id="schedule-daily-time" type="time" value="01:00">
+                <label for="schedule-start-time">Giờ chạy đầu tiên (GMT+7)</label>
+                <input id="schedule-start-time" type="time" value="01:00">
               </div>
 
-              <div id="group-interval-hours" class="field-group hidden" style="flex:1;">
-                <label for="schedule-interval-hours">Mỗi (giờ)</label>
-                <input id="schedule-interval-hours" type="number" min="1" max="72" value="6">
+              <div class="field-group" style="flex:1;">
+                <label for="schedule-repeat-hours">Lặp lại sau (giờ)</label>
+                <input id="schedule-repeat-hours" type="number" min="1" max="72" value="6">
               </div>
             </div>
 
@@ -138,6 +139,7 @@
               <span id="schedule-next-run" class="muted">Chưa lên lịch</span>
               <button type="submit" class="secondary">Lưu lịch</button>
             </div>
+            <small class="muted">Đến giờ đầu tiên sẽ build lại toàn bộ worker; sau đó tự lặp theo số giờ đã đặt. Khi bật lịch, đặt Restart worker định kỳ = 0.</small>
           </form>
         </article>
       </section>
@@ -184,6 +186,6 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=4" defer></script>
+  <script src="/static/app.js?v=5" defer></script>
 </body>
 </html>
