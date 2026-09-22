@@ -272,11 +272,11 @@ class HeadlessManager:
             raise ControlError("Chưa có worker. Hãy build trước.")
         if all(
             (worker / "home" / "worker.done").is_file()
-            and (worker / "home" / "worker.first-pass.done").is_file()
+            or (worker / "home" / "worker.first-pass.done").is_file()
             for worker in workers
         ):
             raise ControlError(
-                "Tất cả worker NVHN đã hoàn thành 2/2 lượt. "
+                "Tất cả worker NVHN đã hoàn thành. "
                 "Start/Run chỉ chạy tiếp tiến độ cũ. Hãy nhấn Build rồi Run để chạy lại từ đầu."
             )
         has_main = (
@@ -594,6 +594,7 @@ class HeadlessManager:
                 str(build_script),
                 str(worker_count),
                 timeout=300,
+                server=self.selected_server(),
             )
             if code != 0:
                 return False
@@ -609,7 +610,7 @@ class HeadlessManager:
                 subprocess.Popen(
                     [str(sup_script), "--delay", str(self.worker_start_delay_seconds())],
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(),
+                    env=self.settings.command_env(self.selected_server()),
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,

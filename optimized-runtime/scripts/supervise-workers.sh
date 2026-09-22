@@ -329,20 +329,6 @@ while true; do
         done
     fi
 
-    # Khi worker hoàn thành lượt 1 (tạo worker.done), supervisor tự động đổi tên thành
-    # worker.first-pass.done để start-workers.sh kích hoạt lượt kiểm tra thứ 2.
-    # Chỉ khi worker.done được tạo ở lượt thứ 2 (khi đã có first-pass.done) mới là hoàn tất 2/2.
-    for worker_dir in "${worker_dirs[@]}"; do
-        [[ -f "$worker_dir/.paused" ]] && continue
-        done_marker="$worker_dir/home/worker.done"
-        first_pass_marker="$worker_dir/home/worker.first-pass.done"
-        if [[ -f "$done_marker" && ! -f "$first_pass_marker" ]]; then
-            mv -- "$done_marker" "$first_pass_marker"
-            worker_name=$(basename -- "$worker_dir")
-            echo "[$(date '+%F %T')] $worker_name đã xong lượt 1/2; chuẩn bị chạy kiểm tra lượt 2/2."
-        fi
-    done
-
     all_done=true
     for worker_dir in "${worker_dirs[@]}"; do
         if [[ ! -f "$worker_dir/home/worker.done" ]]; then

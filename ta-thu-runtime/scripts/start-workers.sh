@@ -10,6 +10,7 @@ JAVA_XMS=${JAVA_XMS:-8m}
 JAVA_XMX=${JAVA_XMX:-48m}
 JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true"}
 TA_THU_STAGE=${TA_THU_STAGE:-full}
+NSO_SERVER=${NSO_SERVER:-tk}
 START_DELAY=${START_DELAY:-10}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
@@ -145,6 +146,7 @@ for worker_dir in "${worker_dirs[@]}"; do
         "${java_opts_array[@]}" \
         -Dmicroedition.platform=NSOHeadless \
         -Dnso.runtime=ta-thu \
+        "-Dnso.server=$NSO_SERVER" \
         "-Dta.thu.stage=$TA_THU_STAGE" \
         "-Duser.home=$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \

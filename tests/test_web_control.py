@@ -285,6 +285,25 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager.stop_supervisor()
 
+    async def test_ta_thu_inherits_selected_server(self) -> None:
+        write_script(self.settings.ta_thu_dir / "scripts" / "build-workers.sh", "exit 0\n")
+        write_script(self.settings.ta_thu_dir / "scripts" / "supervise-workers.sh", "exit 0\n")
+        manager = HeadlessManager(self.settings)
+        manager.set_server("ninjamobileSV4")
+        with patch.object(
+            manager,
+            "_capture",
+            new=AsyncMock(return_value=(0, "built")),
+        ) as capture, patch.object(
+            manager,
+            "ta_thu_supervisor_status",
+            side_effect=[{"running": False}, {"running": True}],
+        ), patch("web_control.manager.subprocess.Popen") as popen:
+            self.assertTrue(await manager.start_ta_thu(worker_count=1))
+
+        self.assertEqual(capture.call_args.kwargs["server"], "ninjamobileSV4")
+        self.assertEqual(popen.call_args.kwargs["env"]["NSO_SERVER"], "ninjamobileSV4")
+
     async def test_completed_start_does_not_trigger_ta_thu(self) -> None:
         home = self.settings.workers_dir / "worker-01" / "home"
         (home / "worker.done").touch()
@@ -305,13 +324,12 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             await scheduler._check_auto_ta_thu()
             start_ta_thu.assert_not_awaited()
 
-    async def test_first_pass_done_can_still_start(self) -> None:
+    async def test_completed_worker_cannot_start_again_without_build(self) -> None:
         (self.settings.workers_dir / "worker-01" / "home" / "worker.done").touch()
         manager = HeadlessManager(self.settings)
-        try:
-            self.assertTrue((await manager.start_supervisor())["running"])
-        finally:
-            await manager.stop_supervisor()
+        with self.assertRaises(ControlError) as context:
+            await manager.start_supervisor()
+        self.assertIn("Hãy nhấn Build rồi Run", str(context.exception))
 
     async def test_start_updates_phase_only_after_success(self) -> None:
         app = create_app(self.settings)

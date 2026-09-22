@@ -356,7 +356,7 @@ class WindowsScheduleManager:
             and not supervisor.get("running")
         ):
             logger.info(
-                "Tất cả %s worker NVHN đã xong 2 lượt; build và chạy Tà Thú...",
+                "Tất cả %s worker NVHN đã hoàn thành; build và chạy Tà Thú...",
                 total_workers,
             )
             if await self.manager.start_ta_thu(worker_count=self.worker_count):

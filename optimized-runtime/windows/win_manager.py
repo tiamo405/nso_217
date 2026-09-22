@@ -738,6 +738,16 @@ def _cmd_start_inner(args: Any) -> int:
         home_dir = worker_dir / "home"
         home_dir.mkdir(parents=True, exist_ok=True)
 
+        # Tương thích worker cũ: marker first-pass trước đây đồng nghĩa đã
+        # hoàn thành lượt hiện tại; không chạy thêm lượt ngoài lịch định kỳ.
+        legacy_done_marker = home_dir / "worker.first-pass.done"
+        done_marker = home_dir / "worker.done"
+        if legacy_done_marker.is_file() and not done_marker.is_file():
+            legacy_done_marker.replace(done_marker)
+            _safe_print(
+                f"[{worker_name}] Da hoan tat theo marker cu, khong chay lai ngoai lich dinh ky."
+            )
+
         if (home_dir / "worker.done").is_file():
             _safe_print(f"[{worker_name}] Da hoan tat toan bo account, bo qua.")
             completed += 1
@@ -754,15 +764,14 @@ def _cmd_start_inner(args: Any) -> int:
                 pass
             pid_file.unlink(missing_ok=True)
 
-        worker_pass = 2 if (home_dir / "worker.first-pass.done").is_file() else 1
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         stdout_log = worker_dir / "stdout.log"
         err_log = worker_dir / "java-errors.log"
 
         with open(stdout_log, "a", encoding="utf-8") as f_out, open(err_log, "a", encoding="utf-8") as f_err:
-            f_out.write(f"\n===== START OPTIMIZED {now_str} PASS {worker_pass}/2 =====\n")
-            f_err.write(f"\n===== START OPTIMIZED {now_str} PASS {worker_pass}/2 =====\n")
+            f_out.write(f"\n===== START OPTIMIZED {now_str} =====\n")
+            f_err.write(f"\n===== START OPTIMIZED {now_str} =====\n")
 
         cp_sep = ";" if os.name == "nt" else ":"
         classpath = f"{worker_dir}{cp_sep}{CLASSES_DIR}"
@@ -975,8 +984,10 @@ def get_workers_status_dict() -> Dict[str, Any]:
         home_dir = worker_dir / "home"
 
         paused = (worker_dir / ".paused").is_file()
-        done = (home_dir / "worker.done").is_file()
-        first_pass_done = (home_dir / "worker.first-pass.done").is_file()
+        done = (
+            (home_dir / "worker.done").is_file()
+            or (home_dir / "worker.first-pass.done").is_file()
+        )
 
         pid = None
         if pid_file.is_file():
@@ -1040,8 +1051,8 @@ def get_workers_status_dict() -> Dict[str, Any]:
             "state": state,
             "char_name": char_name,
             "paused": paused,
-            "run_pass": 2 if first_pass_done else 1,
-            "run_pass_total": 2,
+            "run_pass": 1,
+            "run_pass_total": 1,
             "cpu_percent": cpu,
             "rss_mb": rss_mb,
             "elapsed": None,
@@ -1119,10 +1130,12 @@ def _cmd_status_inner(args: Any) -> int:
             except Exception:
                 pass
 
-        first_pass = (home_dir / "worker.first-pass.done").is_file()
-        run_pass = "2/2" if first_pass else "1/2"
+        run_pass = "1/1"
 
-        if (home_dir / "worker.done").is_file():
+        if (
+            (home_dir / "worker.done").is_file()
+            or (home_dir / "worker.first-pass.done").is_file()
+        ):
             status = "DONE"
         elif pid_file.is_file():
             try:
@@ -1188,14 +1201,6 @@ def _cmd_supervise_inner(args: Any) -> int:
             for worker_dir in worker_dirs:
                 if (worker_dir / ".paused").is_file():
                     continue
-                done_marker = worker_dir / "home" / "worker.done"
-                first_pass_marker = worker_dir / "home" / "worker.first-pass.done"
-
-                if done_marker.is_file() and not first_pass_marker.is_file():
-                    shutil.move(str(done_marker), str(first_pass_marker))
-                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    _safe_print(f"[{now_str}] {worker_dir.name} hoan tat Luot 1/2 -> Chuan bi chay Luot 2/2.")
-
             all_done = True
             for worker_dir in worker_dirs:
                 if not (worker_dir / "home" / "worker.done").is_file():
@@ -1204,7 +1209,7 @@ def _cmd_supervise_inner(args: Any) -> int:
 
             if all_done and len(worker_dirs) > 0:
                 _safe_print("\n========================================================")
-                _safe_print(" Tat ca worker da hoan tat ca 2 luot! Supervisor ket thuc.")
+                _safe_print(" Tat ca worker da hoan tat NVHN! Supervisor ket thuc.")
                 _safe_print("========================================================")
                 break
 

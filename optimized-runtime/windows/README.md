@@ -27,7 +27,7 @@ Bạn có thể chạy trực tiếp bằng cách **nhấp đúp chuột** vào 
 | `run-web.bat` | **Khởi động Web Dashboard** (Giao diện web riêng biệt `web_control_win/` tương thích Windows Server) |
 | `build.bat` | Biên dịch mã nguồn Java thành các class tối ưu (`OptimizedMain`) |
 | `build-workers.bat` | Nhập số worker muốn chia từ `account.csv` và tự động tạo thư mục `worker-XX` |
-| `supervise.bat` | Chạy Supervisor tự động giám sát, chia lượt 1/2 và 2/2, tự restart nếu crash |
+| `supervise.bat` | Chạy Supervisor tự động giám sát, tự restart nếu crash hoặc tới chu kỳ |
 | `status.bat` | Xem bảng trạng thái các Worker (PID, RAM, CPU, Tiến độ, Nhân vật...) |
 | `logs.bat` | Xem log theo thời gian thực (nhập số worker hoặc Enter để xem toàn bộ) |
 | `stop.bat` | Dừng toàn bộ các Worker và Supervisor |
@@ -97,8 +97,8 @@ Trong panel **Hẹn giờ & Tự động**, trường **Giãn cách worker khi t
 ô tương ứng trong panel Supervisor cũng được đồng bộ.
 
 Dashboard Windows cũng hỗ trợ chu kỳ tự động NVHN -> Tà Thú. Khi bật **Auto
-Tà Thú khi NVHN xong (2 lượt)**, đến giờ định kỳ hệ thống sẽ dừng cả hai runtime,
-build và chạy lại NVHN. Khi toàn bộ worker NVHN có `worker.done` sau lượt 2 và
+Tà Thú khi NVHN xong**, đến giờ định kỳ hệ thống sẽ dừng cả hai runtime,
+build và chạy lại NVHN. Khi toàn bộ worker NVHN có `worker.done` và
 Supervisor NVHN đã kết thúc, hệ thống dùng bộ điều khiển Python native của
 `ta-thu-runtime/windows/` để build và chạy Tà Thú. Bộ điều khiển này không phụ
 thuộc Git Bash/WSL; nó kiểm tra đúng Java process theo `-Dnso.runtime=ta-thu`
@@ -128,5 +128,5 @@ Có thể import tất cả file `worker-*.csv`; dữ liệu không chứa passw
 2. **Tiết kiệm RAM tối đa**:
    - Sử dụng `-XX:+UseSerialGC`, `-Xss256k` (giảm stack size) và `-XX:CICompilerCount=2`.
    - Mỗi worker chỉ tiêu tốn khoảng **18MB - 28MB RAM** trên JVM 11.
-3. **Giữ nguyên cơ chế 2 Lượt (Two-Pass)**:
-   - Supervisor tự động phát hiện khi worker xong lượt 1 (`worker.first-pass.done`) và kích hoạt chạy kiểm tra quét lại lượt 2 trước khi đánh dấu hoàn tất (`worker.done`).
+3. Worker chỉ chạy một lượt; sau khi có `worker.done`, Supervisor kết thúc. Chu kỳ
+   Build & Run định kỳ sẽ tạo lại worker và chạy lại toàn bộ NVHN.

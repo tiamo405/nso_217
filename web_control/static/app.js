@@ -89,7 +89,7 @@ function renderWorkers(workers, runtime = "nvhn") {
     row.append(cell(worker.name));
     const state = document.createElement("td"); state.append(stateBadge(worker.state)); row.append(state);
     row.append(cell(worker.char_name || "—"));
-    row.append(cell(`${worker.run_pass || 1}/${worker.run_pass_total || 2}`));
+    row.append(cell(`${worker.run_pass || 1}/${worker.run_pass_total || 1}`));
     row.append(cell(worker.pid));
     row.append(cell(worker.cpu_percent == null ? "—" : `${worker.cpu_percent}%`));
     row.append(cell(worker.rss_mb == null ? "—" : `${worker.rss_mb} MB`));

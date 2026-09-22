@@ -126,8 +126,9 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
     pid_file = worker_dir / "bot.pid"
     pid, pid_state = classify_pid(pid_file, worker_dir)
     paused = (worker_dir / ".paused").is_file()
-    done = (worker_dir / "home" / "worker.done").is_file()
-    first_pass_done = (worker_dir / "home" / "worker.first-pass.done").is_file()
+    done_marker = worker_dir / "home" / "worker.done"
+    legacy_done_marker = worker_dir / "home" / "worker.first-pass.done"
+    done = done_marker.is_file() or legacy_done_marker.is_file()
 
     if paused:
         state = "PAUSED"
@@ -152,8 +153,8 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
         "state": state,
         "char_name": extract_char_name(lines),
         "paused": paused,
-        "run_pass": 2 if first_pass_done else 1,
-        "run_pass_total": 2,
+        "run_pass": 1,
+        "run_pass_total": 1,
         "cpu_percent": cpu,
         "rss_mb": rss_mb,
         "elapsed": elapsed,

@@ -296,7 +296,7 @@ class ScheduleManager:
                         continue
 
                 # =========================================================================
-                # 2. KIỂM TRA AUTO TÀ THÚ: NẾU NVHN ĐÃ XONG 2/2 LƯỢT THÌ TỰ ĐỘNG CHẠY TÀ THÚ
+                # 2. KIỂM TRA AUTO TÀ THÚ: NẾU NVHN ĐÃ XONG THÌ TỰ ĐỘNG CHẠY TÀ THÚ
                 # =========================================================================
                 await self._check_auto_ta_thu()
 
@@ -355,7 +355,7 @@ class ScheduleManager:
                 and totals.get("done", 0) == total_workers
                 and not nvhn_status.get("supervisor", {}).get("running")
             ):
-                logger.info("Tất cả %s worker NVHN đã hoàn thành! Khởi chạy Tà Thú...", total_workers)
+                logger.info("Tất cả %s worker NVHN đã hoàn thành; khởi chạy Tà Thú...", total_workers)
                 if await self.manager.start_ta_thu(worker_count=self.worker_count):
                     self.current_phase = "ta_thu"
                     self._save()

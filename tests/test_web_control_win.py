@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from web_control_win.app import create_app
 from web_control_win.config import Settings
-from web_control_win.manager import WindowsHeadlessManager
+from web_control_win.manager import ControlError, WindowsHeadlessManager
 from web_control_win.scheduler import TZ_VN
 
 
@@ -154,6 +154,13 @@ sys.exit(0)
         saved = json.loads((self.settings.web_runtime_dir / "state.json").read_text())
         self.assertEqual(saved["periodic_restart_hours"], 0)
         self.assertEqual(saved["worker_start_delay_seconds"], 0)
+
+    async def test_completed_worker_cannot_start_again_without_build(self) -> None:
+        (self.settings.workers_dir / "worker-01" / "home" / "worker.done").touch()
+        manager = WindowsHeadlessManager(self.settings)
+        with self.assertRaises(ControlError) as context:
+            await manager.start_supervisor()
+        self.assertIn("Hãy bấm Build rồi Run", str(context.exception))
 
     async def test_account_upload(self) -> None:
         transport = ASGITransport(app=create_app(self.settings))

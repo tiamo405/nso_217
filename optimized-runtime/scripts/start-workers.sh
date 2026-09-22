@@ -132,9 +132,13 @@ for worker_dir in "${worker_dirs[@]}"; do
         continue
     fi
 
-    worker_pass=1
-    if [[ -f "$worker_dir/home/worker.first-pass.done" ]]; then
-        worker_pass=2
+    # Tương thích worker cũ: bản Supervisor trước đây đổi worker.done thành
+    # worker.first-pass.done để chạy lượt 2. Chính sách mới coi marker cũ là
+    # đã hoàn thành, không khởi động thêm một lượt ngoài lịch định kỳ.
+    legacy_done_marker="$worker_dir/home/worker.first-pass.done"
+    if [[ -f "$legacy_done_marker" && ! -f "$worker_dir/home/worker.done" ]]; then
+        mv -- "$legacy_done_marker" "$worker_dir/home/worker.done"
+        echo "$worker_name đã hoàn tất theo marker cũ, không chạy lại ngoài lịch định kỳ"
     fi
 
     if [[ -f "$worker_dir/home/worker.done" ]]; then
@@ -154,8 +158,8 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 
     mkdir -p "$worker_dir/home"
-    printf '\n===== START OPTIMIZED %s PASS %s/2 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/stdout.log"
-    printf '\n===== START OPTIMIZED %s PASS %s/2 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/java-errors.log"
+    printf '\n===== START OPTIMIZED %s =====\n' "$(date '+%F %T')" >>"$worker_dir/stdout.log"
+    printf '\n===== START OPTIMIZED %s =====\n' "$(date '+%F %T')" >>"$worker_dir/java-errors.log"
 
     read -r -a java_opts_array <<< "$JAVA_OPTS"
     command_prefix=()

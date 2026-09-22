@@ -377,6 +377,17 @@ class WindowsHeadlessManager:
         if not any(self.settings.workers_dir.glob("worker-*")):
             raise ControlError("Chưa có worker nào. Hãy bấm Build trước.")
 
+        workers = [path for path in self.settings.workers_dir.glob("worker-*") if path.is_dir()]
+        if workers and all(
+            (worker / "home" / "worker.done").is_file()
+            or (worker / "home" / "worker.first-pass.done").is_file()
+            for worker in workers
+        ):
+            raise ControlError(
+                "Tất cả worker NVHN đã hoàn thành. "
+                "Hãy bấm Build rồi Run để chạy lại từ đầu."
+            )
+
         main_class = self.settings.runtime_dir / "build" / "classes" / "OptimizedMain.class"
         if not main_class.is_file():
             raise ControlError("Chưa có OptimizedMain.class. Hãy bấm Build trước.")
