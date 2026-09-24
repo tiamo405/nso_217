@@ -44,6 +44,9 @@ LOGIN_DELAY = 3.0
 MAIL_SESSION_DELAY = 1.5
 MAIL_RETRY_DELAY = 2.0
 MAIL_RETRY_ATTEMPTS = 2
+MAP_WAIT_TIMEOUT = 20.0
+MAP_RETRY_DELAY = 1.0
+MAP_RETRY_ATTEMPTS = 2
 GIFT_CODE = "trungthu"
 FAILED_ACCOUNTS_FILE = ROOT_DIR / "nhangiftcode-failed.csv"
 
@@ -136,14 +139,33 @@ def load_item_delete_module():
 class GiftCodeClient(OfflineExpClient):
     """Client map dùng để mở menu và gửi mã quà tặng."""
 
+    def _wait_for_map_change(self, old_map_id: int, timeout: float = MAP_WAIT_TIMEOUT):
+        return super()._wait_for_map_change(old_map_id, timeout)
+
+    def move_to_tone(self, max_steps: int = 20) -> bool:
+        for attempt in range(1, MAP_RETRY_ATTEMPTS + 1):
+            if super().move_to_tone(max_steps):
+                return True
+            if attempt < MAP_RETRY_ATTEMPTS:
+                print(
+                    f"    ⚠️ Chuyển map về Làng Tone chưa xong, "
+                    f"thử lại sau {MAP_RETRY_DELAY:g} giây "
+                    f"({attempt + 1}/{MAP_RETRY_ATTEMPTS})"
+                )
+                time.sleep(MAP_RETRY_DELAY)
+        return False
+
     def _classify_gift_message(self, message: str):
         normalized = normalize_text(message)
+        already_received_terms = (
+            "moi nguoi chi duoc su dung 1 lan",
+            "chi duoc su dung 1 lan",
+        )
         failure_terms = (
             "khong ton tai",
             "khong hop le",
             "da duoc su dung",
             "da su dung",
-            "chi duoc su dung",
             "het han",
             "sai ma",
             "that bai",
@@ -157,6 +179,8 @@ class GiftCodeClient(OfflineExpClient):
             "gift code",
             "giftcode",
         )
+        if any(term in normalized for term in already_received_terms):
+            return GIFT_SUCCESS
         if any(term in normalized for term in failure_terms):
             return GIFT_FAILED
         if "thu moi" in normalized:
@@ -264,6 +288,7 @@ def gift_stage(host: str, port: int, username: str, password: str):
         "character_name": None,
         "status": GIFT_FAILED,
         "message": "",
+        "already_received": False,
     }
     try:
         if not client.connect() or not client.login(username, password):
@@ -290,6 +315,16 @@ def gift_stage(host: str, port: int, username: str, password: str):
         status, message = client.receive_gift_code()
         result["status"] = status
         result["message"] = message
+        result["already_received"] = (
+            status == GIFT_SUCCESS
+            and any(
+                term in normalize_text(message)
+                for term in (
+                    "moi nguoi chi duoc su dung 1 lan",
+                    "chi duoc su dung 1 lan",
+                )
+            )
+        )
         prefix = {
             GIFT_SUCCESS: "✅ Mã quà tặng thành công",
             GIFT_FAILED: "❌ Mã quà tặng thất bại",
@@ -543,9 +578,9 @@ def process_account(account_number, total_accounts, username, password, item_ids
         if not mail.get("is_received") and not mail.get("claimed")
     ]
     gift_retry_reason = None
-    if not gift_mail_records:
+    if not gift_mail_records and not gift.get("already_received"):
         gift_retry_reason = "không tìm thấy thư giftcode trong danh sách thư"
-    elif not_received_gift_mails:
+    elif not_received_gift_mails and not gift.get("already_received"):
         mail_ids = ", ".join(
             str(mail["mail_id"]) for mail in not_received_gift_mails
         )
