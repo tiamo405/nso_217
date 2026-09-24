@@ -7,7 +7,8 @@ Luồng mỗi tài khoản:
   3. Chọn ``Mã quà tặng`` và gửi GIFT_CODE qua hộp nhập command 92.
   4. Đăng nhập lại bằng client hành trang, chỉ xóa các item có ID nằm trong
      delllllllllll.txt bằng command 14.
-  5. Dùng chính phiên hành trang đó để nhận thư quà tặng.
+  5. Đóng phiên hành trang, mở phiên mới để nhận thư quà tặng.
+  6. Nếu NPC báo đã dùng một lần mà không còn thư, kiểm tra item_open.txt.
 
 Mã quà được đặt tại GIFT_CODE để dễ sửa, không nhận qua command line.
 """
@@ -36,17 +37,22 @@ from nhanexp_and_doiyenquaxu import (
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-hoatdong.csv"
 DEFAULT_ITEMS_FILE = ROOT_DIR / "delllllllllll.txt"
+DEFAULT_OPEN_ITEMS_FILE = ROOT_DIR / "item_open.txt"
 DEFAULT_HOST = "Nsm1.ninjasm.net"
 DEFAULT_PORT = 14444
 # Chờ ngắn giữa phiên giftcode và phiên hành trang. Nếu server báo đăng nhập
 # quá nhanh thì tăng lại lên 5-11 giây.
 LOGIN_DELAY = 3.0
 MAIL_SESSION_DELAY = 1.5
-MAIL_RETRY_DELAY = 2.0
+STEP_RETRY_DELAY = 2.0
+MAIL_RETRY_DELAY = STEP_RETRY_DELAY
 MAIL_RETRY_ATTEMPTS = 2
+ITEM_SESSION_ATTEMPTS = 2
 MAP_WAIT_TIMEOUT = 20.0
 GIFT_SESSION_ATTEMPTS = 3
-GIFT_RETRY_DELAY = 2.0
+GIFT_RETRY_DELAY = STEP_RETRY_DELAY
+ACCOUNT_RETRY_ATTEMPTS = 3
+ACCOUNT_RETRY_DELAY = 5.0
 MENU_TIMEOUT = 20.0
 THREAD_START_DELAY = 2.0
 GIFT_CODE = "trungthu"
@@ -57,6 +63,11 @@ CMD_SERVER_INFO = -24
 GIFT_SUCCESS = "success"
 GIFT_FAILED = "failed"
 GIFT_UNKNOWN = "unknown"
+GIFT_ALREADY_RECEIVED = "already_received"
+
+ACCOUNT_SUCCESS = "success"
+ACCOUNT_BAG_FULL = "bag_full"
+ACCOUNT_RETRY = "retry"
 
 _ITEM_MODULE = None
 _ITEM_TEMPLATE_LOCK = threading.RLock()
@@ -207,7 +218,7 @@ class GiftCodeClient(OfflineExpClient):
             "giftcode",
         )
         if any(term in normalized for term in already_received_terms):
-            return GIFT_SUCCESS
+            return GIFT_ALREADY_RECEIVED
         if any(term in normalized for term in failure_terms):
             return GIFT_FAILED
         if "thu moi" in normalized:
@@ -307,23 +318,6 @@ class GiftCodeClient(OfflineExpClient):
         return self.submit_gift_code(target_index)
 
 
-def _retryable_gift_error(message: str) -> bool:
-    normalized = normalize_text(message)
-    return any(term in normalized for term in (
-        "timeout",
-        "socket",
-        "winerror",
-        "khong ket noi",
-        "khong chon duoc nhan vat",
-        "tai map",
-        "chuyen map",
-        "khong ve duoc lang tone",
-        "khong tim thay okanechan",
-        "menu okanechan",
-        "hop nhap ma",
-    ))
-
-
 def gift_stage(host: str, port: int, username: str, password: str):
     """Đăng nhập và xử lý mã quà; mỗi lần retry dùng socket mới."""
     result = {
@@ -364,7 +358,7 @@ def gift_stage(host: str, port: int, username: str, password: str):
                     result["status"] = status
                     result["message"] = message
                     result["already_received"] = (
-                        status == GIFT_SUCCESS
+                        status == GIFT_ALREADY_RECEIVED
                         and any(
                             term in normalize_text(message)
                             for term in (
@@ -375,6 +369,9 @@ def gift_stage(host: str, port: int, username: str, password: str):
                     )
                     prefix = {
                         GIFT_SUCCESS: "✅ Mã quà tặng thành công",
+                        GIFT_ALREADY_RECEIVED: (
+                            "ℹ️ Tài khoản đã sử dụng mã quà tặng trước đó"
+                        ),
                         GIFT_FAILED: "❌ Mã quà tặng thất bại",
                         GIFT_UNKNOWN: (
                             "⚠️ Server không trả kết quả mã quà, "
@@ -382,9 +379,11 @@ def gift_stage(host: str, port: int, username: str, password: str):
                         ),
                     }[status]
                     print(f"    {prefix}: {message}")
-                    if status in (GIFT_SUCCESS, GIFT_UNKNOWN):
-                        return result
-                    if not _retryable_gift_error(message):
+                    if status in (
+                        GIFT_SUCCESS,
+                        GIFT_ALREADY_RECEIVED,
+                        GIFT_UNKNOWN,
+                    ):
                         return result
         except (AttributeError, ConnectionError, OSError) as exc:
             result["ready"] = False
@@ -443,7 +442,14 @@ def receive_mail_on_fresh_session(
                 dict(mail_client.last_mail_stats),
                 list(mail_client.last_mail_errors),
             )
-        except (AttributeError, ConnectionError, OSError, RuntimeError) as exc:
+        except (
+            AttributeError,
+            ConnectionError,
+            EOFError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
             last_error = exc
             if attempt < MAIL_RETRY_ATTEMPTS:
                 print(
@@ -457,6 +463,59 @@ def receive_mail_on_fresh_session(
     raise RuntimeError(f"Không nhận được thư sau {MAIL_RETRY_ATTEMPTS} lần: {last_error}")
 
 
+def inspect_bag_for_items(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    character_name: str,
+    item_ids,
+):
+    """Kiểm tra item xác minh trong rương bằng phiên hành trang mới."""
+    item_module = load_item_delete_module()
+    last_error = None
+    for attempt in range(1, ITEM_SESSION_ATTEMPTS + 1):
+        client = item_module.NSOClient(host, port)
+        try:
+            if not client.login(username, password):
+                raise ConnectionError("Không đăng nhập được phiên kiểm tra rương")
+            if character_name not in client.characters:
+                raise RuntimeError(
+                    f"Không tìm thấy nhân vật {character_name} khi kiểm tra rương"
+                )
+            if not client.select_character(character_name):
+                raise ConnectionError(
+                    f"Không chọn được nhân vật {character_name} khi kiểm tra rương"
+                )
+
+            matched_ids = sorted({
+                item.template_id
+                for item in client.bag
+                if item is not None and item.template_id in item_ids
+            })
+            print(f"  🔎 Kiểm tra rương: tìm thấy item xác minh {matched_ids}")
+            return {"matched_ids": matched_ids, "error": None}
+        except (
+            AttributeError,
+            ConnectionError,
+            EOFError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            last_error = exc
+            if attempt < ITEM_SESSION_ATTEMPTS:
+                print(
+                    f"  ⚠️ Kiểm tra rương lỗi ({exc}), thử lại sau "
+                    f"{GIFT_RETRY_DELAY:g} giây ({attempt + 1}/"
+                    f"{ITEM_SESSION_ATTEMPTS})"
+                )
+                time.sleep(GIFT_RETRY_DELAY)
+        finally:
+            client.disconnect()
+    return {"matched_ids": [], "error": str(last_error)}
+
+
 def delete_items_and_receive_mail(
     host: str,
     port: int,
@@ -467,7 +526,6 @@ def delete_items_and_receive_mail(
 ):
     """Đăng nhập nhân vật đã chọn, xóa item cấu hình rồi nhận thư."""
     item_module = load_item_delete_module()
-    client = item_module.NSOClient(host, port)
     result = {
         "matched": 0,
         "deleted": 0,
@@ -476,54 +534,75 @@ def delete_items_and_receive_mail(
         "mail_errors": [],
         "error": None,
     }
-    try:
-        if not client.login(username, password):
-            result["error"] = "Không đăng nhập được client hành trang"
-            return result
-        if character_name not in client.characters:
-            result["error"] = f"Không còn thấy nhân vật {character_name} trong client hành trang"
-            return result
-        if not client.select_character(character_name):
-            result["error"] = f"Không chọn được nhân vật {character_name} để dọn item"
-            return result
+    last_error = None
+    for attempt in range(1, ITEM_SESSION_ATTEMPTS + 1):
+        client = item_module.NSOClient(host, port)
+        try:
+            if not client.login(username, password):
+                raise ConnectionError("Không đăng nhập được client hành trang")
+            if character_name not in client.characters:
+                raise RuntimeError(
+                    f"Không còn thấy nhân vật {character_name} trong client hành trang"
+                )
+            if not client.select_character(character_name):
+                raise ConnectionError(
+                    f"Không chọn được nhân vật {character_name} để dọn item"
+                )
 
-        targets = [
-            item for item in client.bag
-            if item is not None and item.template_id in item_ids
-        ]
-        result["matched"] = len(targets)
-        print(f"  🧹 Hành trang: tìm thấy {len(targets)} item thuộc danh sách cần xóa")
-
-        # Xóa từ slot cao xuống để không ảnh hưởng các slot chưa xử lý.
-        for item in sorted(targets, key=lambda value: value.index, reverse=True):
+            targets = [
+                item for item in client.bag
+                if item is not None and item.template_id in item_ids
+            ]
+            result["matched"] += len(targets)
             print(
-                f"    🗑️ Xóa item slot={item.index} id={item.template_id} "
-                f"({item.name}) số lượng={item.quantity} khóa={item.is_lock}"
+                f"  🧹 Hành trang: tìm thấy {len(targets)} item thuộc danh sách cần xóa"
             )
-            if client.sell_item(item.index, item.quantity):
-                result["deleted"] += 1
-                print(f"    ✅ Đã xóa item id={item.template_id}")
-            else:
-                result["delete_failed"] += 1
-                print(f"    ❌ Xóa item thất bại id={item.template_id}")
 
-        client.disconnect()
-        time.sleep(MAIL_SESSION_DELAY)
-        mail_stats, mail_errors = receive_mail_on_fresh_session(
-            host,
-            port,
-            username,
-            password,
-            character_name,
-        )
-        result["mail"] = mail_stats
-        result["mail_errors"] = mail_errors
-        return result
-    except Exception as exc:
-        result["error"] = str(exc)
-        return result
-    finally:
-        client.disconnect()
+            # Xóa từ slot cao xuống để không ảnh hưởng các slot chưa xử lý.
+            for item in sorted(targets, key=lambda value: value.index, reverse=True):
+                print(
+                    f"    🗑️ Xóa item slot={item.index} id={item.template_id} "
+                    f"({item.name}) số lượng={item.quantity} khóa={item.is_lock}"
+                )
+                if client.sell_item(item.index, item.quantity):
+                    result["deleted"] += 1
+                    print(f"    ✅ Đã xóa item id={item.template_id}")
+                else:
+                    result["delete_failed"] += 1
+                    print(f"    ❌ Xóa item thất bại id={item.template_id}")
+
+            client.disconnect()
+            time.sleep(MAIL_SESSION_DELAY)
+            mail_stats, mail_errors = receive_mail_on_fresh_session(
+                host,
+                port,
+                username,
+                password,
+                character_name,
+            )
+            result["mail"] = mail_stats
+            result["mail_errors"] = mail_errors
+            return result
+        except (
+            AttributeError,
+            ConnectionError,
+            EOFError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            last_error = exc
+            if attempt < ITEM_SESSION_ATTEMPTS:
+                print(
+                    f"  ⚠️ Phiên hành trang/thư lỗi ({exc}), thử lại sau "
+                    f"{GIFT_RETRY_DELAY:g} giây ({attempt + 1}/"
+                    f"{ITEM_SESSION_ATTEMPTS})"
+                )
+                time.sleep(GIFT_RETRY_DELAY)
+        finally:
+            client.disconnect()
+    result["error"] = str(last_error)
+    return result
 
 
 def build_parser():
@@ -548,13 +627,13 @@ def build_parser():
     return parser
 
 
-def process_account(account_number, total_accounts, username, password, item_ids):
-    """Xử lý một tài khoản; không ghi file dùng chung trong worker."""
-    totals = {
+def _new_totals():
+    return {
         "accounts": 0,
         "gift_success": 0,
         "gift_failed": 0,
         "gift_unknown": 0,
+        "gift_already_received": 0,
         "matched": 0,
         "deleted": 0,
         "delete_failed": 0,
@@ -564,37 +643,49 @@ def process_account(account_number, total_accounts, username, password, item_ids
         "mail_bag_full": 0,
         "failed": 0,
     }
-    failures = []
-    failed_accounts = []
 
-    def record_failure(reason):
-        reason = str(reason).strip() or "Lỗi không rõ nguyên nhân"
-        failures.append(f"{username}: {reason}")
-        failed_accounts.append((username, password, reason))
 
-    print(f"\n[{account_number}/{total_accounts}] Tài khoản {username}")
+def _add_totals(target, source):
+    for key in target:
+        target[key] += source.get(key, 0)
+
+
+def _gift_mail_records(mail_stats):
+    """Lấy thư giftcode từ danh sách thư và reward đã đọc."""
+    records = list(mail_stats.get("mail_results", []))
+    reward_ids = {
+        reward.get("mail_id")
+        for reward in mail_stats.get("rewards", [])
+        if is_giftcode_mail(reward)
+    }
+    return [
+        mail for mail in records
+        if is_giftcode_mail(mail) or mail.get("mail_id") in reward_ids
+    ]
+
+
+def _process_account_attempt(username, password, item_ids, open_item_ids):
+    """Chạy một lượt đầy đủ; caller quyết định retry toàn tài khoản."""
+    stats = _new_totals()
     gift = gift_stage(DEFAULT_HOST, DEFAULT_PORT, username, password)
     if not gift["ready"]:
-        totals["failed"] += 1
-        record_failure(gift["message"])
-        return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+        return {
+            "outcome": ACCOUNT_RETRY,
+            "reason": gift["message"],
+            "gift": gift,
+            "stats": stats,
+        }
 
-    totals["accounts"] += 1
-    totals[f"gift_{gift['status']}"] += 1
-
-    # Không bán item nếu server đã xác nhận mã thất bại. Đây là bước có
-    # thay đổi hành trang, chỉ nên chạy khi mã đã được nhận hoặc server
-    # chưa trả kết quả rõ ràng (trường hợp quà có thể đã vào thư).
     if gift["status"] == GIFT_FAILED:
-        totals["failed"] += 1
-        record_failure(
-            f"Nhân vật {gift['character_name']}: {gift['message']}"
-        )
-        print("  ⏭️ Bỏ qua dọn item/nhận thư vì mã quà tặng thất bại")
-        return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+        return {
+            "outcome": ACCOUNT_RETRY,
+            "reason": (
+                f"Nhân vật {gift['character_name']}: {gift['message']}"
+            ),
+            "gift": gift,
+            "stats": stats,
+        }
 
-    # Gift code vừa gửi có thể còn đang được server ghi vào hộp thư;
-    # đồng thời server giới hạn đăng nhập lại quá nhanh.
     print(f"  ⏳ Chờ {LOGIN_DELAY:g} giây trước khi dọn item/nhận thư...")
     time.sleep(LOGIN_DELAY)
     cleaned = delete_items_and_receive_mail(
@@ -606,69 +697,191 @@ def process_account(account_number, total_accounts, username, password, item_ids
         item_ids,
     )
     if cleaned["error"]:
-        totals["failed"] += 1
-        record_failure(
-            f"Nhân vật {gift['character_name']}: {cleaned['error']}"
-        )
-        return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+        return {
+            "outcome": ACCOUNT_RETRY,
+            "reason": (
+                f"Nhân vật {gift['character_name']}: {cleaned['error']}"
+            ),
+            "gift": gift,
+            "stats": stats,
+        }
 
-    totals["matched"] += cleaned["matched"]
-    totals["deleted"] += cleaned["deleted"]
-    totals["delete_failed"] += cleaned["delete_failed"]
+    stats["matched"] += cleaned["matched"]
+    stats["deleted"] += cleaned["deleted"]
+    stats["delete_failed"] += cleaned["delete_failed"]
     mail_stats = cleaned["mail"]
-    totals["mail_claimed"] += mail_stats.get("claimed", 0)
-    totals["mail_deleted"] += mail_stats.get("deleted", 0)
-    totals["mail_kept"] += mail_stats.get("kept", 0)
-    totals["mail_bag_full"] += mail_stats.get("bag_full", 0)
-    mail_results = mail_stats.get("mail_results", [])
-    gift_mail_records = [
-        mail for mail in mail_results if is_giftcode_mail(mail)
-    ]
-    gift_mail = next(
-        (
-            reward for reward in mail_stats.get("rewards", [])
-            if is_giftcode_mail(reward)
-        ),
-        None,
-    )
-    if gift["status"] == GIFT_UNKNOWN:
-        if gift_mail is not None:
-            totals["gift_unknown"] -= 1
-            totals["gift_success"] += 1
-            gift["status"] = GIFT_SUCCESS
-            print(
-                f"  ✅ Xác nhận mã quà qua thư id={gift_mail['mail_id']} "
-                "dù server không trả packet kết quả."
-            )
-        elif mail_stats.get("rewards"):
-            print(
-                "  ⚠️ Đã đọc được chi tiết thư nhưng chưa nhận diện được "
-                "đó là thư giftcode."
-            )
+    stats["mail_claimed"] += mail_stats.get("claimed", 0)
+    stats["mail_deleted"] += mail_stats.get("deleted", 0)
+    stats["mail_kept"] += mail_stats.get("kept", 0)
+    stats["mail_bag_full"] += mail_stats.get("bag_full", 0)
 
-    # Chỉ đưa vào file chạy lại khi riêng thư giftcode chưa nhận được.
-    # Các thư khác bị đầy rương/lỗi không làm tài khoản bị ghi lại.
-    not_received_gift_mails = [
+    gift_mail_records = _gift_mail_records(mail_stats)
+    received_gift_mails = [
+        mail for mail in gift_mail_records
+        if mail.get("is_received") or mail.get("claimed")
+    ]
+    if received_gift_mails:
+        mail_ids = ", ".join(
+            str(mail.get("mail_id")) for mail in received_gift_mails
+        )
+        print(f"  ✅ Xác nhận đã nhận thư giftcode: mail_id={mail_ids}")
+        return {
+            "outcome": ACCOUNT_SUCCESS,
+            "reason": "đã nhận thư giftcode",
+            "gift": gift,
+            "stats": stats,
+        }
+
+    pending_gift_mails = [
         mail for mail in gift_mail_records
         if not mail.get("is_received") and not mail.get("claimed")
     ]
-    gift_retry_reason = None
-    if not gift_mail_records and not gift.get("already_received"):
-        gift_retry_reason = "không tìm thấy thư giftcode trong danh sách thư"
-    elif not_received_gift_mails and not gift.get("already_received"):
+    bag_full_mails = [mail for mail in pending_gift_mails if mail.get("bag_full")]
+    if bag_full_mails:
         mail_ids = ", ".join(
-            str(mail["mail_id"]) for mail in not_received_gift_mails
+            str(mail.get("mail_id")) for mail in bag_full_mails
         )
-        gift_retry_reason = (
-            f"chưa nhận được thư giftcode (mail_id={mail_ids})"
-        )
-    if gift_retry_reason:
-        totals["failed"] += 1
-        record_failure(
-            f"Nhân vật {gift['character_name']}: {gift_retry_reason}"
-        )
+        return {
+            "outcome": ACCOUNT_BAG_FULL,
+            "reason": f"rương đầy, giữ lại thư giftcode mail_id={mail_ids}",
+            "gift": gift,
+            "stats": stats,
+        }
 
-    return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+    if pending_gift_mails:
+        mail_ids = ", ".join(
+            str(mail.get("mail_id")) for mail in pending_gift_mails
+        )
+        return {
+            "outcome": ACCOUNT_RETRY,
+            "reason": f"chưa nhận được thư giftcode mail_id={mail_ids}",
+            "gift": gift,
+            "stats": stats,
+        }
+
+    if gift["already_received"]:
+        bag = inspect_bag_for_items(
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            username,
+            password,
+            gift["character_name"],
+            open_item_ids,
+        )
+        if bag["error"]:
+            return {
+                "outcome": ACCOUNT_RETRY,
+                "reason": (
+                    f"NPC báo đã dùng một lần nhưng kiểm tra rương lỗi: "
+                    f"{bag['error']}"
+                ),
+                "gift": gift,
+                "stats": stats,
+            }
+        if bag["matched_ids"]:
+            ids = ", ".join(str(item_id) for item_id in bag["matched_ids"])
+            print(f"  ✅ Xác nhận nhận quà qua rương, item_id={ids}")
+            return {
+                "outcome": ACCOUNT_SUCCESS,
+                "reason": f"đã có item xác minh trong rương: {ids}",
+                "gift": gift,
+                "stats": stats,
+            }
+        return {
+            "outcome": ACCOUNT_RETRY,
+            "reason": "NPC báo đã dùng một lần nhưng không có thư và item xác minh",
+            "gift": gift,
+            "stats": stats,
+        }
+
+    return {
+        "outcome": ACCOUNT_RETRY,
+        "reason": "không tìm thấy thư giftcode sau khi gửi mã",
+        "gift": gift,
+        "stats": stats,
+    }
+
+
+def process_account(
+    account_number,
+    total_accounts,
+    username,
+    password,
+    item_ids,
+    open_item_ids,
+):
+    """Chỉ chuyển account sau thành công, đầy rương hoặc hết retry."""
+    totals = _new_totals()
+    totals["accounts"] = 1
+    failures = []
+    failed_accounts = []
+
+    print(f"\n[{account_number}/{total_accounts}] Tài khoản {username}")
+    last_attempt = None
+    for account_attempt in range(ACCOUNT_RETRY_ATTEMPTS + 1):
+        if account_attempt:
+            print(
+                f"  🔁 Retry toàn tài khoản sau {ACCOUNT_RETRY_DELAY:g} giây "
+                f"({account_attempt}/{ACCOUNT_RETRY_ATTEMPTS})"
+            )
+            time.sleep(ACCOUNT_RETRY_DELAY)
+
+        try:
+            attempt = _process_account_attempt(
+                username,
+                password,
+                item_ids,
+                open_item_ids,
+            )
+        except Exception as exc:
+            attempt = {
+                "outcome": ACCOUNT_RETRY,
+                "reason": f"lỗi ngoài dự kiến: {exc}",
+                "gift": {
+                    "status": GIFT_FAILED,
+                    "message": str(exc),
+                    "already_received": False,
+                },
+                "stats": _new_totals(),
+            }
+        _add_totals(totals, attempt["stats"])
+        last_attempt = attempt
+
+        if attempt["outcome"] in (ACCOUNT_SUCCESS, ACCOUNT_BAG_FULL):
+            break
+        if account_attempt < ACCOUNT_RETRY_ATTEMPTS:
+            print(f"  ⚠️ {attempt['reason']}; sẽ retry toàn tài khoản")
+
+    gift = last_attempt["gift"]
+    if last_attempt["outcome"] == ACCOUNT_SUCCESS:
+        totals["gift_success"] += 1
+        if gift["status"] == GIFT_ALREADY_RECEIVED:
+            totals["gift_already_received"] += 1
+    else:
+        totals["failed"] += 1
+        if gift["status"] == GIFT_FAILED:
+            totals["gift_failed"] += 1
+        elif gift["status"] == GIFT_UNKNOWN:
+            totals["gift_unknown"] += 1
+        elif gift["status"] == GIFT_ALREADY_RECEIVED:
+            totals["gift_already_received"] += 1
+
+        reason = last_attempt["reason"]
+        if last_attempt["outcome"] == ACCOUNT_BAG_FULL:
+            reason = f"{reason}; lưu lại để xử lý sau"
+        else:
+            reason = (
+                f"hết {ACCOUNT_RETRY_ATTEMPTS} lần retry toàn tài khoản: "
+                f"{reason}"
+            )
+        failures.append(f"{username}: {reason}")
+        failed_accounts.append((username, password, reason))
+
+    return {
+        "totals": totals,
+        "failures": failures,
+        "failed_accounts": failed_accounts,
+    }
 
 
 def main(argv=None):
@@ -688,11 +901,15 @@ def main(argv=None):
     if not DEFAULT_ITEMS_FILE.is_file():
         print(f"❌ Không tìm thấy file item: {DEFAULT_ITEMS_FILE}")
         return 2
+    if not DEFAULT_OPEN_ITEMS_FILE.is_file():
+        print(f"❌ Không tìm thấy file item xác minh: {DEFAULT_OPEN_ITEMS_FILE}")
+        return 2
 
     try:
         accounts = read_accounts(args.csv_file)
         item_module = load_item_delete_module()
         item_ids = item_module.read_item_ids(DEFAULT_ITEMS_FILE)
+        open_item_ids = item_module.read_item_ids(DEFAULT_OPEN_ITEMS_FILE)
     except Exception as exc:
         print(f"❌ Không đọc được dữ liệu đầu vào: {exc}")
         return 2
@@ -704,73 +921,64 @@ def main(argv=None):
     if not item_ids:
         print("❌ delllllllllll.txt không có item ID hợp lệ")
         return 2
+    if not open_item_ids:
+        print("❌ item_open.txt không có item ID hợp lệ")
+        return 2
 
     print(
         f"NSO NHẬN GIFTCODE: {len(accounts)} tài khoản | "
-        f"mã={GIFT_CODE} | item cần xóa={len(item_ids)}"
+        f"mã={GIFT_CODE} | item cần xóa={len(item_ids)} | "
+        f"item xác minh={len(open_item_ids)}"
     )
-    totals = {
-        "accounts": 0,
-        "gift_success": 0,
-        "gift_failed": 0,
-        "gift_unknown": 0,
-        "matched": 0,
-        "deleted": 0,
-        "delete_failed": 0,
-        "mail_claimed": 0,
-        "mail_deleted": 0,
-        "mail_kept": 0,
-        "mail_bag_full": 0,
-        "failed": 0,
-    }
+    totals = _new_totals()
     failures = []
     failed_accounts = []
 
-    start_time = time.monotonic()
-
-    def run_account(account_number, username, password):
-        target_time = start_time + (account_number - 1) * args.thread_delay
-        wait = target_time - time.monotonic()
-        if wait > 0:
-            print(
-                f"[{account_number}/{len(accounts)}] Chờ {wait:.1f} giây "
-                "trước khi khởi động luồng"
-            )
-            time.sleep(wait)
-        return process_account(
-            account_number,
-            len(accounts),
-            username,
-            password,
-            item_ids,
+    lane_count = min(args.luong, len(accounts))
+    lanes = [[] for _ in range(lane_count)]
+    for account_number, (username, password) in enumerate(accounts, start=1):
+        lanes[(account_number - 1) % lane_count].append(
+            (account_number, username, password)
         )
 
-    with ThreadPoolExecutor(max_workers=args.luong, thread_name_prefix="giftcode") as executor:
+    def run_lane(lane_number, lane_accounts):
+        if lane_number:
+            time.sleep(lane_number * args.thread_delay)
+        results = []
+        for account_number, username, password in lane_accounts:
+            try:
+                results.append(
+                    process_account(
+                        account_number,
+                        len(accounts),
+                        username,
+                        password,
+                        item_ids,
+                        open_item_ids,
+                    )
+                )
+            except Exception as exc:
+                reason = f"Lỗi worker: {exc}"
+                results.append({
+                    "totals": {**_new_totals(), "accounts": 1, "failed": 1},
+                    "failures": [f"{username}: {reason}"],
+                    "failed_accounts": [(username, password, reason)],
+                })
+        return results
+
+    with ThreadPoolExecutor(
+        max_workers=lane_count,
+        thread_name_prefix="giftcode",
+    ) as executor:
         jobs = {
-            executor.submit(
-                run_account,
-                account_number,
-                username,
-                password,
-            ): (username, password)
-            for account_number, (username, password) in enumerate(accounts, start=1)
+            executor.submit(run_lane, lane_number, lane_accounts): lane_number
+            for lane_number, lane_accounts in enumerate(lanes)
         }
         for future in as_completed(jobs):
-            username, password = jobs[future]
-            try:
-                result = future.result()
-            except Exception as exc:
-                # Worker lỗi ngoài dự kiến vẫn được ghi vào danh sách chạy lại.
-                result = {
-                    "totals": {key: 0 for key in totals},
-                    "failures": [f"{username}: Lỗi worker: {exc}"],
-                    "failed_accounts": [(username, password, f"Lỗi worker: {exc}")],
-                }
-                result["totals"]["failed"] = 1
-            for key in totals:
-                totals[key] += result["totals"].get(key, 0)
-            failures.extend(result["failures"])
-            failed_accounts.extend(result["failed_accounts"])
+            for result in future.result():
+                _add_totals(totals, result["totals"])
+                failures.extend(result["failures"])
+                failed_accounts.extend(result["failed_accounts"])
 
     try:
         write_failed_accounts(FAILED_ACCOUNTS_FILE, failed_accounts)
@@ -785,6 +993,7 @@ def main(argv=None):
         "\nTỔNG KẾT: "
         f"tài khoản={totals['accounts']}, gift thành công={totals['gift_success']}, "
         f"gift thất bại={totals['gift_failed']}, gift chưa xác định={totals['gift_unknown']}, "
+        f"đã dùng trước đó={totals['gift_already_received']}, "
         f"item khớp={totals['matched']}, item đã xóa={totals['deleted']}, "
         f"item lỗi={totals['delete_failed']}, thư nhận={totals['mail_claimed']}, "
         f"thư xóa={totals['mail_deleted']}, thư giữ lại={totals['mail_kept']}, "
