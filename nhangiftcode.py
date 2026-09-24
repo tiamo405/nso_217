@@ -41,6 +41,9 @@ DEFAULT_PORT = 14444
 # Chờ ngắn giữa phiên giftcode và phiên hành trang. Nếu server báo đăng nhập
 # quá nhanh thì tăng lại lên 5-11 giây.
 LOGIN_DELAY = 3.0
+MAIL_SESSION_DELAY = 1.5
+MAIL_RETRY_DELAY = 2.0
+MAIL_RETRY_ATTEMPTS = 2
 GIFT_CODE = "trungthu"
 FAILED_ACCOUNTS_FILE = ROOT_DIR / "nhangiftcode-failed.csv"
 
@@ -302,25 +305,52 @@ def gift_stage(host: str, port: int, username: str, password: str):
         client.disconnect()
 
 
-def receive_mail_on_item_session(client):
-    """Dùng MailClient trên socket item sau khi dọn hành trang."""
-    mail_client = NSOMailClient(client.host, client.port)
-    mail_client.sock = client.sock
-    mail_client.connected = client.connected and client.sock is not None
-    mail_client.key = client.key
-    mail_client.key_pos_r = client.key_read_pos
-    mail_client.key_pos_w = client.key_write_pos
-    try:
-        mail_client.receive_all_mail(
-            delete_after_claim=True,
-            include_read_mail_details=True,
-        )
-        return dict(mail_client.last_mail_stats), list(mail_client.last_mail_errors)
-    finally:
-        client.key_read_pos = mail_client.key_pos_r
-        client.key_write_pos = mail_client.key_pos_w
-        if not mail_client.connected:
-            client.disconnect()
+def receive_mail_on_fresh_session(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    character_name: str,
+):
+    """Nhận thư bằng socket mới, tránh tái sử dụng phiên xóa item."""
+    last_error = None
+    for attempt in range(1, MAIL_RETRY_ATTEMPTS + 1):
+        mail_client = NSOMailClient(host, port)
+        try:
+            if not mail_client.connect():
+                raise ConnectionError("Không kết nối được phiên nhận thư")
+            if not mail_client.login(username, password):
+                raise ConnectionError("Không đăng nhập được phiên nhận thư")
+            try:
+                character_index = mail_client.characters.index(character_name)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Không tìm thấy nhân vật {character_name} trong phiên nhận thư"
+                ) from exc
+            if not mail_client.select_character(character_index):
+                raise ConnectionError(
+                    f"Không chọn được nhân vật {character_name} trong phiên nhận thư"
+                )
+            mail_client.receive_all_mail(
+                delete_after_claim=True,
+                include_read_mail_details=True,
+            )
+            return (
+                dict(mail_client.last_mail_stats),
+                list(mail_client.last_mail_errors),
+            )
+        except (ConnectionError, OSError, RuntimeError) as exc:
+            last_error = exc
+            if attempt < MAIL_RETRY_ATTEMPTS:
+                print(
+                    f"  ⚠️ Phiên thư lỗi ({exc}), thử lại sau "
+                    f"{MAIL_RETRY_DELAY:g} giây ({attempt + 1}/"
+                    f"{MAIL_RETRY_ATTEMPTS})"
+                )
+                time.sleep(MAIL_RETRY_DELAY)
+        finally:
+            mail_client.disconnect()
+    raise RuntimeError(f"Không nhận được thư sau {MAIL_RETRY_ATTEMPTS} lần: {last_error}")
 
 
 def delete_items_and_receive_mail(
@@ -373,7 +403,15 @@ def delete_items_and_receive_mail(
                 result["delete_failed"] += 1
                 print(f"    ❌ Xóa item thất bại id={item.template_id}")
 
-        mail_stats, mail_errors = receive_mail_on_item_session(client)
+        client.disconnect()
+        time.sleep(MAIL_SESSION_DELAY)
+        mail_stats, mail_errors = receive_mail_on_fresh_session(
+            host,
+            port,
+            username,
+            password,
+            character_name,
+        )
         result["mail"] = mail_stats
         result["mail_errors"] = mail_errors
         return result
