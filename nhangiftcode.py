@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Nhận mã quà tặng Okanechan cho nhân vật đầu tiên của mỗi tài khoản.
+"""Nhận mã quà tặng Okanechan cho nhân vật level cao nhất mỗi tài khoản.
 
 Luồng mỗi tài khoản:
-  1. Đăng nhập, chọn nhân vật đầu tiên và tải map.
+  1. Đăng nhập, chọn nhân vật level cao nhất và tải map.
   2. Về Làng Tone (map 22), mở menu Okanechan (NPC 24).
   3. Chọn ``Mã quà tặng`` và gửi GIFT_CODE qua hộp nhập command 92.
   4. Đăng nhập lại bằng client hành trang, chỉ xóa các item có ID nằm trong
@@ -15,8 +15,12 @@ Mã quà được đặt tại GIFT_CODE để dễ sửa, không nhận qua com
 import argparse
 import csv
 import importlib.util
+import os
 import sys
+import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from hoatdong import NSOMessage, NSOReader, read_accounts
@@ -46,14 +50,35 @@ GIFT_FAILED = "failed"
 GIFT_UNKNOWN = "unknown"
 
 _ITEM_MODULE = None
+_ITEM_TEMPLATE_LOCK = threading.RLock()
 
 
 def write_failed_accounts(path, failed_accounts):
     """Ghi danh sách tài khoản chưa nhận giftcode để chạy lại."""
-    with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(("username", "password", "reason"))
-        writer.writerows(failed_accounts)
+    path = Path(path)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8-sig",
+            newline="",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            writer = csv.writer(handle)
+            writer.writerow(("username", "password", "reason"))
+            writer.writerows(failed_accounts)
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def is_giftcode_mail(mail):
@@ -86,6 +111,20 @@ def load_item_delete_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+
+    original_parse_templates = module.NSOClient._parse_item_templates
+    original_parse_bag = module.NSOClient._parse_character_info_and_bag
+
+    def parse_item_templates(client, data):
+        with _ITEM_TEMPLATE_LOCK:
+            return original_parse_templates(client, data)
+
+    def parse_character_info_and_bag(client, reader):
+        with _ITEM_TEMPLATE_LOCK:
+            return original_parse_bag(client, reader)
+
+    module.NSOClient._parse_item_templates = parse_item_templates
+    module.NSOClient._parse_character_info_and_bag = parse_character_info_and_bag
     _ITEM_MODULE = module
     return module
 
@@ -211,7 +250,7 @@ class GiftCodeClient(OfflineExpClient):
 
 
 def gift_stage(host: str, port: int, username: str, password: str):
-    """Đăng nhập và xử lý mã quà; trả tên nhân vật đầu tiên để xử lý tiếp."""
+    """Đăng nhập và xử lý mã quà; trả tên nhân vật level cao nhất."""
     client = GiftCodeClient(host, port)
     result = {
         "ready": False,
@@ -227,9 +266,15 @@ def gift_stage(host: str, port: int, username: str, password: str):
             result["message"] = "Tài khoản không có nhân vật"
             return result
 
-        character_name = client.characters[0][0]
+        character_name, character_level, _ = max(
+            client.characters,
+            key=lambda character: character[1],
+        )
         result["character_name"] = character_name
-        print(f"  👤 Chỉ xử lý nhân vật đầu tiên: {character_name}")
+        print(
+            f"  👤 Chọn nhân vật level cao nhất: "
+            f"{character_name} (level {character_level})"
+        )
         if not client.select_character_and_load_map(character_name):
             result["message"] = "Không chọn được nhân vật hoặc tải map"
             return result
@@ -282,7 +327,7 @@ def delete_items_and_receive_mail(
     character_name: str,
     item_ids,
 ):
-    """Đăng nhập nhân vật đầu tiên, xóa item cấu hình rồi nhận thư."""
+    """Đăng nhập nhân vật đã chọn, xóa item cấu hình rồi nhận thư."""
     item_module = load_item_delete_module()
     client = item_module.NSOClient(host, port)
     result = {
@@ -337,20 +382,150 @@ def delete_items_and_receive_mail(
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        description="Nhận gift code trungthu cho nhân vật đầu tiên mỗi tài khoản"
+        description="Nhận gift code trungthu cho nhân vật level cao nhất mỗi tài khoản"
     )
     parser.add_argument("csv_file", nargs="?", type=Path, default=DEFAULT_CSV)
     parser.add_argument(
         "--max-accounts", type=int, default=0,
         help="Chỉ chạy N tài khoản đầu tiên; 0 là không giới hạn",
     )
+    parser.add_argument(
+        "--luong", type=int, default=1,
+        help="Số luồng xử lý song song; mặc định 1",
+    )
     return parser
+
+
+def process_account(account_number, total_accounts, username, password, item_ids):
+    """Xử lý một tài khoản; không ghi file dùng chung trong worker."""
+    totals = {
+        "accounts": 0,
+        "gift_success": 0,
+        "gift_failed": 0,
+        "gift_unknown": 0,
+        "matched": 0,
+        "deleted": 0,
+        "delete_failed": 0,
+        "mail_claimed": 0,
+        "mail_deleted": 0,
+        "mail_kept": 0,
+        "mail_bag_full": 0,
+        "failed": 0,
+    }
+    failures = []
+    failed_accounts = []
+
+    def record_failure(reason):
+        reason = str(reason).strip() or "Lỗi không rõ nguyên nhân"
+        failures.append(f"{username}: {reason}")
+        failed_accounts.append((username, password, reason))
+
+    print(f"\n[{account_number}/{total_accounts}] Tài khoản {username}")
+    gift = gift_stage(DEFAULT_HOST, DEFAULT_PORT, username, password)
+    if not gift["ready"]:
+        totals["failed"] += 1
+        record_failure(gift["message"])
+        return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+
+    totals["accounts"] += 1
+    totals[f"gift_{gift['status']}"] += 1
+
+    # Không bán item nếu server đã xác nhận mã thất bại. Đây là bước có
+    # thay đổi hành trang, chỉ nên chạy khi mã đã được nhận hoặc server
+    # chưa trả kết quả rõ ràng (trường hợp quà có thể đã vào thư).
+    if gift["status"] == GIFT_FAILED:
+        totals["failed"] += 1
+        record_failure(
+            f"Nhân vật {gift['character_name']}: {gift['message']}"
+        )
+        print("  ⏭️ Bỏ qua dọn item/nhận thư vì mã quà tặng thất bại")
+        return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+
+    # Gift code vừa gửi có thể còn đang được server ghi vào hộp thư;
+    # đồng thời server giới hạn đăng nhập lại quá nhanh.
+    print(f"  ⏳ Chờ {LOGIN_DELAY:g} giây trước khi dọn item/nhận thư...")
+    time.sleep(LOGIN_DELAY)
+    cleaned = delete_items_and_receive_mail(
+        DEFAULT_HOST,
+        DEFAULT_PORT,
+        username,
+        password,
+        gift["character_name"],
+        item_ids,
+    )
+    if cleaned["error"]:
+        totals["failed"] += 1
+        record_failure(
+            f"Nhân vật {gift['character_name']}: {cleaned['error']}"
+        )
+        return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
+
+    totals["matched"] += cleaned["matched"]
+    totals["deleted"] += cleaned["deleted"]
+    totals["delete_failed"] += cleaned["delete_failed"]
+    mail_stats = cleaned["mail"]
+    totals["mail_claimed"] += mail_stats.get("claimed", 0)
+    totals["mail_deleted"] += mail_stats.get("deleted", 0)
+    totals["mail_kept"] += mail_stats.get("kept", 0)
+    totals["mail_bag_full"] += mail_stats.get("bag_full", 0)
+    mail_results = mail_stats.get("mail_results", [])
+    gift_mail_records = [
+        mail for mail in mail_results if is_giftcode_mail(mail)
+    ]
+    gift_mail = next(
+        (
+            reward for reward in mail_stats.get("rewards", [])
+            if is_giftcode_mail(reward)
+        ),
+        None,
+    )
+    if gift["status"] == GIFT_UNKNOWN:
+        if gift_mail is not None:
+            totals["gift_unknown"] -= 1
+            totals["gift_success"] += 1
+            gift["status"] = GIFT_SUCCESS
+            print(
+                f"  ✅ Xác nhận mã quà qua thư id={gift_mail['mail_id']} "
+                "dù server không trả packet kết quả."
+            )
+        elif mail_stats.get("rewards"):
+            print(
+                "  ⚠️ Đã đọc được chi tiết thư nhưng chưa nhận diện được "
+                "đó là thư giftcode."
+            )
+
+    # Chỉ đưa vào file chạy lại khi riêng thư giftcode chưa nhận được.
+    # Các thư khác bị đầy rương/lỗi không làm tài khoản bị ghi lại.
+    not_received_gift_mails = [
+        mail for mail in gift_mail_records
+        if not mail.get("is_received") and not mail.get("claimed")
+    ]
+    gift_retry_reason = None
+    if not gift_mail_records:
+        gift_retry_reason = "không tìm thấy thư giftcode trong danh sách thư"
+    elif not_received_gift_mails:
+        mail_ids = ", ".join(
+            str(mail["mail_id"]) for mail in not_received_gift_mails
+        )
+        gift_retry_reason = (
+            f"chưa nhận được thư giftcode (mail_id={mail_ids})"
+        )
+    if gift_retry_reason:
+        totals["failed"] += 1
+        record_failure(
+            f"Nhân vật {gift['character_name']}: {gift_retry_reason}"
+        )
+
+    return {"totals": totals, "failures": failures, "failed_accounts": failed_accounts}
 
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.max_accounts < 0:
         print("❌ --max-accounts không được âm")
+        return 2
+    if args.luong < 1:
+        print("❌ --luong phải lớn hơn 0")
         return 2
     if not args.csv_file.is_file():
         print(f"❌ Không tìm thấy CSV: {args.csv_file}")
@@ -396,112 +571,34 @@ def main(argv=None):
     failures = []
     failed_accounts = []
 
-    def record_failure(username, password, reason):
-        reason = str(reason).strip() or "Lỗi không rõ nguyên nhân"
-        failures.append(f"{username}: {reason}")
-        failed_accounts.append((username, password, reason))
-
-    for account_number, (username, password) in enumerate(accounts, start=1):
-        print(f"\n[{account_number}/{len(accounts)}] Tài khoản {username}")
-        gift = gift_stage(DEFAULT_HOST, DEFAULT_PORT, username, password)
-        if not gift["ready"]:
-            totals["failed"] += 1
-            record_failure(username, password, gift["message"])
-            continue
-        totals["accounts"] += 1
-        totals[f"gift_{gift['status']}"] += 1
-
-        # Không bán item nếu server đã xác nhận mã thất bại. Đây là bước có
-        # thay đổi hành trang, chỉ nên chạy khi mã đã được nhận hoặc server
-        # chưa trả kết quả rõ ràng (trường hợp quà có thể đã vào thư).
-        if gift["status"] == GIFT_FAILED:
-            totals["failed"] += 1
-            record_failure(
+    with ThreadPoolExecutor(max_workers=args.luong, thread_name_prefix="giftcode") as executor:
+        jobs = {
+            executor.submit(
+                process_account,
+                account_number,
+                len(accounts),
                 username,
                 password,
-                f"Nhân vật {gift['character_name']}: {gift['message']}",
-            )
-            print("  ⏭️ Bỏ qua dọn item/nhận thư vì mã quà tặng thất bại")
-            continue
-
-        # Gift code vừa gửi có thể còn đang được server ghi vào hộp thư;
-        # đồng thời server giới hạn đăng nhập lại quá nhanh.
-        print(f"  ⏳ Chờ {LOGIN_DELAY:g} giây trước khi dọn item/nhận thư...")
-        time.sleep(LOGIN_DELAY)
-        cleaned = delete_items_and_receive_mail(
-            DEFAULT_HOST,
-            DEFAULT_PORT,
-            username,
-            password,
-            gift["character_name"],
-            item_ids,
-        )
-        if cleaned["error"]:
-            totals["failed"] += 1
-            record_failure(
-                username,
-                password,
-                f"Nhân vật {gift['character_name']}: {cleaned['error']}",
-            )
-            continue
-
-        totals["matched"] += cleaned["matched"]
-        totals["deleted"] += cleaned["deleted"]
-        totals["delete_failed"] += cleaned["delete_failed"]
-        mail_stats = cleaned["mail"]
-        totals["mail_claimed"] += mail_stats.get("claimed", 0)
-        totals["mail_deleted"] += mail_stats.get("deleted", 0)
-        totals["mail_kept"] += mail_stats.get("kept", 0)
-        totals["mail_bag_full"] += mail_stats.get("bag_full", 0)
-        mail_results = mail_stats.get("mail_results", [])
-        gift_mail_records = [
-            mail for mail in mail_results if is_giftcode_mail(mail)
-        ]
-        gift_mail = next(
-            (
-                reward for reward in mail_stats.get("rewards", [])
-                if is_giftcode_mail(reward)
-            ),
-            None,
-        )
-        if gift["status"] == GIFT_UNKNOWN:
-            if gift_mail is not None:
-                totals["gift_unknown"] -= 1
-                totals["gift_success"] += 1
-                gift["status"] = GIFT_SUCCESS
-                print(
-                    f"  ✅ Xác nhận mã quà qua thư id={gift_mail['mail_id']} "
-                    "dù server không trả packet kết quả."
-                )
-            elif mail_stats.get("rewards"):
-                print(
-                    "  ⚠️ Đã đọc được chi tiết thư nhưng chưa nhận diện được "
-                    "đó là thư giftcode."
-                )
-
-        # Chỉ đưa vào file chạy lại khi riêng thư giftcode chưa nhận được.
-        # Các thư khác bị đầy rương/lỗi không làm tài khoản bị ghi lại.
-        not_received_gift_mails = [
-            mail for mail in gift_mail_records
-            if not mail.get("is_received") and not mail.get("claimed")
-        ]
-        gift_retry_reason = None
-        if not gift_mail_records:
-            gift_retry_reason = "không tìm thấy thư giftcode trong danh sách thư"
-        elif not_received_gift_mails:
-            mail_ids = ", ".join(
-                str(mail["mail_id"]) for mail in not_received_gift_mails
-            )
-            gift_retry_reason = (
-                f"chưa nhận được thư giftcode (mail_id={mail_ids})"
-            )
-        if gift_retry_reason:
-            totals["failed"] += 1
-            record_failure(
-                username,
-                password,
-                f"Nhân vật {gift['character_name']}: {gift_retry_reason}",
-            )
+                item_ids,
+            ): (username, password)
+            for account_number, (username, password) in enumerate(accounts, start=1)
+        }
+        for future in as_completed(jobs):
+            username, password = jobs[future]
+            try:
+                result = future.result()
+            except Exception as exc:
+                # Worker lỗi ngoài dự kiến vẫn được ghi vào danh sách chạy lại.
+                result = {
+                    "totals": {key: 0 for key in totals},
+                    "failures": [f"{username}: Lỗi worker: {exc}"],
+                    "failed_accounts": [(username, password, f"Lỗi worker: {exc}")],
+                }
+                result["totals"]["failed"] = 1
+            for key in totals:
+                totals[key] += result["totals"].get(key, 0)
+            failures.extend(result["failures"])
+            failed_accounts.extend(result["failed_accounts"])
 
     try:
         write_failed_accounts(FAILED_ACCOUNTS_FILE, failed_accounts)
