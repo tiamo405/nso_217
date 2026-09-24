@@ -45,6 +45,8 @@ TARGET_MAP_ID = 22
 TARGET_ZONE_ID = 85
 DEFAULT_DROP_DELAY = 1.0 # Thời gian nghỉ giữa mỗi item bỏ ra đất (giây)
 USE_SETTLE_DELAY = 0.8 # Thời gian chờ server gửi packet quantity sau khi dùng item (giây)
+DEFAULT_DROP_RETRIES = 3
+DEFAULT_DROP_RETRY_DELAY = 1.0
 
 
 def _load_inventory_module():
@@ -551,12 +553,30 @@ def drop_unlocked_items(
             f"      🗑️ Bỏ ra đất slot={item.index:02d} | "
             f"id={item.template_id} | {item.name} | số lượng={item.quantity}"
         )
-        if client.throw_item(item.index, timeout=args.throw_timeout):
+        dropped = False
+        for attempt in range(1, args.drop_retries + 1):
+            if client.throw_item(item.index, timeout=args.throw_timeout):
+                dropped = True
+                break
+            if attempt < args.drop_retries:
+                print(
+                    f"      ⚠️ Bỏ slot={item.index:02d} thất bại, nghỉ "
+                    f"{args.drop_retry_delay:g} giây rồi thử lại "
+                    f"({attempt + 1}/{args.drop_retries})"
+                )
+                if args.drop_retry_delay > 0:
+                    time.sleep(args.drop_retry_delay)
+
+        if dropped:
             result.dropped += 1
             print(f"      ✅ Đã bỏ xuống đất slot={item.index:02d}")
         else:
             result.failed += 1
-            print(f"      ❌ Bỏ thất bại slot={item.index:02d}")
+            print(
+                f"      ❌ Bỏ thất bại slot={item.index:02d} sau "
+                f"{args.drop_retries} lần thử"
+            )
+            break
 
         if item_number < len(targets) - 1 and args.drop_delay > 0:
             time.sleep(args.drop_delay)
@@ -694,6 +714,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Thời gian nghỉ giữa mỗi item bỏ ra đất (mặc định: 1 giây)",
     )
     parser.add_argument(
+        "--drop-retries",
+        type=int,
+        default=DEFAULT_DROP_RETRIES,
+        help="Số lần thử bỏ mỗi slot (mặc định: 3)",
+    )
+    parser.add_argument(
+        "--drop-retry-delay",
+        type=float,
+        default=DEFAULT_DROP_RETRY_DELAY,
+        help="Thời gian nghỉ giữa các lần thử bỏ slot (mặc định: 1 giây)",
+    )
+    parser.add_argument(
         "--luong",
         type=int,
         default=1,
@@ -732,6 +764,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 2
     if args.drop_delay < 0:
         print("❌ drop-delay không được âm")
+        return 2
+    if args.drop_retries <= 0:
+        print("❌ drop-retries phải lớn hơn 0")
+        return 2
+    if args.drop_retry_delay < 0:
+        print("❌ drop-retry-delay không được âm")
         return 2
     if args.luong <= 0:
         print("❌ --luong phải lớn hơn 0")

@@ -45,8 +45,10 @@ MAIL_SESSION_DELAY = 1.5
 MAIL_RETRY_DELAY = 2.0
 MAIL_RETRY_ATTEMPTS = 2
 MAP_WAIT_TIMEOUT = 20.0
-MAP_RETRY_DELAY = 1.0
-MAP_RETRY_ATTEMPTS = 2
+GIFT_SESSION_ATTEMPTS = 3
+GIFT_RETRY_DELAY = 2.0
+MENU_TIMEOUT = 20.0
+THREAD_START_DELAY = 2.0
 GIFT_CODE = "trungthu"
 FAILED_ACCOUNTS_FILE = ROOT_DIR / "nhangiftcode-failed.csv"
 
@@ -139,21 +141,46 @@ def load_item_delete_module():
 class GiftCodeClient(OfflineExpClient):
     """Client map dùng để mở menu và gửi mã quà tặng."""
 
+    def send(self, message):
+        if self.sock is None or self.key is None:
+            raise ConnectionError("Socket giftcode đã đóng")
+        try:
+            return super().send(message)
+        except (AttributeError, ConnectionError, OSError):
+            self.disconnect()
+            raise
+
+    def select_character_and_load_map(self, character_name: str) -> bool:
+        try:
+            return super().select_character_and_load_map(character_name)
+        except (AttributeError, ConnectionError, OSError) as exc:
+            print(f"    ⚠️ Chọn nhân vật/map lỗi: {exc}")
+            self.disconnect()
+            return False
+
     def _wait_for_map_change(self, old_map_id: int, timeout: float = MAP_WAIT_TIMEOUT):
         return super()._wait_for_map_change(old_map_id, timeout)
 
     def move_to_tone(self, max_steps: int = 20) -> bool:
-        for attempt in range(1, MAP_RETRY_ATTEMPTS + 1):
-            if super().move_to_tone(max_steps):
-                return True
-            if attempt < MAP_RETRY_ATTEMPTS:
-                print(
-                    f"    ⚠️ Chuyển map về Làng Tone chưa xong, "
-                    f"thử lại sau {MAP_RETRY_DELAY:g} giây "
-                    f"({attempt + 1}/{MAP_RETRY_ATTEMPTS})"
-                )
-                time.sleep(MAP_RETRY_DELAY)
-        return False
+        try:
+            return super().move_to_tone(max_steps)
+        except (AttributeError, ConnectionError, OSError) as exc:
+            print(f"    ⚠️ Chuyển map lỗi: {exc}")
+            self.disconnect()
+            return False
+
+    def request_okanechan_menu(self, timeout: float = MENU_TIMEOUT):
+        try:
+            return super().request_okanechan_menu(timeout)
+        except (AttributeError, ConnectionError, OSError) as exc:
+            self.disconnect()
+            return None, str(exc)
+
+    def receive(self, timeout: float = 10):
+        command, data = super().receive(timeout)
+        if command is None and self.last_receive_error not in (None, "timeout"):
+            self.disconnect()
+        return command, data
 
     def _classify_gift_message(self, message: str):
         normalized = normalize_text(message)
@@ -189,7 +216,7 @@ class GiftCodeClient(OfflineExpClient):
             return GIFT_SUCCESS
         return GIFT_UNKNOWN
 
-    def _wait_gift_code_input(self, timeout: float = 12.0):
+    def _wait_gift_code_input(self, timeout: float = MENU_TIMEOUT):
         """Chờ command 92 và trả về (prompt, textbox_id)."""
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -209,7 +236,7 @@ class GiftCodeClient(OfflineExpClient):
                 return None, None, f"Hộp nhập mã không hợp lệ: {exc}"
         return None, None, "timeout chờ hộp nhập mã quà tặng"
 
-    def _wait_gift_result(self, timeout: float = 3.0):
+    def _wait_gift_result(self, timeout: float = 8.0):
         """Đọc thông báo server sau khi gửi mã.
 
         Server dùng -26 cho lỗi và -24 cho thông báo như ``Bạn có thư mới``;
@@ -280,9 +307,25 @@ class GiftCodeClient(OfflineExpClient):
         return self.submit_gift_code(target_index)
 
 
+def _retryable_gift_error(message: str) -> bool:
+    normalized = normalize_text(message)
+    return any(term in normalized for term in (
+        "timeout",
+        "socket",
+        "winerror",
+        "khong ket noi",
+        "khong chon duoc nhan vat",
+        "tai map",
+        "chuyen map",
+        "khong ve duoc lang tone",
+        "khong tim thay okanechan",
+        "menu okanechan",
+        "hop nhap ma",
+    ))
+
+
 def gift_stage(host: str, port: int, username: str, password: str):
-    """Đăng nhập và xử lý mã quà; trả tên nhân vật level cao nhất."""
-    client = GiftCodeClient(host, port)
+    """Đăng nhập và xử lý mã quà; mỗi lần retry dùng socket mới."""
     result = {
         "ready": False,
         "character_name": None,
@@ -290,54 +333,78 @@ def gift_stage(host: str, port: int, username: str, password: str):
         "message": "",
         "already_received": False,
     }
-    try:
-        if not client.connect() or not client.login(username, password):
-            result["message"] = "Không kết nối/đăng nhập được"
-            return result
-        if not client.characters:
-            result["message"] = "Tài khoản không có nhân vật"
-            return result
-
-        character_name, character_level, _ = max(
-            client.characters,
-            key=lambda character: character[1],
-        )
-        result["character_name"] = character_name
-        print(
-            f"  👤 Chọn nhân vật level cao nhất: "
-            f"{character_name} (level {character_level})"
-        )
-        if not client.select_character_and_load_map(character_name):
-            result["message"] = "Không chọn được nhân vật hoặc tải map"
-            return result
-        result["ready"] = True
-        client.drain(1.0)
-        status, message = client.receive_gift_code()
-        result["status"] = status
-        result["message"] = message
-        result["already_received"] = (
-            status == GIFT_SUCCESS
-            and any(
-                term in normalize_text(message)
-                for term in (
-                    "moi nguoi chi duoc su dung 1 lan",
-                    "chi duoc su dung 1 lan",
+    for attempt in range(1, GIFT_SESSION_ATTEMPTS + 1):
+        client = GiftCodeClient(host, port)
+        result["ready"] = False
+        try:
+            if not client.connect():
+                result["message"] = "Không kết nối được server giftcode"
+            elif not client.login(username, password):
+                result["message"] = "Không kết nối/đăng nhập được"
+            elif not client.characters:
+                result["message"] = "Tài khoản không có nhân vật"
+            else:
+                character_name, character_level, _ = max(
+                    client.characters,
+                    key=lambda character: character[1],
                 )
+                result["character_name"] = character_name
+                print(
+                    f"  👤 Chọn nhân vật level cao nhất: "
+                    f"{character_name} (level {character_level})"
+                )
+                if not client.select_character_and_load_map(character_name):
+                    result["message"] = (
+                        "Không chọn được nhân vật hoặc tải map"
+                    )
+                else:
+                    result["ready"] = True
+                    client.drain(1.0)
+                    status, message = client.receive_gift_code()
+                    result["status"] = status
+                    result["message"] = message
+                    result["already_received"] = (
+                        status == GIFT_SUCCESS
+                        and any(
+                            term in normalize_text(message)
+                            for term in (
+                                "moi nguoi chi duoc su dung 1 lan",
+                                "chi duoc su dung 1 lan",
+                            )
+                        )
+                    )
+                    prefix = {
+                        GIFT_SUCCESS: "✅ Mã quà tặng thành công",
+                        GIFT_FAILED: "❌ Mã quà tặng thất bại",
+                        GIFT_UNKNOWN: (
+                            "⚠️ Server không trả kết quả mã quà, "
+                            "sẽ xác minh qua thư"
+                        ),
+                    }[status]
+                    print(f"    {prefix}: {message}")
+                    if status in (GIFT_SUCCESS, GIFT_UNKNOWN):
+                        return result
+                    if not _retryable_gift_error(message):
+                        return result
+        except (AttributeError, ConnectionError, OSError) as exc:
+            result["ready"] = False
+            result["message"] = str(exc)
+            print(f"    ❌ Lỗi kết nối giftcode: {exc}")
+        except Exception as exc:
+            result["ready"] = False
+            result["message"] = str(exc)
+            print(f"    ❌ Lỗi luồng mã quà: {exc}")
+        finally:
+            client.disconnect()
+
+        if attempt < GIFT_SESSION_ATTEMPTS:
+            print(
+                f"  ⚠️ Phiên giftcode lỗi, mở kết nối mới sau "
+                f"{GIFT_RETRY_DELAY:g} giây "
+                f"({attempt + 1}/{GIFT_SESSION_ATTEMPTS})"
             )
-        )
-        prefix = {
-            GIFT_SUCCESS: "✅ Mã quà tặng thành công",
-            GIFT_FAILED: "❌ Mã quà tặng thất bại",
-            GIFT_UNKNOWN: "⚠️ Server không trả kết quả mã quà, sẽ xác minh qua thư",
-        }[status]
-        print(f"    {prefix}: {message}")
-        return result
-    except Exception as exc:
-        result["message"] = str(exc)
-        print(f"    ❌ Lỗi luồng mã quà: {exc}")
-        return result
-    finally:
-        client.disconnect()
+            time.sleep(GIFT_RETRY_DELAY)
+    return result
 
 
 def receive_mail_on_fresh_session(
@@ -370,11 +437,13 @@ def receive_mail_on_fresh_session(
                 delete_after_claim=True,
                 include_read_mail_details=True,
             )
+            if not mail_client.connected or mail_client.sock is None:
+                raise ConnectionError("Socket phiên nhận thư đã đóng")
             return (
                 dict(mail_client.last_mail_stats),
                 list(mail_client.last_mail_errors),
             )
-        except (ConnectionError, OSError, RuntimeError) as exc:
+        except (AttributeError, ConnectionError, OSError, RuntimeError) as exc:
             last_error = exc
             if attempt < MAIL_RETRY_ATTEMPTS:
                 print(
@@ -469,6 +538,12 @@ def build_parser():
     parser.add_argument(
         "--luong", type=int, default=1,
         help="Số luồng xử lý song song; mặc định 1",
+    )
+    parser.add_argument(
+        "--thread-delay",
+        type=float,
+        default=THREAD_START_DELAY,
+        help="Khoảng cách khởi động account giữa các luồng (mặc định: 2 giây)",
     )
     return parser
 
@@ -604,6 +679,9 @@ def main(argv=None):
     if args.luong < 1:
         print("❌ --luong phải lớn hơn 0")
         return 2
+    if args.thread_delay < 0:
+        print("❌ --thread-delay không được âm")
+        return 2
     if not args.csv_file.is_file():
         print(f"❌ Không tìm thấy CSV: {args.csv_file}")
         return 2
@@ -648,15 +726,32 @@ def main(argv=None):
     failures = []
     failed_accounts = []
 
+    start_time = time.monotonic()
+
+    def run_account(account_number, username, password):
+        target_time = start_time + (account_number - 1) * args.thread_delay
+        wait = target_time - time.monotonic()
+        if wait > 0:
+            print(
+                f"[{account_number}/{len(accounts)}] Chờ {wait:.1f} giây "
+                "trước khi khởi động luồng"
+            )
+            time.sleep(wait)
+        return process_account(
+            account_number,
+            len(accounts),
+            username,
+            password,
+            item_ids,
+        )
+
     with ThreadPoolExecutor(max_workers=args.luong, thread_name_prefix="giftcode") as executor:
         jobs = {
             executor.submit(
-                process_account,
+                run_account,
                 account_number,
-                len(accounts),
                 username,
                 password,
-                item_ids,
             ): (username, password)
             for account_number, (username, password) in enumerate(accounts, start=1)
         }

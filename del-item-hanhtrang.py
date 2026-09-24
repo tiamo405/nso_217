@@ -304,9 +304,15 @@ class NSOClient:
         self.key_write_pos = 0
 
     def send(self, message: NSOMessage) -> None:
+        if self.sock is None or not self.connected or self.key is None:
+            raise ConnectionError("Socket hành trang đã đóng")
         raw_pkt = message.packet()
         encrypted = bytes(self._encrypt_byte(b) for b in raw_pkt)
-        self.sock.sendall(encrypted)
+        try:
+            self.sock.sendall(encrypted)
+        except (AttributeError, ConnectionError, OSError):
+            self.disconnect()
+            raise
 
     def receive(self, timeout: Optional[float] = None) -> Tuple[Optional[int], Optional[bytes]]:
         self.sock.settimeout(timeout or self.timeout)

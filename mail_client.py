@@ -247,10 +247,16 @@ class NSOMailClient:
 
     def send_raw(self, msg: NSOMessage):
         """Encrypt và gửi packet"""
+        if self.sock is None or not self.connected or self.key is None:
+            raise ConnectionError("Socket mail đã đóng")
         pkt = msg.to_raw_packet()
         if self.key:
             pkt = bytes(self._enc(b) for b in pkt)
-        self.sock.sendall(pkt)
+        try:
+            self.sock.sendall(pkt)
+        except (AttributeError, ConnectionError, OSError):
+            self.disconnect()
+            raise
 
     def recv_packet(self, timeout=10):
         """Giữ frame dở dang qua timeout để không lệch luồng XOR/TCP."""
