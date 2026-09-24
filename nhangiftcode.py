@@ -45,6 +45,7 @@ GIFT_CODE = "trungthu"
 FAILED_ACCOUNTS_FILE = ROOT_DIR / "nhangiftcode-failed.csv"
 
 CMD_TEXT_BOX = 92
+CMD_SERVER_INFO = -24
 GIFT_SUCCESS = "success"
 GIFT_FAILED = "failed"
 GIFT_UNKNOWN = "unknown"
@@ -139,6 +140,7 @@ class GiftCodeClient(OfflineExpClient):
             "khong hop le",
             "da duoc su dung",
             "da su dung",
+            "chi duoc su dung",
             "het han",
             "sai ma",
             "that bai",
@@ -154,6 +156,8 @@ class GiftCodeClient(OfflineExpClient):
         )
         if any(term in normalized for term in failure_terms):
             return GIFT_FAILED
+        if "thu moi" in normalized:
+            return GIFT_SUCCESS
         if any(term in normalized for term in success_terms):
             return GIFT_SUCCESS
         return GIFT_UNKNOWN
@@ -181,9 +185,9 @@ class GiftCodeClient(OfflineExpClient):
     def _wait_gift_result(self, timeout: float = 3.0):
         """Đọc thông báo server sau khi gửi mã.
 
-        Một số server chỉ gửi thông báo -26, một số còn gửi packet menu/map
-        xen kẽ. Nếu hết thời gian mà không có thông báo rõ ràng, trả unknown
-        để vẫn tiếp tục dọn item và kiểm tra hộp thư ở bước sau.
+        Server dùng -26 cho lỗi và -24 cho thông báo như ``Bạn có thư mới``;
+        packet menu/map có thể xen kẽ. Nếu hết thời gian không rõ kết quả,
+        trả unknown để vẫn kiểm tra hộp thư ở bước sau.
         """
         deadline = time.time() + timeout
         messages = []
@@ -191,10 +195,10 @@ class GiftCodeClient(OfflineExpClient):
             command, data = self.receive(max(0.2, deadline - time.time()))
             if command is None:
                 break
-            if command == self.CMD_SERVER_ERROR and data:
+            if command in (self.CMD_SERVER_ERROR, CMD_SERVER_INFO) and data:
                 message = self._read_server_error(data)
                 messages.append(message)
-                print(f"    ↩ Server mã quà: {message}")
+                print(f"    ↩ Server mã quà cmd={command}: {message}")
                 status = self._classify_gift_message(message)
                 if status != GIFT_UNKNOWN:
                     return status, message
