@@ -13,23 +13,38 @@ Quy tắc trạng thái:
   - level < 42:  [Đang tắt] Không nhận kinh nghiệm
 
 Cách dùng :
-python nhanexp.py [--host HOST] [--port PORT] [--character-index INDEX | --character-name NAME]
-  --host HOST: địa chỉ server (mặc định Nsm1.ninjasm.net)
+python nhanexp_and_doiyenquaxu.py [--host HOST] [--port PORT] [--character-index INDEX | --character-name NAME]
+  --host HOST: địa chỉ server (mặc định Nsm4.ninjasm.net)
   --port PORT: cổng server (mặc định 14444)
   --character-index INDEX: chỉ xử lý nhân vật index này (0-based)
   --character-name NAME: chỉ xử lý nhân vật đúng tên này (ổn định hơn index)
-  --max-characters N: chỉ xử lý tối đa N nhân vật đầu tiên (mặc định 0 = không giới hạn)
+  --max-characters N: xử lý tối đa N nhân vật, sort lv giảm dần (mặc định 1; 0 = tất cả)
+  --max-accounts N: chỉ chạy tối đa N tài khoản đầu tiên (mặc định 0 = không giới hạn)
   --dry-run: chỉ xem level/trạng thái mong muốn, không di chuyển hay bấm NPC
   --login-delay SECONDS: chờ sau khi đăng nhập trước nhân vật đầu tiên (mặc định 11.0)
   --character-delay SECONDS: chờ sau khi xử lý mỗi nhân vật (mặc định 11.0)
   --account-delay SECONDS: chờ sau khi xử lý mỗi tài khoản (mặc định 11.0)
+  --nhan-exp: bật nhận EXP Offline (mặc định)
+  --bo-qua-exp: bỏ qua toàn bộ bước EXP Offline, chỉ đổi Yên qua Xu
+  --luong N: số tài khoản chạy song song (mặc định 1)
+  --retry-attempts N: số lần retry sau lần chạy đầu cho mỗi tài khoản (mặc định 2)
+  --retry-delay SECONDS: chờ giữa các lần retry tài khoản (mặc định 5.0)
+  --failed-csv PATH: lưu tài khoản còn lỗi sau retry; mặc định thêm -failed vào tên CSV input
+  --log-dir PATH: thư mục log riêng từng luồng; mặc định log/nhanexp_and_doiyenquaxu
+  --log-file PATH: ghi log; mặc định thêm .log vào tên CSV input
 Lưu ý:
   - Chỉ nhận EXP Offline miễn phí 0 Lượng = 100% (option 0)
+  - Mỗi tài khoản xử lý số nhân vật theo --max-characters, sort level giảm dần
+  - Bỏ qua nhân vật có level < 20
 """
 
 
 import argparse
 import csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
+import tempfile
+import threading
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -41,24 +56,95 @@ from map_graph import MAP_GRAPH, find_map_path
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-nhanexp.csv"
-DEFAULT_HOST = "Nsm1.ninjasm.net"
+# DEFAULT_HOST = "Nsm4.ninjasm.net" # sv4 k có nhận exp nên thêm biến --bo-qua-exp để bỏ qua bước nhận exp
+# server TK
+DEFAULT_HOST = "Nsotk1.nsotk.online"
 DEFAULT_PORT = 14444
-DEFAULT_DELAY = 11.0
+DEFAULT_DELAY = 3.0
+DEFAULT_RETRY_ATTEMPTS = 2
+DEFAULT_RETRY_DELAY = 5.0
+EXCHANGE_RESPONSE_TIMEOUT = 20.0
+EXCHANGE_REQUEST_ATTEMPTS = 2
+OFFLINE_EXP_RESPONSE_TIMEOUT = 20.0
+OFFLINE_EXP_REQUEST_ATTEMPTS = 2
 TONE_MAP_ID = 22
 TAJIMA_NPC_ID = 12
 OKANECHAN_NPC_ID = 24
 STATUS_MENU_ID = 6
 OFFLINE_EXP_MENU_ID = 7
 FREE_EXP_OPTION_ID = 0
+MIN_CHARACTER_LEVEL = 20
 VILLAGE_MAPS = {10, 17, 22, 32, 38, 43, 48}
 VILLAGE_MENU_IDS = {10: 1, 17: 2, 22: 3, 32: 4, 38: 5, 43: 6, 48: 7}
 # Okanechan có thể có ở làng hoặc trường tùy phiên bản/server. Ưu tiên
 # kiểm tra map hiện tại, sau đó lần lượt tìm ở các map làng/trường.
 OKANECHAN_SEARCH_MAPS = (22, 10, 17, 32, 38, 43, 48, 1, 27, 72)
 EXCHANGE_RECEIVED = "received"
+EXCHANGE_ALREADY_RECEIVED = "already_received"
+EXCHANGE_SKIPPED = "skipped"
 EXCHANGE_NOT_RECEIVED = "not_received"
 EXCHANGE_UNKNOWN = "unknown"
 EXCHANGE_NOT_ATTEMPTED = "not_attempted"
+EXP_RECEIVED = "received"
+EXP_NO_DATA = "no_data"
+EXP_UNKNOWN = "unknown"
+EXP_NOT_ATTEMPTED = "not_attempted"
+
+# Giữ log từng dòng nguyên vẹn khi nhiều worker cùng ghi stdout.
+_ORIGINAL_PRINT = print
+_PRINT_LOCK = threading.Lock()
+_LOG_HANDLE = None
+_THREAD_LOG = threading.local()
+
+
+def configure_log(path: Path):
+    global _LOG_HANDLE
+    if _LOG_HANDLE is not None:
+        _LOG_HANDLE.close()
+    _LOG_HANDLE = Path(path).open("w", encoding="utf-8", buffering=1)
+
+
+def close_log():
+    global _LOG_HANDLE
+    if _LOG_HANDLE is not None:
+        _LOG_HANDLE.close()
+        _LOG_HANDLE = None
+
+
+def configure_lane_log(path: Path):
+    _THREAD_LOG.handle = Path(path).open(
+        "w", encoding="utf-8", buffering=1,
+    )
+
+
+def close_lane_log():
+    handle = getattr(_THREAD_LOG, "handle", None)
+    if handle is not None:
+        handle.close()
+        _THREAD_LOG.handle = None
+
+
+def clear_log_files(path: Path, main_log: Path):
+    path = Path(path)
+    targets = set(path.glob("luong*.log"))
+    targets.add(path / "main.log")
+    if main_log.parent.resolve() == path.resolve():
+        targets.add(main_log)
+    for target in targets:
+        if target.is_file() or target.is_symlink():
+            target.unlink()
+
+
+def log(*args, **kwargs):
+    kwargs.setdefault("flush", True)
+    with _PRINT_LOCK:
+        _ORIGINAL_PRINT(*args, **kwargs)
+        handle = getattr(_THREAD_LOG, "handle", None) or _LOG_HANDLE
+        if handle is not None:
+            file_kwargs = dict(kwargs)
+            file_kwargs["file"] = handle
+            _ORIGINAL_PRINT(*args, **file_kwargs)
+
 
 @dataclass
 class Waypoint:
@@ -96,14 +182,6 @@ class MapState:
         ))
 
 
-@dataclass
-class FailureRecord:
-    username: str
-    character_index: int | None
-    character_name: str | None
-    reason: str
-
-
 def normalize_text(value: str) -> str:
     value = unicodedata.normalize("NFD", value.casefold())
     value = "".join(char for char in value if unicodedata.category(char) != "Mn")
@@ -133,15 +211,17 @@ class OfflineExpClient(NSOActivityClient):
     CMD_MENU = 29
     CMD_DYNAMIC_MENU = 63
     CMD_OPEN_MENU = 40
+    CMD_SERVER_INFO = -24
 
     def __init__(self, host: str, port: int):
         super().__init__(host, port)
         self.map_state = MapState()
         self.exchange_status = EXCHANGE_NOT_ATTEMPTED
+        self.exp_status = EXP_NOT_ATTEMPTED
 
     def select_character_and_load_map(self, character_name: str) -> bool:
         if not any(name == character_name for name, _, _ in self.characters):
-            print(f"    ❌ Không còn thấy nhân vật {character_name} sau khi đăng nhập lại")
+            log(f"    ❌ Không còn thấy nhân vật {character_name} sau khi đăng nhập lại")
             return False
         message = NSOMessage(self.CMD_NOT_MAP)
         message.write_byte(self.CMD_SELECT_CHAR)
@@ -157,7 +237,7 @@ class OfflineExpClient(NSOActivityClient):
             if command is None:
                 break
             if command == self.CMD_SERVER_ERROR:
-                print(f"    ❌ Chọn nhân vật: {self._read_server_error(data)}")
+                log(f"    ❌ Chọn nhân vật: {self._read_server_error(data)}")
                 return False
             if command == self.CMD_SUB_COMMAND and data:
                 game_ready = NSOReader(data).read_byte() == -127 or game_ready
@@ -165,7 +245,7 @@ class OfflineExpClient(NSOActivityClient):
                 self.map_state = self._parse_map(data)
             if game_ready and self.map_state.map_id >= 0:
                 return True
-        print("    ❌ Timeout khi chờ thông tin nhân vật/map")
+        log("    ❌ Timeout khi chờ thông tin nhân vật/map")
         return False
 
     @staticmethod
@@ -260,7 +340,7 @@ class OfflineExpClient(NSOActivityClient):
             if command is None:
                 break
             if command == self.CMD_SERVER_ERROR:
-                print(f"    ↪ Chuyển map: {self._read_server_error(data)}")
+                log(f"    ↪ Chuyển map: {self._read_server_error(data)}")
                 continue
             if command == self.CMD_MAP_LOAD and data:
                 self.map_state = self._parse_map(data)
@@ -275,12 +355,12 @@ class OfflineExpClient(NSOActivityClient):
                 return True
             path = find_map_path(current, target_map_id)
             if not path or len(path) < 2:
-                print(f"    ❌ Không tìm được đường map {current} → {target_map_id}")
+                log(f"    ❌ Không tìm được đường map {current} → {target_map_id}")
                 return False
             next_map = path[1]
             neighbors = MAP_GRAPH.get(current, [])
             if next_map not in neighbors:
-                print(f"    ❌ Graph thiếu cạnh map {current} → {next_map}")
+                log(f"    ❌ Graph thiếu cạnh map {current} → {next_map}")
                 return False
 
             # Các cạnh trực tiếp giữa làng trong TileMap.fieldAK không phải
@@ -290,31 +370,31 @@ class OfflineExpClient(NSOActivityClient):
                 npc = self.map_state.find_npc(7)
                 menu_id = VILLAGE_MENU_IDS.get(next_map)
                 if npc is None or menu_id is None:
-                    print(f"    ❌ Không tìm thấy NPC chuyển làng cho {current} → {next_map}")
+                    log(f"    ❌ Không tìm thấy NPC chuyển làng cho {current} → {next_map}")
                     return False
-                print(f"    🗺️ Làng {current} → {next_map} qua NPC 7, menu {menu_id}")
+                log(f"    🗺️ Làng {current} → {next_map} qua NPC 7, menu {menu_id}")
                 self.move_character(npc.x, self.map_state.char_y)
                 time.sleep(0.5)
                 self._choose_npc_menu(7, menu_id)
                 if not self._wait_for_map_change(current):
-                    print(f"    ❌ Timeout chuyển làng {current} → {next_map}")
+                    log(f"    ❌ Timeout chuyển làng {current} → {next_map}")
                     return False
                 continue
 
             waypoint_index = neighbors.index(next_map)
             if waypoint_index >= len(self.map_state.waypoints):
-                print(f"    ❌ Map {current}: cần waypoint {waypoint_index}, "
+                log(f"    ❌ Map {current}: cần waypoint {waypoint_index}, "
                       f"server chỉ trả {len(self.map_state.waypoints)}")
                 return False
             waypoint = self.map_state.waypoints[waypoint_index]
             x = (waypoint.min_x + waypoint.max_x) // 2
             y = waypoint.max_y
-            print(f"    🗺️ Map {current} → {next_map} qua waypoint {waypoint_index}")
+            log(f"    🗺️ Map {current} → {next_map} qua waypoint {waypoint_index}")
             self.move_character(x, y)
             time.sleep(0.35)
             self._request_change_map()
             if not self._wait_for_map_change(current):
-                print(f"    ❌ Timeout chuyển map {current} → {next_map}")
+                log(f"    ❌ Timeout chuyển map {current} → {next_map}")
                 return False
         return self.map_state.map_id == target_map_id
 
@@ -374,7 +454,7 @@ class OfflineExpClient(NSOActivityClient):
         state, message = self._wait_status_result()
         if state is None:
             return False, message
-        print(f"    🔁 {message}")
+        log(f"    🔁 {message}")
         if state == desired_enabled:
             return True, message
 
@@ -383,34 +463,48 @@ class OfflineExpClient(NSOActivityClient):
         state, message = self._wait_status_result()
         if state is None:
             return False, message
-        print(f"    🔁 {message}")
+        log(f"    🔁 {message}")
         if state != desired_enabled:
             expected = "bật" if desired_enabled else "tắt"
             return False, f"Server chưa chuyển trạng thái về {expected}"
         return True, message
 
-    def request_offline_exp_options(self, timeout: float = 15):
-        self.choose_tajima_menu(OFFLINE_EXP_MENU_ID)
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            command, data = self.receive(max(0.2, deadline - time.time()))
-            if command is None:
-                break
-            if command == self.CMD_SERVER_ERROR and data:
-                text = self._read_server_error(data)
-                return None, text
-            if command == self.CMD_DYNAMIC_MENU and data:
-                reader = NSOReader(data)
-                options = []
-                try:
-                    while reader.remaining():
-                        options.append(reader.read_utf())
-                except Exception as exc:
-                    return None, f"Menu Exp Offline không hợp lệ: {exc}"
-                return options, None
+    def request_offline_exp_options(
+        self,
+        timeout: float = OFFLINE_EXP_RESPONSE_TIMEOUT,
+    ):
+        for attempt in range(OFFLINE_EXP_REQUEST_ATTEMPTS):
+            if attempt:
+                log(
+                    f"    🔁 Retry riêng menu Exp Offline "
+                    f"({attempt + 1}/{OFFLINE_EXP_REQUEST_ATTEMPTS})"
+                )
+            self.choose_tajima_menu(OFFLINE_EXP_MENU_ID)
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                command, data = self.receive(
+                    min(0.75, max(0.2, deadline - time.time()))
+                )
+                if command is None:
+                    if self.last_receive_error == "timeout":
+                        continue
+                    break
+                if command == self.CMD_SERVER_ERROR and data:
+                    text = self._read_server_error(data)
+                    return None, text
+                if command == self.CMD_DYNAMIC_MENU and data:
+                    reader = NSOReader(data)
+                    options = []
+                    try:
+                        while reader.remaining():
+                            options.append(reader.read_utf())
+                    except Exception as exc:
+                        return None, f"Menu Exp Offline không hợp lệ: {exc}"
+                    return options, None
         return None, "timeout chờ menu Exp Offline"
 
     def claim_free_offline_exp(self, timeout: float = 12):
+        self.exp_status = EXP_NOT_ATTEMPTED
         self.choose_tajima_menu(FREE_EXP_OPTION_ID)
         deadline = time.time() + timeout
         messages = []
@@ -428,7 +522,8 @@ class OfflineExpClient(NSOActivityClient):
                     exp_updated = True
                     break
         if exp_updated:
-            return True, "server đã cập nhật EXP nhân vật"
+            self.exp_status = EXP_RECEIVED
+            return self.exp_status, "server đã cập nhật EXP nhân vật"
         if messages:
             text = " | ".join(messages)
             normalized = normalize_text(text)
@@ -436,8 +531,12 @@ class OfflineExpClient(NSOActivityClient):
             no_exp = any(value in normalized for value in (
                 "khong co", "chua co", "exp luu tru", "kinh nghiem luu tru",
             ))
-            return received_exp or no_exp, text
-        return False, "timeout chờ kết quả nhận Exp Offline"
+            self.exp_status = EXP_RECEIVED if received_exp else (
+                EXP_NO_DATA if no_exp else EXP_UNKNOWN
+            )
+            return self.exp_status, text
+        self.exp_status = EXP_UNKNOWN
+        return self.exp_status, "timeout chờ kết quả nhận Exp Offline"
 
     @staticmethod
     def _read_utf_list(data: bytes):
@@ -466,10 +565,11 @@ class OfflineExpClient(NSOActivityClient):
                     return None, f"Menu Okanechan không hợp lệ: {exc}"
         return None, "timeout chờ menu Okanechan"
 
-    def _wait_for_exchange_response(self, timeout: float = 8):
+    def _wait_for_exchange_response(self, timeout: float = EXCHANGE_RESPONSE_TIMEOUT):
         deadline = time.time() + timeout
         response_commands = {
             self.CMD_SERVER_ERROR,
+            self.CMD_SERVER_INFO,
             -7,
             38,
             39,
@@ -481,14 +581,34 @@ class OfflineExpClient(NSOActivityClient):
                 min(0.75, max(0.2, deadline - time.time()))
             )
             if command is None:
+                # Socket timeout means no packet in this poll, not final failure.
+                if self.last_receive_error == "timeout":
+                    continue
                 break
             if command in response_commands:
                 return command, data or b""
         return None, None
 
     def _classify_exchange_response(self, command: int, data: bytes):
-        if command == self.CMD_SERVER_ERROR:
-            return EXCHANGE_NOT_RECEIVED, self._read_server_error(data)
+        if command in (self.CMD_SERVER_ERROR, self.CMD_SERVER_INFO):
+            message = self._read_server_error(data)
+            if self._already_exchanged_this_week(message):
+                return EXCHANGE_ALREADY_RECEIVED, message
+            if self._insufficient_activity(message):
+                return EXCHANGE_SKIPPED, message
+            if command == self.CMD_SERVER_INFO:
+                normalized = normalize_text(message)
+                if any(term in normalized for term in (
+                    "can toi thieu", "toi thieu", "khong du", "khong the",
+                    "that bai", "khong nhan duoc", "khong nhan",
+                )):
+                    return EXCHANGE_NOT_RECEIVED, message
+                if any(term in normalized for term in (
+                    "thanh cong", "nhan duoc", "doi yen sang xu",
+                )):
+                    return EXCHANGE_RECEIVED, message
+                return EXCHANGE_UNKNOWN, message
+            return EXCHANGE_NOT_RECEIVED, message
         if command == -7:
             if len(data) == 4:
                 delta = NSOReader(data).read_int()
@@ -497,12 +617,28 @@ class OfflineExpClient(NSOActivityClient):
         if command == 38:
             reader = NSOReader(data)
             reader.read_short()  # NPC ID
-            return EXCHANGE_NOT_RECEIVED, reader.read_utf()
+            message = reader.read_utf()
+            if self._already_exchanged_this_week(message):
+                return EXCHANGE_ALREADY_RECEIVED, message
+            return EXCHANGE_NOT_RECEIVED, message
         if command == 39:
             reader = NSOReader(data)
             reader.read_short()  # NPC ID
             return EXCHANGE_UNKNOWN, reader.read_utf()
         return EXCHANGE_UNKNOWN, f"server trả command {command}"
+
+    @staticmethod
+    def _insufficient_activity(message: str) -> bool:
+        normalized = normalize_text(message)
+        return "diem hoat dong" in normalized and "toi thieu" in normalized
+
+    @staticmethod
+    def _already_exchanged_this_week(message: str) -> bool:
+        normalized = normalize_text(message)
+        return (
+            "da doi yen sang xu" in normalized
+            and "tuan nay" in normalized
+        )
 
     def exchange_yen_to_xu(self):
         """Bấm Đổi Yên qua Xu và trả kết quả nhận/không nhận rõ ràng."""
@@ -527,22 +663,36 @@ class OfflineExpClient(NSOActivityClient):
         if target_index is None:
             return False, "Không tìm thấy nút 'Đổi Yên qua Xu'"
 
-        self._choose_npc_menu(OKANECHAN_NPC_ID, target_index)
-        command, data = self._wait_for_exchange_response()
-        if command is None:
-            self.exchange_status = EXCHANGE_UNKNOWN
-            return True, "⚠️ Đổi Yên qua Xu: CHƯA XÁC ĐỊNH (server chưa trả kết quả)"
+        status = EXCHANGE_UNKNOWN
+        message = "server chưa trả kết quả"
+        for attempt in range(EXCHANGE_REQUEST_ATTEMPTS):
+            if attempt:
+                log(
+                    f"    🔁 Retry riêng request đổi Xu "
+                    f"({attempt + 1}/{EXCHANGE_REQUEST_ATTEMPTS})"
+                )
+            self._choose_npc_menu(OKANECHAN_NPC_ID, target_index)
+            command, data = self._wait_for_exchange_response()
+            if command is None:
+                status, message = EXCHANGE_UNKNOWN, "server chưa trả kết quả"
+            else:
+                try:
+                    status, message = self._classify_exchange_response(command, data)
+                except Exception as exc:
+                    status, message = EXCHANGE_UNKNOWN, f"không đọc được response: {exc}"
+            if status != EXCHANGE_UNKNOWN:
+                break
 
-        try:
-            status, message = self._classify_exchange_response(command, data)
-        except Exception as exc:
-            status, message = EXCHANGE_UNKNOWN, f"không đọc được response: {exc}"
         self.exchange_status = status
         if status == EXCHANGE_RECEIVED:
             return True, f"✅ Đổi Yên qua Xu: ĐÃ NHẬN ĐƯỢC ({message})"
+        if status == EXCHANGE_ALREADY_RECEIVED:
+            return True, f"ℹ️ Đổi Yên qua Xu: ĐÃ XỬ LÝ TRONG TUẦN ({message})"
+        if status == EXCHANGE_SKIPPED:
+            return True, f"⏭️ Đổi Yên qua Xu: BỎ QUA — {message}"
         if status == EXCHANGE_NOT_RECEIVED:
-            return True, f"❌ Đổi Yên qua Xu: KHÔNG NHẬN ĐƯỢC — {message}"
-        return True, f"⚠️ Đổi Yên qua Xu: CHƯA XÁC ĐỊNH — {message}"
+            return True, f"⏭️ Đổi Yên qua Xu: BỎ QUA — NPC phản hồi: {message}"
+        return False, f"⚠️ Đổi Yên qua Xu: CHƯA XÁC ĐỊNH — {message}"
 
 
 def build_parser():
@@ -556,12 +706,50 @@ def build_parser():
                         help="Chỉ xử lý index nhân vật này; mặc định xử lý tất cả")
     parser.add_argument("--character-name",
                         help="Chỉ xử lý đúng tên nhân vật này (ổn định hơn index)")
-    parser.add_argument("--max-characters", type=int, default=0)
+    parser.add_argument(
+        "--max-characters", type=int, default=1,
+        help="Số nhân vật xử lý theo lv giảm dần (mặc định 1; 0 = tất cả)",
+    )
+    parser.add_argument("--max-accounts", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true",
                         help="Chỉ xem level/trạng thái mong muốn, không di chuyển hay bấm NPC")
     parser.add_argument("--login-delay", type=float, default=DEFAULT_DELAY)
     parser.add_argument("--character-delay", type=float, default=DEFAULT_DELAY)
     parser.add_argument("--account-delay", type=float, default=DEFAULT_DELAY)
+    exp_group = parser.add_mutually_exclusive_group()
+    exp_group.add_argument(
+        "--nhan-exp", dest="receive_exp", action="store_true",
+        help="Bật nhận EXP Offline (mặc định)",
+    )
+    exp_group.add_argument(
+        "--bo-qua-exp", dest="receive_exp", action="store_false",
+        help="Bỏ qua EXP Offline, chỉ xử lý đổi Yên qua Xu",
+    )
+    parser.set_defaults(receive_exp=True)
+    parser.add_argument(
+        "--luong", type=int, default=1,
+        help="Số tài khoản chạy song song (mặc định 1)",
+    )
+    parser.add_argument(
+        "--retry-attempts", type=int, default=DEFAULT_RETRY_ATTEMPTS,
+        help="Số lần retry sau lần chạy đầu cho mỗi tài khoản",
+    )
+    parser.add_argument(
+        "--retry-delay", type=float, default=DEFAULT_RETRY_DELAY,
+        help="Số giây chờ giữa các lần retry tài khoản",
+    )
+    parser.add_argument(
+        "--failed-csv", type=Path,
+        help="File CSV lưu tài khoản còn lỗi sau retry; mặc định thêm '-failed' vào tên input",
+    )
+    parser.add_argument(
+        "--log-dir", type=Path,
+        help="Thư mục log riêng từng luồng; mặc định log/nhanexp_and_doiyenquaxu",
+    )
+    parser.add_argument(
+        "--log-file", type=Path,
+        help="File log; mặc định thêm '.log' vào tên input",
+    )
     return parser
 
 
@@ -575,174 +763,509 @@ def discover_characters(host, port, username, password):
         client.disconnect()
 
 
-def process_character(client: OfflineExpClient, level: int):
-    print(f"    Map hiện tại: {client.map_state.map_id} ({client.map_state.name})")
-    if not client.move_to_tone():
-        return False, "Không về được Làng Tone"
-    print("    ✅ Đã ở Làng Tone")
-    # Làng đông người phát liên tục packet di chuyển/đánh quái. Xả backlog
-    # trước khi gửi menu để response Tajima không bị chậm sau hàng trăm packet.
-    client.drain(2.0)
-    if not client.open_tajima():
-        return False, "Không tìm thấy Tajima (NPC 12) tại Làng Tone"
+def process_character(
+    client: OfflineExpClient,
+    level: int,
+    receive_exp: bool = True,
+):
+    log(f"    Map hiện tại: {client.map_state.map_id} ({client.map_state.name})")
+    if receive_exp:
+        if not client.move_to_tone():
+            return False, "Không về được Làng Tone"
+        log("    ✅ Đã ở Làng Tone")
+        # Làng đông người phát liên tục packet di chuyển/đánh quái. Xả backlog
+        # trước khi gửi menu để response Tajima không bị chậm sau hàng trăm packet.
+        client.drain(2.0)
+        if not client.open_tajima():
+            return False, "Không tìm thấy Tajima (NPC 12) tại Làng Tone"
 
-    desired_enabled = level >= 42
-    expected = "[Đang bật]" if desired_enabled else "[Đang tắt]"
-    print(f"    Trạng thái yêu cầu theo level {level}: {expected} Không nhận kinh nghiệm")
-    ok, result = client.ensure_no_exp_state(desired_enabled)
-    if not ok:
-        return False, result
-    print(f"    ✅ Trạng thái đã đúng: {expected}")
+        desired_enabled = level >= 42
+        expected = "[Đang bật]" if desired_enabled else "[Đang tắt]"
+        log(f"    Trạng thái yêu cầu theo level {level}: {expected} Không nhận kinh nghiệm")
+        ok, result = client.ensure_no_exp_state(desired_enabled)
+        if not ok:
+            return False, result
+        log(f"    ✅ Trạng thái đã đúng: {expected}")
 
-    # Giao dịch lại với Tajima như luồng mobile trước khi mở Exp Offline.
-    if not client.open_tajima():
-        return False, "Không mở lại được Tajima"
-    options, error = client.request_offline_exp_options()
-    if options is None:
-        return False, error
-    print(f"    Menu Exp Offline: {options}")
-    if not options:
-        return False, "Menu Exp Offline rỗng"
-    free_option = normalize_text(options[FREE_EXP_OPTION_ID])
-    if "0 luong" not in free_option or "100%" not in free_option:
-        return False, f"Từ chối nhận: option 0 ngoài dự kiến ({options[0]})"
+        # Giao dịch lại với Tajima như luồng mobile trước khi mở Exp Offline.
+        if not client.open_tajima():
+            return False, "Không mở lại được Tajima"
+        options, error = client.request_offline_exp_options()
+        if options is None:
+            return False, error
+        log(f"    Menu Exp Offline: {options}")
+        if not options:
+            return False, "Menu Exp Offline rỗng"
+        free_option = normalize_text(options[FREE_EXP_OPTION_ID])
+        if "0 luong" not in free_option or "100%" not in free_option:
+            return False, f"Từ chối nhận: option 0 ngoài dự kiến ({options[0]})"
 
-    ok, result = client.claim_free_offline_exp()
-    if not ok:
-        return False, result
-    print(f"    🎁 Đã chọn 0 Lượng = 100%: {result}")
+        exp_status, result = client.claim_free_offline_exp()
+        if exp_status not in (EXP_RECEIVED, EXP_NO_DATA):
+            return False, f"Nhận Exp Offline thất bại: {result}"
+        exp_label = "đã nhận EXP" if exp_status == EXP_RECEIVED else "không có EXP lưu trữ"
+        log(f"    🎁 Đã chọn 0 Lượng = 100% ({exp_label}): {result}")
+    else:
+        client.exp_status = EXP_NOT_ATTEMPTED
+        log("    ⏭️ Bỏ qua nhận EXP Offline theo cấu hình")
 
-    print("    🔎 Tìm NPC Okanechan để đổi Yên qua Xu...")
+    log("    🔎 Tìm NPC Okanechan để đổi Yên qua Xu...")
     if not client.move_to_okanechan():
         return False, "Không tìm thấy/không đi được tới Okanechan (NPC 24)"
-    print(f"    ✅ Đã tới Okanechan tại map {client.map_state.map_id}")
-    # Bỏ packet di chuyển còn tồn trước khi mở menu, để log bên dưới chỉ tập
-    # trung vào menu và response của thao tác Đổi Yên qua Xu.
+    log(f"    ✅ Đã tới Okanechan tại map {client.map_state.map_id}")
+    # Bỏ packet di chuyển còn tồn trước khi mở menu.
     client.drain(1.0)
     ok, result = client.exchange_yen_to_xu()
     if not ok:
         return False, result
-    print(f"    {result}")
+    log(f"    {result}")
     return True, result
 
 
-def main():
-    args = build_parser().parse_args()
-    if not args.csv_file.is_file():
-        print(f"❌ Không tìm thấy CSV: {args.csv_file}")
-        return 2
-    if args.character_index is not None and args.character_index < 0:
-        print("❌ --character-index không được âm")
-        return 2
-    if args.character_index is not None and args.character_name:
-        print("❌ Chỉ dùng một trong --character-index hoặc --character-name")
-        return 2
-    if args.max_characters < 0:
-        print("❌ --max-characters không được âm")
-        return 2
-    try:
-        accounts = read_accounts(args.csv_file)
-    except Exception as exc:
-        print(f"❌ Không đọc được CSV: {exc}")
-        return 2
-
-    print(f"NSO NHẬN EXP OFFLINE: {len(accounts)} tài khoản; "
-          f"mode={'CHỈ XEM' if args.dry_run else 'CẬP NHẬT + NHẬN EXP'}")
-    totals = {
-        "characters": 0,
-        "success": 0,
-        "failed": 0,
+def _new_stats():
+    return {
+        "attempts": 0,
+        "character_attempts": 0,
+        "character_success": 0,
+        "character_failed": 0,
+        "exp_received": 0,
+        "exp_no_data": 0,
+        "exp_unknown": 0,
+        "exp_not_attempted": 0,
         "exchange_received": 0,
+        "exchange_already_received": 0,
+        "exchange_skipped": 0,
         "exchange_not_received": 0,
         "exchange_unknown": 0,
         "exchange_not_attempted": 0,
     }
-    failures = []
 
-    for account_number, (username, password) in enumerate(accounts, start=1):
-        print(f"\n[{account_number}/{len(accounts)}] Tài khoản {username}")
-        characters = discover_characters(args.host, args.port, username, password)
-        if not characters:
-            totals["failed"] += 1
-            failures.append(FailureRecord(username, None, None,
-                                          "Không đăng nhập/lấy được danh sách nhân vật"))
-            continue
-        indexes = list(range(len(characters)))
-        if args.character_name:
-            indexes = [index for index, character in enumerate(characters)
-                       if character[0] == args.character_name]
-        elif args.character_index is not None:
-            indexes = ([args.character_index]
-                       if args.character_index < len(characters) else [])
-        if args.max_characters:
-            indexes = indexes[:args.max_characters]
-        if not indexes:
-            totals["failed"] += 1
-            failures.append(FailureRecord(username, args.character_index, None,
-                                          (f"Không có nhân vật phù hợp"
-                                           f" ({args.character_name or args.character_index})")))
-            continue
 
-        if args.dry_run:
-            for index in indexes:
-                name, level, school = characters[index]
-                target = "BẬT" if level >= 42 else "TẮT"
-                print(f"  [{index}] {name} lv{level} ({school}) → cần {target}")
-                totals["characters"] += 1
-                totals["exchange_not_attempted"] += 1
-            continue
+def _add_stats(target, source):
+    for key, value in source.items():
+        target[key] += value
 
-        print(f"  ⏳ Chờ {max(0, args.login_delay):g} giây trước nhân vật đầu tiên...")
-        time.sleep(max(0, args.login_delay))
-        for position, index in enumerate(indexes):
-            name, level, school = characters[index]
-            print(f"  [{index}] {name} lv{level} ({school})")
-            client = OfflineExpClient(args.host, args.port)
-            character_started = False
+
+def write_failed_accounts(path: Path, failed_accounts):
+    """Ghi lại account còn lỗi; file có thể dùng trực tiếp làm input lần sau."""
+    path = Path(path)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8-sig",
+            newline="",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            writer = csv.writer(handle)
+            writer.writerow(("username", "password", "reason"))
+            writer.writerows(failed_accounts)
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path is not None:
             try:
-                if not client.connect() or not client.login(username, password):
-                    raise RuntimeError("Không kết nối/đăng nhập lại được")
-                if not client.select_character_and_load_map(name):
-                    raise RuntimeError("Không chọn được nhân vật hoặc tải map")
-                totals["characters"] += 1
-                character_started = True
-                ok, reason = process_character(client, level)
-                if ok:
-                    totals["success"] += 1
-                else:
-                    totals["failed"] += 1
-                    failures.append(FailureRecord(username, index, name, reason))
-                    print(f"    ❌ {reason}")
-            except Exception as exc:
-                totals["failed"] += 1
-                failures.append(FailureRecord(username, index, name, str(exc)))
-                print(f"    ❌ Lỗi xử lý: {exc}")
-            finally:
-                if character_started:
-                    totals[f"exchange_{client.exchange_status}"] += 1
-                client.disconnect()
-            if position + 1 < len(indexes):
-                print(f"  ⏳ Chờ {max(0, args.character_delay):g} giây trước nhân vật tiếp...")
-                time.sleep(max(0, args.character_delay))
-        if account_number < len(accounts):
-            time.sleep(max(0, args.account_delay))
+                temporary_path.unlink()
+            except OSError:
+                pass
+        raise
 
-    print("\nTỔNG KẾT XỬ LÝ: "
-          f"nhân vật={totals['characters']}, hoàn tất luồng={totals['success']}, "
-          f"lỗi={totals['failed']}")
-    print("TỔNG KẾT ĐỔI YÊN QUA XU: "
-          f"đã nhận={totals['exchange_received']}, "
-          f"không nhận={totals['exchange_not_received']}, "
-          f"chưa xác định={totals['exchange_unknown']}, "
-          f"chưa thực hiện={totals['exchange_not_attempted']}")
-    if failures:
-        print(f"\nDANH SÁCH CẦN CHẠY LẠI ({len(failures)}):")
-        for failure in failures:
-            character = ("chưa xác định" if failure.character_index is None else
-                         f"[{failure.character_index}] {failure.character_name or 'không rõ'}")
-            print(f"  - tài khoản={failure.username} | nhân vật={character} | "
-                  f"lỗi={failure.reason}")
-    return 0 if totals["failed"] == 0 else 1
+
+def _select_character_indexes(characters, args):
+    indexes = list(range(len(characters)))
+    if args.character_name:
+        indexes = [
+            index for index, character in enumerate(characters)
+            if character[0] == args.character_name
+        ]
+    elif args.character_index is not None:
+        indexes = ([args.character_index]
+                   if args.character_index < len(characters) else [])
+    indexes.sort(key=lambda index: (-characters[index][1], index))
+    if args.max_characters:
+        indexes = indexes[:args.max_characters]
+    return indexes
+
+
+def process_account_attempt(
+    args,
+    username: str,
+    password: str,
+):
+    """Chạy một lượt đầy đủ; caller quyết định retry toàn tài khoản."""
+    stats = _new_stats()
+    characters = discover_characters(args.host, args.port, username, password)
+    if not characters:
+        return {
+            "ok": False,
+            "reason": "Không đăng nhập/lấy được danh sách nhân vật",
+            "stats": stats,
+        }
+
+    selected_indexes = _select_character_indexes(characters, args)
+    if not selected_indexes:
+        return {
+            "ok": False,
+            "reason": "Không có nhân vật phù hợp bộ lọc",
+            "stats": stats,
+        }
+    log(
+        "  🎯 Nhân vật xét theo lv: "
+        + ", ".join(
+            f"[{index}] {characters[index][0]} lv{characters[index][1]}"
+            for index in selected_indexes
+        )
+    )
+    indexes = []
+    for index in selected_indexes:
+        name, level, _ = characters[index]
+        if level < MIN_CHARACTER_LEVEL:
+            log(
+                f"  ⏭️ Bỏ qua [{index}] {name} lv{level} "
+                f"(< lv{MIN_CHARACTER_LEVEL})"
+            )
+            continue
+        indexes.append(index)
+    if not indexes:
+        log(f"  ⏭️ Không có nhân vật đạt lv{MIN_CHARACTER_LEVEL} để xử lý")
+        return {
+            "ok": True,
+            "reason": "Không có nhân vật đủ level",
+            "stats": stats,
+            "skipped": False,
+        }
+    log(
+        "  ✅ Nhân vật nhận EXP + đổi Xu: "
+        + ", ".join(
+            f"[{index}] {characters[index][0]} lv{characters[index][1]}"
+            for index in indexes
+        )
+    )
+
+    if args.dry_run:
+        for index in indexes:
+            name, level, school = characters[index]
+            target = "BẬT" if level >= 42 else "TẮT"
+            log(f"  [{index}] {name} lv{level} ({school}) → cần {target} → đổi Xu")
+            stats["character_attempts"] += 1
+            stats["character_success"] += 1
+            stats["exp_not_attempted"] += 1
+            stats["exchange_not_attempted"] += 1
+        return {"ok": True, "reason": "dry-run", "stats": stats}
+
+    log(f"  ⏳ Chờ {max(0, args.login_delay):g} giây trước nhân vật đầu tiên...")
+    time.sleep(max(0, args.login_delay))
+    failures = []
+    skipped = False
+    for position, index in enumerate(indexes):
+        name, level, school = characters[index]
+        log(f"  [{index}] {name} lv{level} ({school})")
+        stats["character_attempts"] += 1
+        client = OfflineExpClient(args.host, args.port)
+        character_started = False
+        try:
+            if not client.connect() or not client.login(username, password):
+                raise RuntimeError("Không kết nối/đăng nhập lại được")
+            if not client.select_character_and_load_map(name):
+                raise RuntimeError("Không chọn được nhân vật hoặc tải map")
+            character_started = True
+            ok, reason = process_character(
+                client,
+                level,
+                getattr(args, "receive_exp", True),
+            )
+            skipped = skipped or client.exchange_status == EXCHANGE_SKIPPED
+            if ok:
+                stats["character_success"] += 1
+            else:
+                stats["character_failed"] += 1
+                failures.append(f"[{index}] {name}: {reason}")
+                log(f"    ❌ {reason}")
+        except Exception as exc:
+            stats["character_failed"] += 1
+            failures.append(f"[{index}] {name}: {exc}")
+            log(f"    ❌ Lỗi xử lý: {exc}")
+        finally:
+            if character_started:
+                stats[f"exp_{client.exp_status}"] += 1
+                stats[f"exchange_{client.exchange_status}"] += 1
+            client.disconnect()
+        if position + 1 < len(indexes):
+            log(f"  ⏳ Chờ {max(0, args.character_delay):g} giây trước nhân vật tiếp...")
+            time.sleep(max(0, args.character_delay))
+
+    return {
+        "ok": not failures,
+        "reason": "; ".join(failures),
+        "stats": stats,
+        "skipped": skipped,
+    }
+
+
+def _failed_account_result(username, password, reason):
+    totals = {
+        "success": 0,
+        "failed": 1,
+        "accounts_retried": 0,
+        "retries": 0,
+        **_new_stats(),
+    }
+    return {
+        "totals": totals,
+        "failures": [f"tài khoản={username} | lỗi={reason}"],
+        "failed_accounts": [(username, password, reason)],
+        "skipped_accounts": [],
+    }
+
+
+def process_account(args, account_number, total_accounts, username, password):
+    totals = {
+        "success": 0,
+        "failed": 0,
+        "accounts_retried": 0,
+        "retries": 0,
+        **_new_stats(),
+    }
+    failures = []
+    failed_accounts = []
+    skipped_accounts = []
+
+    log(f"\n[{account_number}/{total_accounts}] Tài khoản {username}", flush=True)
+    last_result = None
+    for attempt in range(args.retry_attempts + 1):
+        if attempt:
+            if attempt == 1:
+                totals["accounts_retried"] += 1
+            totals["retries"] += 1
+            log(
+                f"  🔁 Retry toàn tài khoản sau {args.retry_delay:g} giây "
+                f"({attempt}/{args.retry_attempts})",
+                flush=True,
+            )
+            time.sleep(max(0, args.retry_delay))
+
+        totals["attempts"] += 1
+        try:
+            result = process_account_attempt(args, username, password)
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "reason": f"Lỗi ngoài dự kiến: {exc}",
+                "stats": _new_stats(),
+            }
+        _add_stats(totals, result["stats"])
+        last_result = result
+        if result.get("skipped"):
+            skipped_accounts.append((account_number, username))
+
+        if result["ok"]:
+            totals["success"] += 1
+            if attempt:
+                log(f"  ✅ Tài khoản thành công sau retry lần {attempt}", flush=True)
+            break
+        if attempt < args.retry_attempts:
+            log(f"  ⚠️ {result['reason']}; sẽ retry toàn tài khoản", flush=True)
+
+    if not last_result["ok"]:
+        totals["failed"] += 1
+        reason = (
+            f"hết {args.retry_attempts} lần retry: "
+            f"{last_result['reason']}"
+        )
+        failures.append(f"tài khoản={username} | lỗi={reason}")
+        failed_accounts.append((username, password, reason))
+
+    return {
+        "totals": totals,
+        "failures": failures,
+        "failed_accounts": failed_accounts,
+        "skipped_accounts": skipped_accounts,
+    }
+
+
+def run_account_lane(args, lane_accounts, total_accounts, lane_number, log_dir):
+    results = []
+    configure_lane_log(log_dir / f"luong{lane_number}.log")
+    try:
+        for position, (account_number, username, password) in enumerate(lane_accounts):
+            try:
+                log(f"  🔐 Session account {username}")
+                result = process_account(
+                    args,
+                    account_number,
+                    total_accounts,
+                    username,
+                    password,
+                )
+            except Exception as exc:
+                result = _failed_account_result(
+                    username,
+                    password,
+                    f"Worker tài khoản lỗi: {exc}",
+                )
+            results.append(result)
+            if (not args.dry_run and position + 1 < len(lane_accounts)
+                    and args.account_delay > 0):
+                time.sleep(args.account_delay)
+        return results
+    finally:
+        close_lane_log()
+
+
+def main():
+    args = build_parser().parse_args()
+    failed_csv = args.failed_csv or args.csv_file.with_name(
+        f"{args.csv_file.stem}-failed{args.csv_file.suffix}"
+    )
+    log_dir = args.log_dir or ROOT_DIR / "log" / "nhanexp_and_doiyenquaxu"
+    log_file = args.log_file or log_dir / "main.log"
+    if not args.csv_file.is_file():
+        log(f"❌ Không tìm thấy CSV: {args.csv_file}")
+        return 2
+    if args.character_index is not None and args.character_index < 0:
+        log("❌ --character-index không được âm")
+        return 2
+    if args.character_index is not None and args.character_name:
+        log("❌ Chỉ dùng một trong --character-index hoặc --character-name")
+        return 2
+    if args.max_characters < 0:
+        log("❌ --max-characters không được âm")
+        return 2
+    if args.max_accounts < 0:
+        log("❌ --max-accounts không được âm")
+        return 2
+    if args.retry_attempts < 0:
+        log("❌ --retry-attempts không được âm")
+        return 2
+    if args.retry_delay < 0:
+        log("❌ --retry-delay không được âm")
+        return 2
+    if args.luong < 1:
+        log("❌ --luong phải lớn hơn hoặc bằng 1")
+        return 2
+    if failed_csv.resolve() == args.csv_file.resolve():
+        log("❌ --failed-csv không được trùng file CSV đầu vào")
+        return 2
+    if log_file.resolve() in (args.csv_file.resolve(), failed_csv.resolve()):
+        log("❌ --log-file không được trùng CSV đầu vào hoặc file lỗi")
+        return 2
+    try:
+        accounts = read_accounts(args.csv_file)
+    except Exception as exc:
+        log(f"❌ Không đọc được CSV: {exc}")
+        return 2
+    if args.max_accounts:
+        accounts = accounts[:args.max_accounts]
+    if not accounts:
+        log("❌ CSV không có tài khoản hợp lệ")
+        return 2
+
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True) # nếu chưa có thì tạo thư mục log, nếu có thư mục log thì không báo lỗi
+        clear_log_files(log_dir, log_file)
+        configure_log(log_file)
+    except OSError as exc:
+        log(f"❌ Không mở được file log: {exc}")
+        return 2
+
+    if args.dry_run:
+        mode = "CHỈ XEM"
+    elif args.receive_exp:
+        mode = "CẬP NHẬT + NHẬN EXP"
+    else:
+        mode = "CẬP NHẬT + BỎ QUA EXP"
+    log(f"NSO NHẬN EXP OFFLINE: {len(accounts)} tài khoản; "
+          f"mode={mode}; exp={'ON' if args.receive_exp else 'OFF'}; "
+          f"retry={args.retry_attempts}; luồng yêu cầu={args.luong}; "
+          f"log-dir={log_dir}; log={log_file}")
+    totals = {
+        "accounts": len(accounts),
+        "success": 0,
+        "failed": 0,
+        "accounts_retried": 0,
+        "retries": 0,
+        **_new_stats(),
+    }
+    failures = []
+    failed_accounts = []
+    skipped_accounts = []
+
+    effective_workers = min(args.luong, len(accounts))
+    if effective_workers < args.luong:
+        log(
+            f"⚠️ Chỉ có {len(accounts)} tài khoản; dùng "
+            f"{effective_workers} luồng hiệu dụng",
+            flush=True,
+        )
+    log(f"🚀 Bắt đầu chạy song song {effective_workers} luồng", flush=True)
+    lanes = [[] for _ in range(effective_workers)]
+    for account_number, (username, password) in enumerate(accounts, start=1):
+        lanes[(account_number - 1) % effective_workers].append(
+            (account_number, username, password)
+        )
+
+    with ThreadPoolExecutor(
+        max_workers=effective_workers,
+        thread_name_prefix="nhanexp",
+    ) as executor:
+        jobs = {
+            executor.submit(
+                run_account_lane,
+                args,
+                lane,
+                len(accounts),
+                lane_number,
+                log_dir,
+            ): lane
+            for lane_number, lane in enumerate(lanes, start=1)
+        }
+        for future in as_completed(jobs):
+            try:
+                results = future.result()
+            except Exception as exc:
+                log(f"❌ Worker lỗi: {exc}", flush=True)
+                for _, username, password in jobs[future]:
+                    result = _failed_account_result(
+                        username,
+                        password,
+                        f"Worker lỗi: {exc}",
+                    )
+                    _add_stats(totals, result["totals"])
+                    failures.extend(result["failures"])
+                    failed_accounts.extend(result["failed_accounts"])
+                    skipped_accounts.extend(result["skipped_accounts"])
+                continue
+            for result in results:
+                _add_stats(totals, result["totals"])
+                failures.extend(result["failures"])
+                failed_accounts.extend(result["failed_accounts"])
+                skipped_accounts.extend(result["skipped_accounts"])
+
+    write_error = None
+    try:
+        write_failed_accounts(failed_csv, failed_accounts)
+        log(
+            f"\n🔁 Đã ghi {len(failed_accounts)} tài khoản còn lỗi vào "
+            f"{failed_csv}"
+        )
+    except OSError as exc:
+        write_error = exc
+        log(f"\n⚠️ Không ghi được file tài khoản lỗi: {exc}")
+
+    log(
+        f"\nTỔNG KẾT: tổng acc={totals['accounts']}, "
+        f"thành công={totals['success']}, "
+        f"thất bại thật sự={totals['failed']}"
+    )
+    log(f"\nDANH SÁCH ACC BỎ QUA DO THIẾU ĐIỂM ({len(skipped_accounts)}):")
+    for account_number, username in sorted(skipped_accounts):
+        log(f"  - [{account_number}] {username}")
+    exit_code = 0 if totals["failed"] == 0 and write_error is None else 1
+    close_log()
+    return exit_code
 
 
 if __name__ == "__main__":
