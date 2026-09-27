@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Dọn item, dùng item cấu hình rồi bỏ vật phẩm không khóa ra đất.
+"""Bỏ vật phẩm không khóa ra đất.
 
 Luồng xử lý mỗi tài khoản:
   1. Đăng nhập và chọn nhân vật đầu tiên.
-  2. Bán/xóa item có ID trong ``delllllllllll.txt``.
-  3. Đi tới map 22, chuyển sang khu 80.
-  4. Sử dụng từng item trong ``item_open.txt`` bằng command ``11``.
-  5. Sau mỗi lần sử dụng, bỏ item không khóa ra đất rồi mở item kế tiếp.
+  2. Đi tới map 69, chuyển sang khu 22.
+  3. Bỏ toàn bộ item không khóa ra đất.
 
 Lưu ý quan trọng:
   - ``-12`` là lệnh bỏ item ra đất, không phải lệnh bán.
-  - ``14`` là lệnh bán/xóa item trong ``delllllllllll.txt``.
   - Một lần throw theo slot sẽ bỏ cả chồng item ở slot đó, giống client Java.
 
 Mặc định chạy trên ``account-bodo.csv``:
 
-    python3 bo-do-ra-dat.py
+    python3 bo_do_ra_dat.py
+
+Vật phẩm có ID trong ``item_vinh_vien.txt`` chỉ được bỏ nếu server báo
+``isExpires=False``. Vật phẩm có hạn trong danh sách này sẽ được giữ lại.
 
 Có thể xem trước danh sách item mà không bỏ item:
 
-    python3 bo-do-ra-dat.py --dry-run
+    python3 bo_do_ra_dat.py --dry-run
 """
 
 import argparse
@@ -28,7 +28,7 @@ import importlib.util
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -37,14 +37,12 @@ from nhanexp_and_doiyenquaxu import MapState, OfflineExpClient, read_accounts
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-bodo.csv"
-DEFAULT_SELL_ITEMS_FILE = ROOT_DIR / "delllllllllll.txt"
-DEFAULT_OPEN_ITEMS_FILE = ROOT_DIR / "item_open.txt"
+DEFAULT_PERMANENT_ITEMS_FILE = ROOT_DIR / "item_vinh_vien.txt"
 DEFAULT_HOST = "Nsm1.ninjasm.net"
 DEFAULT_PORT = 14444
-TARGET_MAP_ID = 22
-TARGET_ZONE_ID = 85
+TARGET_MAP_ID = 69
+TARGET_ZONE_ID = 22
 DEFAULT_DROP_DELAY = 1.0 # Thời gian nghỉ giữa mỗi item bỏ ra đất (giây)
-USE_SETTLE_DELAY = 0.8 # Thời gian chờ server gửi packet quantity sau khi dùng item (giây)
 DEFAULT_DROP_RETRIES = 3
 DEFAULT_DROP_RETRY_DELAY = 1.0
 
@@ -81,14 +79,10 @@ _INVENTORY_MODULE.NSOClient._parse_item_templates = _threadsafe_parse_item_templ
 @dataclass
 class DropResult:
     processed: bool = False
-    sell_matched: int = 0
-    sold: int = 0
-    sell_failed: int = 0
-    open_matched: int = 0
-    used: int = 0
-    use_failed: int = 0
     matched: int = 0
     dropped: int = 0
+    skipped_expiring: int = 0
+    permanent_dropped: dict[int, tuple[str, int, int]] = field(default_factory=dict)
     failed: int = 0
 
 
@@ -96,7 +90,6 @@ class DropItemClient(_INVENTORY_MODULE.NSOClient):
     """Client dùng parser hành trang chuẩn và bổ sung thao tác map."""
 
     CMD_DROP_ITEM = -12
-    CMD_USE_ITEM = 11
     CMD_BAG_ITEM_ADD = 8
     CMD_BAG_ITEM_STACK_ADD = 9
     CMD_BAG_ITEM_QUANTITY = 7
@@ -311,229 +304,59 @@ class DropItemClient(_INVENTORY_MODULE.NSOClient):
             return (slot, consumed)
         return None
 
-    def use_item_once(self, slot: int, timeout: float = 8.0) -> bool:
-        """Dùng đúng một item trong stack và chờ server cập nhật quantity."""
-        item = self.bag[slot] if 0 <= slot < len(self.bag) else None
-        if item is None:
-            return False
-        previous_quantity = item.quantity
-        message = _INVENTORY_MODULE.NSOMessage(self.CMD_USE_ITEM)
-        message.write_byte(slot)
-        self.send(message)
-
-        deadline = time.time() + timeout
-        use_ack = False
-        consumed = False
-        settle_deadline = None
-        while time.time() < deadline:
-            wait_deadline = settle_deadline or deadline
-            command, data = self.receive(
-                min(0.2, max(0.05, wait_deadline - time.time()))
-            )
-            if command is None:
-                if settle_deadline and time.time() >= settle_deadline:
-                    break
-                continue
-            if command == self.CMD_SERVER_ERROR and data:
-                print(
-                    f"      ❌ Server từ chối dùng slot {slot}: "
-                    f"{self._read_server_error(data)}"
-                )
-                return False
-            if not data:
-                continue
-            if command == self.CMD_USE_ITEM:
-                reader = _INVENTORY_MODULE.NSOReader(data)
-                use_ack = reader.read_ubyte() == slot
-                continue
-
-            event = self._apply_bag_packet(command, data)
-            if event and event[0] == slot:
-                current = self.bag[slot] if slot < len(self.bag) else None
-                if current is None or current.quantity < previous_quantity:
-                    if not consumed:
-                        print(
-                            f"      ↩ Mở slot={slot}: server cmd={command}, "
-                            f"quantity còn={current.quantity if current else 0}"
-                        )
-                    consumed = True
-                    settle_deadline = min(
-                        deadline, time.time() + USE_SETTLE_DELAY
-                    )
-                    continue
-
-            if consumed and settle_deadline and time.time() >= settle_deadline:
-                break
-
-        if consumed:
-            return True
-
-        # Một số server áp dụng item mở rộng nhưng không gửi packet quantity.
-        if use_ack and self.connected:
-            item = self.bag[slot] if 0 <= slot < len(self.bag) else None
-            if item is not None:
-                item.quantity -= 1
-                if item.quantity <= 0:
-                    self.bag[slot] = None
-            print(f"      ⚠️ Mở slot={slot}: server không gửi packet quantity")
-            return True
-
-        print(f"      ❌ Timeout xác nhận dùng slot {slot}")
-        return False
-
-
-def sell_configured_items(
-    client: DropItemClient,
-    username: str,
-    character_name: str,
-    item_ids,
-    args: argparse.Namespace,
-) -> tuple[int, int, int]:
-    """Bán/xóa item trong danh sách delllllllllll.txt."""
-    targets = [
-        item for item in client.bag
-        if item is not None and item.template_id in item_ids
-    ]
-    print(
-        f"    🧹 Dọn item {username}/{character_name}: "
-        f"tìm thấy {len(targets)} item cần bán/xóa"
-    )
-
-    sold = 0
-    failed = 0
-    targets = sorted(targets, key=lambda value: value.index, reverse=True)
-    for item in targets:
-        if args.dry_run:
-            print(
-                f"      [DRY-RUN] Sẽ bán/xóa slot={item.index:02d} | "
-                f"id={item.template_id} | {item.name} | số lượng={item.quantity}"
-            )
-            continue
-
-        print(
-            f"      🗑️ Bán/xóa slot={item.index:02d} | "
-            f"id={item.template_id} | {item.name} | số lượng={item.quantity}"
-        )
-        if client.sell_item(item.index, item.quantity):
-            sold += 1
-            print(f"      ✅ Đã bán/xóa item slot={item.index:02d}")
-        else:
-            failed += 1
-            print(f"      ❌ Bán/xóa thất bại slot={item.index:02d}")
-
-    return len(targets), sold, failed
-
-
-def open_and_drop_items(
-    client: DropItemClient,
-    username: str,
-    character_name: str,
-    item_ids,
-    args: argparse.Namespace,
-) -> DropResult:
-    """Mở từng item một, rồi bỏ item không khóa trước khi mở tiếp."""
-    result = DropResult()
-
-    while True:
-        if args.max_opens and result.used >= args.max_opens:
-            print(f"    ⏹️ Đạt giới hạn test --max-opens={args.max_opens}")
-            return result
-
-        targets = sorted(
-            (
-                item for item in client.bag
-                if item is not None and item.template_id in item_ids
-            ),
-            key=lambda value: value.index,
-            reverse=True,
-        )
-        if not targets:
-            print(f"    🧰 Không còn item trong {DEFAULT_OPEN_ITEMS_FILE.name}")
-            drop_result = drop_unlocked_items(
-                client,
-                username,
-                character_name,
-                args,
-            )
-            result.matched += drop_result.matched
-            result.dropped += drop_result.dropped
-            result.failed += drop_result.failed
-            return result
-
-        if args.dry_run:
-            for item in targets:
-                print(
-                    f"      [DRY-RUN] Sẽ mở slot={item.index:02d} | "
-                    f"id={item.template_id} | {item.name} | số lượng={item.quantity}"
-                )
-            drop_result = drop_unlocked_items(
-                client,
-                username,
-                character_name,
-                args,
-            )
-            result.open_matched = len(targets)
-            result.matched += drop_result.matched
-            result.dropped += drop_result.dropped
-            result.failed += drop_result.failed
-            return result
-
-        source = targets[0]
-        result.open_matched += 1
-        print(
-            f"    🧰 Mở 1 item slot={source.index:02d} | "
-            f"id={source.template_id} | số lượng trước={source.quantity}"
-        )
-        if not client.use_item_once(source.index):
-            result.use_failed += 1
-            result.failed += 1
-            print(f"      ❌ Không xác nhận được mở slot={source.index:02d}")
-            return result
-        result.used += 1
-
-        drop_result = drop_unlocked_items(
-            client,
-            username,
-            character_name,
-            args,
-        )
-        result.matched += drop_result.matched
-        result.dropped += drop_result.dropped
-        result.failed += drop_result.failed
-        if drop_result.failed:
-            print("      ❌ Dừng mở tiếp vì bước bỏ item gặp lỗi")
-            return result
-
-
 def drop_unlocked_items(
     client: DropItemClient,
     username: str,
     character_name: str,
+    permanent_item_ids,
     args: argparse.Namespace,
 ) -> DropResult:
-    """Bỏ toàn bộ item không khóa còn lại."""
+    """Bỏ item không khóa, giữ item có hạn thuộc danh sách vĩnh viễn."""
     result = DropResult()
     unlocked_items = [
         item for item in client.bag if item is not None and not item.is_lock
     ]
-    targets = unlocked_items
+    expiring_permanent_items = [
+        item
+        for item in unlocked_items
+        if item.template_id in permanent_item_ids and item.is_expires
+    ]
+    targets = [
+        item
+        for item in unlocked_items
+        if not (item.template_id in permanent_item_ids and item.is_expires)
+    ]
     result.matched = len(targets)
+    result.skipped_expiring = len(expiring_permanent_items)
 
     locked_count = sum(1 for item in client.bag if item is not None and item.is_lock)
     print(
         f"    🎒 Hành trang {username}/{character_name}: "
         f"{len(client.bag)} slot, không khóa={len(unlocked_items)}, "
-        f"sẽ bỏ={len(targets)}, khóa={locked_count}"
+        f"sẽ bỏ={len(targets)}, giữ item có hạn={len(expiring_permanent_items)}, "
+        f"khóa={locked_count}"
     )
+
+    for item in expiring_permanent_items:
+        print(
+            f"      ⏭️ Giữ lại item có hạn slot={item.index:02d} | "
+            f"id={item.template_id} | {item.name}"
+        )
 
     # Giống thao tác thủ công theo slot; xử lý slot cao xuống thấp để không
     # bị ảnh hưởng nếu server cập nhật lại danh sách slot trong lúc throw.
     targets = sorted(targets, key=lambda value: value.index, reverse=True)
     for item_number, item in enumerate(targets):
         if args.dry_run:
+            reason = (
+                "vĩnh viễn trong item_vinh_vien.txt"
+                if item.template_id in permanent_item_ids
+                else "không nằm trong item_vinh_vien.txt"
+            )
             print(
                 f"      [DRY-RUN] Sẽ bỏ đất slot={item.index:02d} | "
-                f"id={item.template_id} | {item.name} | số lượng={item.quantity}"
+                f"id={item.template_id} | {item.name} | "
+                f"số lượng={item.quantity} | lý do={reason}"
             )
             continue
 
@@ -569,6 +392,15 @@ def drop_unlocked_items(
 
         if dropped:
             result.dropped += 1
+            if item.template_id in permanent_item_ids:
+                name, stacks, quantity = result.permanent_dropped.get(
+                    item.template_id, (item.name, 0, 0)
+                )
+                result.permanent_dropped[item.template_id] = (
+                    name,
+                    stacks + 1,
+                    quantity + item.quantity,
+                )
             print(f"      ✅ Đã bỏ xuống đất slot={item.index:02d}")
         else:
             result.failed += 1
@@ -588,8 +420,7 @@ def process_account(
     username: str,
     password: str,
     args: argparse.Namespace,
-    sell_item_ids,
-    open_item_ids,
+    permanent_item_ids,
 ) -> DropResult:
     client = DropItemClient(args.host, args.port)
     result = DropResult()
@@ -613,11 +444,6 @@ def process_account(
 
         if args.ready_delay > 0:
             time.sleep(args.ready_delay)
-
-        result.sell_matched, result.sold, result.sell_failed = sell_configured_items(
-            client, username, character_name, sell_item_ids, args
-        )
-        result.failed += result.sell_failed
 
         print(
             f"    🗺️ Vị trí ban đầu: map={client.map_state.map_id}, "
@@ -646,21 +472,19 @@ def process_account(
             return result
         print(f"    ✅ Đúng vị trí mục tiêu: map={args.map_id}, khu={args.zone_id}")
 
-        # Xả packet di chuyển còn tồn trước khi mở item đầu tiên.
+        # Xả packet di chuyển còn tồn trước khi bỏ item.
         client.drain(0.8)
-        open_result = open_and_drop_items(
+        drop_result = drop_unlocked_items(
             client,
             username,
             character_name,
-            open_item_ids,
+            permanent_item_ids,
             args,
         )
-        result.open_matched = open_result.open_matched
-        result.used = open_result.used
-        result.use_failed = open_result.use_failed
-        result.matched = open_result.matched
-        result.dropped = open_result.dropped
-        result.failed += open_result.failed
+        result.matched = drop_result.matched
+        result.dropped = drop_result.dropped
+        result.skipped_expiring = drop_result.skipped_expiring
+        result.failed += drop_result.failed
         result.processed = True
         return result
     except Exception as exc:
@@ -674,7 +498,7 @@ def process_account(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Dọn item, dùng item cấu hình rồi bỏ item không khóa ra đất"
+            "Bỏ item không khóa ra đất"
         )
     )
     parser.add_argument(
@@ -698,12 +522,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zone-timeout", type=float, default=12.0)
     parser.add_argument("--throw-timeout", type=float, default=8.0)
     parser.add_argument("--max-map-steps", type=int, default=25)
-    parser.add_argument(
-        "--max-opens",
-        type=int,
-        default=0,
-        help="Giới hạn số lần mở mỗi tài khoản; 0 là không giới hạn",
-    )
     parser.add_argument("--ready-delay", type=float, default=1.0)
     parser.add_argument(
         "--drop-delay",
@@ -740,7 +558,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Di chuyển/đọc bag nhưng không bán, dùng hoặc bỏ item",
+        help="Di chuyển/đọc bag nhưng không bỏ item",
     )
     return parser
 
@@ -759,9 +577,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.max_map_steps <= 0:
         print("❌ max-map-steps phải lớn hơn 0")
         return 2
-    if args.max_opens < 0:
-        print("❌ max-opens không được âm")
-        return 2
     if args.drop_delay < 0:
         print("❌ drop-delay không được âm")
         return 2
@@ -774,15 +589,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.luong <= 0:
         print("❌ --luong phải lớn hơn 0")
         return 2
-    for items_file in (DEFAULT_SELL_ITEMS_FILE, DEFAULT_OPEN_ITEMS_FILE):
-        if not items_file.is_file():
-            print(f"❌ Không tìm thấy file item: {items_file}")
-            return 2
-
+    if not DEFAULT_PERMANENT_ITEMS_FILE.is_file():
+        print(f"❌ Không tìm thấy file item: {DEFAULT_PERMANENT_ITEMS_FILE}")
+        return 2
     try:
         accounts = read_accounts(args.csv_file)
-        sell_item_ids = _INVENTORY_MODULE.read_item_ids(DEFAULT_SELL_ITEMS_FILE)
-        open_item_ids = _INVENTORY_MODULE.read_item_ids(DEFAULT_OPEN_ITEMS_FILE)
+        permanent_item_ids = _INVENTORY_MODULE.read_item_ids(
+            DEFAULT_PERMANENT_ITEMS_FILE
+        )
     except Exception as exc:
         print(f"❌ Không đọc được dữ liệu đầu vào: {exc}")
         return 2
@@ -791,17 +605,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not accounts:
         print("❌ CSV không có tài khoản hợp lệ")
         return 2
-    if not sell_item_ids:
-        print(f"⚠️ {DEFAULT_SELL_ITEMS_FILE.name} không có item ID; bỏ qua bước dọn")
-    if not open_item_ids:
-        print(f"❌ {DEFAULT_OPEN_ITEMS_FILE.name} không có item ID hợp lệ")
-        return 2
-
+    if not permanent_item_ids:
+        print(
+            f"⚠️ {DEFAULT_PERMANENT_ITEMS_FILE.name} không có item ID hợp lệ; "
+            "mọi item không khóa sẽ được bỏ"
+        )
     mode = "DRY-RUN" if args.dry_run else "BỎ ĐẤT THẬT"
     print(
         f"NSO BỎ ĐỒ RA ĐẤT: {len(accounts)} tài khoản | "
         f"map={args.map_id}, khu={args.zone_id} | "
-        f"dọn={len(sell_item_ids)} ID | dùng={len(open_item_ids)} ID | "
+        f"ID kiểm tra vĩnh viễn={len(permanent_item_ids)} | "
         f"luồng={min(args.luong, len(accounts))} | mode={mode}"
     )
 
@@ -815,7 +628,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             flush=True,
         )
         result = process_account(
-            username, password, args, sell_item_ids, open_item_ids
+            username, password, args, permanent_item_ids
         )
         # Giữ delay cũ khi chạy 1 luồng. Khi chạy nhiều luồng, không chặn
         # worker khác bằng delay giữa các tài khoản.
@@ -858,22 +671,38 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 accounts_done += 1
             total.matched += result.matched
             total.dropped += result.dropped
+            total.skipped_expiring += result.skipped_expiring
             total.failed += result.failed
-            total.sell_matched += result.sell_matched
-            total.sold += result.sold
-            total.sell_failed += result.sell_failed
-            total.open_matched += result.open_matched
-            total.used += result.used
-            total.use_failed += result.use_failed
+            for template_id, stats in result.permanent_dropped.items():
+                name, stacks, quantity = stats
+                old_name, old_stacks, old_quantity = total.permanent_dropped.get(
+                    template_id, (name, 0, 0)
+                )
+                total.permanent_dropped[template_id] = (
+                    old_name,
+                    old_stacks + stacks,
+                    old_quantity + quantity,
+                )
 
     print(
         f"\n=== HOÀN TẤT: {accounts_done}/{len(accounts)} tài khoản có kết quả | "
-        f"dọn khớp={total.sell_matched} | đã dọn={total.sold} | "
-        f"dọn lỗi={total.sell_failed} | dùng khớp={total.open_matched} | "
-        f"đã dùng={total.used} | dùng lỗi={total.use_failed} | "
-        f"item không khóa={total.matched} | đã bỏ đất={total.dropped} | "
+        f"item được chọn bỏ={total.matched} | đã bỏ đất={total.dropped} | "
+        f"giữ item có hạn={total.skipped_expiring} | "
         f"thất bại={total.failed} ==="
     )
+    if total.permanent_dropped:
+        print("=== ITEM VĨNH VIỄN ĐÃ BỎ ===")
+        for template_id, (name, stacks, quantity) in sorted(
+            total.permanent_dropped.items()
+        ):
+            print(
+                f"  id={template_id} | {name} | "
+                f"stack={stacks} | tổng số lượng={quantity}"
+            )
+    elif args.dry_run:
+        print("=== ITEM VĨNH VIỄN ĐÃ BỎ: DRY-RUN, chưa bỏ item thật ===")
+    else:
+        print("=== ITEM VĨNH VIỄN ĐÃ BỎ: không có ===")
     return 1 if total.failed else 0
 
 
