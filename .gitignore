@@ -22,3 +22,4 @@ Ninja-School-Mobile-4.1.1/
 .venv/
 python-worker/dist_py/
 optimized-runtime/run/*
+proxy-tk.txt
