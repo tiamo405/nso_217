@@ -7,10 +7,10 @@ with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
     writer.writerow(["username", "password"])
 
-    for i in range(0, 0):
-        writer.writerow([f"luongclone{i:03d}", PASSWORD])
+    for i in range(2160, 7, -1):
+        writer.writerow([f"luonghihi{i:03d}", PASSWORD])
 
-    for i in range(1, 1201):
+    for i in range(0, 0):
         writer.writerow([f"luongdzvd{i}", PASSWORD])
 
 print(f"Da tao xong file {OUTPUT_FILE}")

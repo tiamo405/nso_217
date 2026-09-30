@@ -28,11 +28,13 @@ class SupervisorRequest(BaseModel):
     server: Literal["ninjamobile", "ninjamobileSV4", "tk"] = "tk"
     periodic_restart_hours: Optional[int] = Field(default=None, ge=0, le=168)
     worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
+    proxy_workers_per_proxy: Optional[int] = Field(default=None, ge=0, le=500)
 
 
 class SupervisorSettingsRequest(BaseModel):
     periodic_restart_hours: int = Field(default=3, ge=0, le=168)
     worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
+    proxy_workers_per_proxy: Optional[int] = Field(default=None, ge=0, le=500)
 
 
 class ScheduleRequest(BaseModel):
@@ -159,6 +161,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     worker_start_delay_seconds=(
                         body.worker_start_delay_seconds if body is not None else None
                     ),
+                    proxy_workers_per_proxy=(
+                        body.proxy_workers_per_proxy if body is not None else None
+                    ),
                 )
                 scheduler.worker_start_delay_seconds = manager.worker_start_delay_seconds()
             except Exception:
@@ -181,6 +186,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 manager.set_worker_start_delay_seconds(body.worker_start_delay_seconds)
                 scheduler.worker_start_delay_seconds = manager.worker_start_delay_seconds()
                 scheduler._save()
+            if body.proxy_workers_per_proxy is not None:
+                manager.set_proxy_workers_per_proxy(body.proxy_workers_per_proxy)
             result = manager.supervisor_status()
             result["requires_restart"] = was_running
             return result

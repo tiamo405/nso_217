@@ -79,7 +79,7 @@ function renderWorkers(workers, runtime = "nvhn") {
     const row = document.createElement("tr");
     const emptyMsg = runtime === "ta_thu" ? "Chưa có worker Tà Thú." : "Chưa có worker. Upload account rồi build.";
     const empty = cell(emptyMsg, "empty");
-    empty.colSpan = 11;
+    empty.colSpan = 12;
     row.append(empty);
     body.append(row);
     return;
@@ -95,6 +95,7 @@ function renderWorkers(workers, runtime = "nvhn") {
     row.append(cell(worker.rss_mb == null ? "—" : `${worker.rss_mb} MB`));
     row.append(cell(worker.elapsed));
     row.append(cell(worker.accounts));
+    row.append(cell(worker.proxy || "Không dùng proxy", "proxy-cell"));
     row.append(logCell(worker));
     const actions = document.createElement("td");
     const group = document.createElement("div"); group.className = "action-group";
@@ -127,6 +128,7 @@ async function refreshStatus() {
     if (!supervisorSettingsDirty && !supervisorSettingsSaving) {
       $("#periodic-restart-hours").value = supervisor.periodic_restart_hours ?? 3;
       $("#worker-start-delay-seconds").value = supervisor.worker_start_delay_seconds ?? 30;
+      $("#proxy-workers-per-proxy").value = supervisor.proxy_workers_per_proxy ?? 6;
     }
     const taThuSupervisor = data.ta_thu || { running: false };
     $("#supervisor-state").textContent = supervisor.running ? "RUNNING" : (taThuSupervisor.running ? "TÀ THÚ" : "STOPPED");
@@ -136,6 +138,7 @@ async function refreshStatus() {
       : `NVHN: dừng${supervisor.stale_pid ? " (PID cũ)" : ""} · tự khởi động: ${supervisor.desired ? "bật" : "tắt"}`;
     supDetail += ` · restart định kỳ: ${supervisor.periodic_restart_hours ? `${supervisor.periodic_restart_hours}h` : "tắt"}`;
     supDetail += ` · giãn cách worker: ${supervisor.worker_start_delay_seconds ?? 30}s`;
+    supDetail += ` · proxy TK: ${supervisor.proxy_workers_per_proxy ?? 6} worker/proxy`;
     if (taThuSupervisor.running) {
       supDetail += ` | Tà Thú: PID ${taThuSupervisor.pid}`;
     } else {
@@ -160,6 +163,7 @@ async function refreshStatus() {
     $("#account-form button").disabled = buildActive;
     $("#periodic-restart-hours").disabled = buildActive || supervisorSettingsSaving;
     $("#worker-start-delay-seconds").disabled = buildActive || supervisorSettingsSaving;
+    $("#proxy-workers-per-proxy").disabled = buildActive || supervisorSettingsSaving;
     $("#save-supervisor-settings").disabled = buildActive || supervisorSettingsSaving;
     if (data.active_job && !stream) watchBuild(data.active_job);
     if (currentTab === "ta_thu") {
@@ -220,6 +224,7 @@ async function supervisorAction(action, button) {
         server: $("#server-select").value,
         periodic_restart_hours: settings.periodicHours,
         worker_start_delay_seconds: settings.startDelaySeconds,
+        proxy_workers_per_proxy: settings.proxyWorkersPerProxy,
       };
     }
     await api(`/api/supervisor/${action}`, options);
@@ -233,6 +238,7 @@ async function supervisorAction(action, button) {
 function readSupervisorSettings() {
   const periodicHours = Number.parseInt($("#periodic-restart-hours").value, 10);
   const startDelaySeconds = Number.parseInt($("#worker-start-delay-seconds").value, 10);
+  const proxyWorkersPerProxy = Number.parseInt($("#proxy-workers-per-proxy").value, 10);
   if (!Number.isInteger(periodicHours) || periodicHours < 0 || periodicHours > 168) {
     notify("Số giờ restart phải từ 0 đến 168", true);
     return null;
@@ -241,7 +247,11 @@ function readSupervisorSettings() {
     notify("Giãn cách khởi động phải từ 0 đến 3600 giây", true);
     return null;
   }
-  return { periodicHours, startDelaySeconds };
+  if (!Number.isInteger(proxyWorkersPerProxy) || proxyWorkersPerProxy < 0 || proxyWorkersPerProxy > 500) {
+    notify("Số worker dùng chung proxy phải từ 0 đến 500", true);
+    return null;
+  }
+  return { periodicHours, startDelaySeconds, proxyWorkersPerProxy };
 }
 
 async function saveSupervisorSettings() {
@@ -257,6 +267,7 @@ async function saveSupervisorSettings() {
       json: {
         periodic_restart_hours: settings.periodicHours,
         worker_start_delay_seconds: settings.startDelaySeconds,
+        proxy_workers_per_proxy: settings.proxyWorkersPerProxy,
       },
     });
     supervisorSettingsDirty = false;
@@ -378,6 +389,9 @@ $("#periodic-restart-hours").addEventListener("input", () => {
   supervisorSettingsDirty = true;
 });
 $("#worker-start-delay-seconds").addEventListener("input", () => {
+  supervisorSettingsDirty = true;
+});
+$("#proxy-workers-per-proxy").addEventListener("input", () => {
   supervisorSettingsDirty = true;
 });
 

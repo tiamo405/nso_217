@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUNTIME_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_DIR=$(cd -- "$RUNTIME_DIR/.." && pwd)
 WORKERS_DIR=${OPTIMIZED_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 CHECK_INTERVAL=${CHECK_INTERVAL:-20}
 START_DELAY=${START_DELAY:-15}
@@ -12,6 +13,9 @@ PERIODIC_RESTART_SECONDS=${PERIODIC_RESTART_SECONDS:-10800}
 REPEATED_STATUS_WINDOW_LINES=${REPEATED_STATUS_WINDOW_LINES:-20}
 SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
 SERVER_NAME=${NSO_SERVER:-tk}
+PROXY_FILE=${PROXY_TK_FILE:-"$REPO_DIR/proxy-tk.txt"}
+PROXY_GROUP_SIZE=${NSO_PROXY_WORKERS_PER_PROXY:-6}
+PROXY_SUPPORT_SCRIPT="$SCRIPT_DIR/proxy_support.py"
 
 normalize_server() {
     case "${1,,}" in
@@ -26,6 +30,11 @@ normalize_server() {
 }
 
 normalize_server "$SERVER_NAME"
+
+if ! [[ "$PROXY_GROUP_SIZE" =~ ^[0-9]+$ ]]; then
+    echo "NSO_PROXY_WORKERS_PER_PROXY phải là số nguyên không âm." >&2
+    exit 1
+fi
 
 usage() {
     cat >&2 <<EOF
@@ -117,6 +126,12 @@ if ! [[ "$REPEATED_STATUS_WINDOW_LINES" =~ ^[1-9][0-9]*$ ]]; then
     echo "REPEATED_STATUS_WINDOW_LINES phải là số nguyên dương." >&2
     exit 1
 fi
+
+python3 "$PROXY_SUPPORT_SCRIPT" \
+    --workers-dir "$WORKERS_DIR" \
+    --proxy-file "$PROXY_FILE" \
+    --server "$SERVER_NAME" \
+    --group-size "$PROXY_GROUP_SIZE"
 
 mkdir -p "$WORKERS_DIR"
 if [[ -f "$SUPERVISOR_PID_FILE" ]]; then

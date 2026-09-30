@@ -3,11 +3,15 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUNTIME_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
+REPO_DIR=$(cd -- "$RUNTIME_DIR/.." && pwd)
 WORKERS_DIR=${OPTIMIZED_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 CLASSES_DIR=${OPTIMIZED_CLASSES_DIR:-"$RUNTIME_DIR/build/classes"}
 START_DELAY=${START_DELAY:-3}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
+PROXY_FILE=${PROXY_TK_FILE:-"$REPO_DIR/proxy-tk.txt"}
+PROXY_GROUP_SIZE=${NSO_PROXY_WORKERS_PER_PROXY:-6}
+PROXY_SUPPORT_SCRIPT="$SCRIPT_DIR/proxy_support.py"
 
 source "$SCRIPT_DIR/tuning-options.sh"
 SERVER_NAME=${NSO_SERVER:-tk}
@@ -25,6 +29,11 @@ normalize_server() {
 }
 
 normalize_server "$SERVER_NAME"
+
+if ! [[ "$PROXY_GROUP_SIZE" =~ ^[0-9]+$ ]]; then
+    echo "NSO_PROXY_WORKERS_PER_PROXY phải là số nguyên không âm." >&2
+    exit 1
+fi
 
 is_optimized_worker_pid() {
     local pid=$1
@@ -118,6 +127,35 @@ else
     fi
 fi
 
+proxy_prepare_needed=false
+if [[ "$SERVER_NAME" == "tk" ]]; then
+    if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; then
+        proxy_prepare_needed=true
+    elif (( PROXY_GROUP_SIZE > 0 )); then
+        for worker_dir in "${worker_dirs[@]}"; do
+            [[ -d "$worker_dir" ]] || continue
+            [[ -f "$worker_dir/.paused" ]] && continue
+            [[ -f "$worker_dir/home/worker.done" ]] && continue
+            if [[ ! -s "$worker_dir/.proxy" ]]; then
+                proxy_prepare_needed=true
+                break
+            fi
+            pid_file="$worker_dir/bot.pid"
+            if [[ ! -f "$pid_file" ]] || ! is_optimized_worker_pid "$(<"$pid_file")" "$worker_dir"; then
+                proxy_prepare_needed=true
+                break
+            fi
+        done
+    fi
+    if [[ "$proxy_prepare_needed" == "true" ]]; then
+        python3 "$PROXY_SUPPORT_SCRIPT" \
+            --workers-dir "$WORKERS_DIR" \
+            --proxy-file "$PROXY_FILE" \
+            --server "$SERVER_NAME" \
+            --group-size "$PROXY_GROUP_SIZE"
+    fi
+fi
+
 started=0
 running=0
 failed=0
@@ -170,7 +208,17 @@ for worker_dir in "${worker_dirs[@]}"; do
         command_prefix+=(taskset -c "$WORKER_TASKSET")
     fi
 
-    nohup "${command_prefix[@]}" "$JAVA_BIN" \
+    proxy_env=(env -u NSO_SOCKS5_PROXY NSO_PROXY_REQUIRED=0)
+    if [[ "$SERVER_NAME" == "tk" && "$PROXY_GROUP_SIZE" -gt 0 ]]; then
+        if [[ ! -s "$worker_dir/.proxy" ]]; then
+            echo "$worker_name thiếu proxy assignment; không khởi động." >&2
+            exit 1
+        fi
+        proxy_value=$(<"$worker_dir/.proxy")
+        proxy_env=(env NSO_PROXY_REQUIRED=1 "NSO_SOCKS5_PROXY=$proxy_value")
+    fi
+
+    nohup "${proxy_env[@]}" "${command_prefix[@]}" "$JAVA_BIN" \
         "-Xms$JAVA_XMS" \
         "-Xmx$JAVA_XMX" \
         "${java_opts_array[@]}" \

@@ -78,6 +78,11 @@ def count_accounts(csv_file: Path) -> int | None:
     return sum(1 for line in lines[1:] if line.strip())
 
 
+def worker_proxy(worker_dir: Path) -> str | None:
+    value = read_text(worker_dir / ".proxy")
+    return value or None
+
+
 def get_log_lines_tail(log_file: Path) -> list[str]:
     try:
         with log_file.open("rb") as stream:
@@ -159,6 +164,7 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
         "rss_mb": rss_mb,
         "elapsed": elapsed,
         "accounts": count_accounts(worker_dir / "account.csv"),
+        "proxy": worker_proxy(worker_dir),
         "last_auto_log": last_matching_line(lines, "AUTO NVHN"),
         "last_log_at": last_log_at,
         "last_log_age_seconds": last_log_age_seconds,

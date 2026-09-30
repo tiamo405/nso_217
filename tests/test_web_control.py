@@ -141,6 +141,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status_response.json()["workers"][0]["char_name"], "fmgmza")
             self.assertEqual(status_response.json()["supervisor"]["periodic_restart_hours"], 3)
             self.assertEqual(status_response.json()["supervisor"]["worker_start_delay_seconds"], 30)
+            self.assertEqual(status_response.json()["supervisor"]["proxy_workers_per_proxy"], 6)
 
             # Check index.html table header and buttons
             index_html = (static_dir / "index.html").read_text(encoding="utf-8")
@@ -149,6 +150,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn('id="run-button"', index_html)
             self.assertIn('id="periodic-restart-hours"', index_html)
             self.assertIn('id="worker-start-delay-seconds"', index_html)
+            self.assertIn('id="proxy-workers-per-proxy"', index_html)
 
             invalid_csv = await client.post(
                 "/api/accounts/upload",
@@ -262,12 +264,14 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                 json={
                     "periodic_restart_hours": 8,
                     "worker_start_delay_seconds": 47,
+                    "proxy_workers_per_proxy": 4,
                 },
             )
             self.assertEqual(response.status_code, 200, response.text)
             data = response.json()
             self.assertEqual(data["periodic_restart_hours"], 8)
             self.assertEqual(data["worker_start_delay_seconds"], 47)
+            self.assertEqual(data["proxy_workers_per_proxy"], 4)
             self.assertFalse(data["requires_restart"])
 
         manager = app.state.manager

@@ -22,6 +22,8 @@ DEFAULT_PERIODIC_RESTART_HOURS = 3
 MAX_PERIODIC_RESTART_HOURS = 168
 DEFAULT_WORKER_START_DELAY_SECONDS = 30
 MAX_WORKER_START_DELAY_SECONDS = 3600
+DEFAULT_PROXY_WORKERS_PER_PROXY = 6
+MAX_PROXY_WORKERS_PER_PROXY = 500
 
 
 class ControlError(RuntimeError):
@@ -214,6 +216,31 @@ class HeadlessManager:
         self._write_state(state)
         return value
 
+    def proxy_workers_per_proxy(self) -> int:
+        raw = self._read_state().get(
+            "proxy_workers_per_proxy", DEFAULT_PROXY_WORKERS_PER_PROXY
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = DEFAULT_PROXY_WORKERS_PER_PROXY
+        return max(0, min(value, MAX_PROXY_WORKERS_PER_PROXY))
+
+    def set_proxy_workers_per_proxy(self, count: int) -> int:
+        try:
+            value = int(count)
+        except (TypeError, ValueError) as exc:
+            raise ControlError("Số worker dùng chung proxy không hợp lệ") from exc
+        if value < 0 or value > MAX_PROXY_WORKERS_PER_PROXY:
+            raise ControlError(
+                "Số worker dùng chung proxy phải từ "
+                f"0 đến {MAX_PROXY_WORKERS_PER_PROXY}"
+            )
+        state = self._read_state()
+        state["proxy_workers_per_proxy"] = value
+        self._write_state(state)
+        return value
+
     def supervisor_status(self) -> dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and self._supervisor_pid_is_valid(pid)
@@ -226,6 +253,7 @@ class HeadlessManager:
             "server": self.selected_server(),
             "periodic_restart_hours": self.periodic_restart_hours(),
             "worker_start_delay_seconds": self.worker_start_delay_seconds(),
+            "proxy_workers_per_proxy": self.proxy_workers_per_proxy(),
             "log": str(self.supervisor_log),
         }
 
@@ -236,12 +264,15 @@ class HeadlessManager:
         server: str | None = None,
         periodic_restart_hours: int | None = None,
         worker_start_delay_seconds: int | None = None,
+        proxy_workers_per_proxy: int | None = None,
     ) -> dict[str, Any]:
         async with self.control_lock:
             if periodic_restart_hours is not None:
                 self.set_periodic_restart_hours(periodic_restart_hours)
             if worker_start_delay_seconds is not None:
                 self.set_worker_start_delay_seconds(worker_start_delay_seconds)
+            if proxy_workers_per_proxy is not None:
+                self.set_proxy_workers_per_proxy(proxy_workers_per_proxy)
             current = self.supervisor_status()
             requested_server = (
                 self.selected_server() if server is None else self.set_server(server)
@@ -298,6 +329,9 @@ class HeadlessManager:
                 environment = self.settings.command_env(selected_server)
                 environment["PERIODIC_RESTART_SECONDS"] = str(
                     self.periodic_restart_hours() * 60 * 60
+                )
+                environment["NSO_PROXY_WORKERS_PER_PROXY"] = str(
+                    self.proxy_workers_per_proxy()
                 )
                 self._supervisor_process = subprocess.Popen(
                     command,

@@ -24,6 +24,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import nhanexp_and_doiyenquaxu as _exp_module
+import hoatdong as _hoatdong_module
+import mail_client as _mail_module
 from hoatdong import NSOMessage, NSOReader, read_accounts
 from mail_client import NSOMailClient
 from nhanexp_and_doiyenquaxu import (
@@ -38,7 +41,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-hoatdong.csv"
 DEFAULT_ITEMS_FILE = ROOT_DIR / "delllllllllll.txt"
 DEFAULT_OPEN_ITEMS_FILE = ROOT_DIR / "item_open.txt"
-DEFAULT_HOST = "Nsm1.ninjasm.net"
+DEFAULT_HOST = "Nsm4.ninjasm.net"
 DEFAULT_PORT = 14444
 # Chờ ngắn giữa phiên giftcode và phiên hành trang. Nếu server báo đăng nhập
 # quá nhanh thì tăng lại lên 5-11 giây.
@@ -57,6 +60,7 @@ MENU_TIMEOUT = 20.0
 THREAD_START_DELAY = 2.0
 GIFT_CODE = "trungthu"
 FAILED_ACCOUNTS_FILE = ROOT_DIR / "nhangiftcode-failed.csv"
+DEFAULT_LOG_DIR = ROOT_DIR / "log" / "nhangiftcode"
 
 CMD_TEXT_BOX = 92
 CMD_SERVER_INFO = -24
@@ -71,6 +75,46 @@ ACCOUNT_RETRY = "retry"
 
 _ITEM_MODULE = None
 _ITEM_TEMPLATE_LOCK = threading.RLock()
+_ORIGINAL_PRINT = print
+_PRINT_LOCK = threading.Lock()
+_THREAD_LOG = threading.local()
+
+
+def configure_lane_log(path: Path):
+    _THREAD_LOG.handle = Path(path).open(
+        "w", encoding="utf-8", buffering=1,
+    )
+
+
+def close_lane_log():
+    handle = getattr(_THREAD_LOG, "handle", None)
+    if handle is not None:
+        handle.close()
+        _THREAD_LOG.handle = None
+
+
+def clear_log_files(path: Path):
+    for target in Path(path).glob("luong*.log"):
+        if target.is_file() or target.is_symlink():
+            target.unlink()
+
+
+def log(*args, **kwargs):
+    kwargs.setdefault("flush", True)
+    with _PRINT_LOCK:
+        _ORIGINAL_PRINT(*args, **kwargs)
+        handle = getattr(_THREAD_LOG, "handle", None)
+        if handle is not None:
+            file_kwargs = dict(kwargs)
+            file_kwargs["file"] = handle
+            _ORIGINAL_PRINT(*args, **file_kwargs)
+
+
+# Existing print calls now write console and current worker log.
+print = log
+_exp_module.log = log
+_hoatdong_module.print = log
+_mail_module.print = log
 
 
 def write_failed_accounts(path, failed_accounts):
@@ -131,6 +175,7 @@ def load_item_delete_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    module.print = log
 
     original_parse_templates = module.NSOClient._parse_item_templates
     original_parse_bag = module.NSOClient._parse_character_info_and_bag
@@ -941,30 +986,41 @@ def main(argv=None):
             (account_number, username, password)
         )
 
+    try:
+        DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        clear_log_files(DEFAULT_LOG_DIR)
+    except OSError as exc:
+        print(f"❌ Không mở được thư mục log: {exc}")
+        return 2
+
     def run_lane(lane_number, lane_accounts):
-        if lane_number:
-            time.sleep(lane_number * args.thread_delay)
-        results = []
-        for account_number, username, password in lane_accounts:
-            try:
-                results.append(
-                    process_account(
-                        account_number,
-                        len(accounts),
-                        username,
-                        password,
-                        item_ids,
-                        open_item_ids,
+        configure_lane_log(DEFAULT_LOG_DIR / f"luong{lane_number + 1}.log")
+        try:
+            if lane_number:
+                time.sleep(lane_number * args.thread_delay)
+            results = []
+            for account_number, username, password in lane_accounts:
+                try:
+                    results.append(
+                        process_account(
+                            account_number,
+                            len(accounts),
+                            username,
+                            password,
+                            item_ids,
+                            open_item_ids,
+                        )
                     )
-                )
-            except Exception as exc:
-                reason = f"Lỗi worker: {exc}"
-                results.append({
-                    "totals": {**_new_totals(), "accounts": 1, "failed": 1},
-                    "failures": [f"{username}: {reason}"],
-                    "failed_accounts": [(username, password, reason)],
-                })
-        return results
+                except Exception as exc:
+                    reason = f"Lỗi worker: {exc}"
+                    results.append({
+                        "totals": {**_new_totals(), "accounts": 1, "failed": 1},
+                        "failures": [f"{username}: {reason}"],
+                        "failed_accounts": [(username, password, reason)],
+                    })
+            return results
+        finally:
+            close_lane_log()
 
     with ThreadPoolExecutor(
         max_workers=lane_count,
