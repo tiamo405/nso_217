@@ -44,7 +44,6 @@ sed -i '/ChatPopup.gameAA(utf13 = fieldAB.reader().readUTF(), var78);/a\        
 sed -i '/var87.count = fieldAB.reader().readInt();/a\                            TaThuAccountManager.onTaskOrderProgress(var87);' "$WORK_SRC_DIR/Controller.java"
 sed -i '/LockGame.fieldAN();/a\                    TaThuAccountManager.onTaskOrderRemoved(var85);' "$WORK_SRC_DIR/Controller.java"
 sed -i 's/Code\.fieldAD();/TaThuAccountManager.onPreparationFinished();/' "$WORK_SRC_DIR/AutoPrepareNvhn.java"
-sed -i 's/AccountAutoManager\.onPostDailyFlipFinished()/TaThuAccountManager.onPostDailyFlipFinished()/' "$WORK_SRC_DIR/AutoFlipNvhn.java"
 sed -i '/CodePhu\.fieldAA(var0);/a\            TaThuAccountManager.onServerMessage(var0);' "$WORK_SRC_DIR/InfoMe.java"
 
 # Apply patches
@@ -80,7 +79,6 @@ require_hook 'TaThuAccountManager.onCharacterList(' "$WORK_SRC_DIR/Controller.ja
 require_hook 'TaThuAccountManager.onTaskOrderProgress(' "$WORK_SRC_DIR/Controller.java"
 require_hook 'TaThuAccountManager.onTaskOrderRemoved(' "$WORK_SRC_DIR/Controller.java"
 require_hook 'TaThuAccountManager.onPreparationFinished()' "$WORK_SRC_DIR/AutoPrepareNvhn.java"
-require_hook 'TaThuAccountManager.onPostDailyFlipFinished()' "$WORK_SRC_DIR/AutoFlipNvhn.java"
 require_hook 'TaThuAccountManager.onCaveEntered()' "$WORK_SRC_DIR/AutoEnterCave.java"
 
 # The desktop JVM needs class-based resource lookup for these decompiled expressions.

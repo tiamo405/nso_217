@@ -151,6 +151,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn('id="periodic-restart-hours"', index_html)
             self.assertIn('id="worker-start-delay-seconds"', index_html)
             self.assertIn('id="proxy-workers-per-proxy"', index_html)
+            self.assertIn('id="schedule-proxy-workers-per-proxy"', index_html)
 
             invalid_csv = await client.post(
                 "/api/accounts/upload",
@@ -355,6 +356,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         app = create_app(self.settings)
         manager = app.state.manager
         scheduler = app.state.scheduler
+        manager.set_server("ninjamobileSV4")
         completed = {"totals": {"total": 1, "done": 1}, "supervisor": {"running": False}}
         with patch.object(manager, "status", new_callable=AsyncMock, return_value=completed), patch.object(
             manager, "start_ta_thu", new_callable=AsyncMock, return_value=False
@@ -368,6 +370,10 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             start.return_value = True
             await scheduler._check_auto_ta_thu()
             self.assertEqual(scheduler.current_phase, "ta_thu")
+            start.assert_awaited_with(
+                worker_count=scheduler.worker_count,
+                server="ninjamobileSV4",
+            )
 
     async def test_worker_pause_start_and_restart_actions(self) -> None:
         marker = self.settings.workers_dir / "worker-01" / ".paused"
@@ -408,6 +414,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "repeat_hours": 6,
                     "worker_count": 15,
                     "worker_start_delay_seconds": 47,
+                    "proxy_workers_per_proxy": 0,
                     "auto_ta_thu": True,
                 },
             )
@@ -419,6 +426,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data["repeat_hours"], 6)
             self.assertEqual(data["worker_count"], 15)
             self.assertEqual(data["worker_start_delay_seconds"], 47)
+            self.assertEqual(data["proxy_workers_per_proxy"], 0)
             self.assertTrue(data["auto_ta_thu"])
             self.assertIsNotNone(data["next_run_at"])
 
@@ -431,6 +439,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
                     "repeat_hours": 4,
                     "worker_count": 20,
                     "worker_start_delay_seconds": 12,
+                    "proxy_workers_per_proxy": 4,
                     "auto_ta_thu": False,
                 },
             )
@@ -441,6 +450,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data_interval["repeat_hours"], 4)
             self.assertEqual(data_interval["worker_count"], 20)
             self.assertEqual(data_interval["worker_start_delay_seconds"], 12)
+            self.assertEqual(data_interval["proxy_workers_per_proxy"], 4)
             self.assertFalse(data_interval["auto_ta_thu"])
 
             # Cập nhật tham số sai định dạng
@@ -461,6 +471,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         scheduler.enabled = True
         scheduler.start_time = "01:00"
         scheduler.repeat_hours = 3
+        scheduler.proxy_workers_per_proxy = 0
         trigger_time = datetime.now(TZ_VN).replace(microsecond=0)
         scheduler.next_run_at = (trigger_time - timedelta(seconds=1)).isoformat()
 
@@ -473,6 +484,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             worker_count=scheduler.worker_count,
             start_after_build=True,
             server=scheduler.server,
+            proxy_workers_per_proxy=0,
         )
         self.assertEqual(scheduler.last_run_at, trigger_time.isoformat())
         next_run = datetime.fromisoformat(scheduler.next_run_at)

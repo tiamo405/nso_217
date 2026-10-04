@@ -198,6 +198,7 @@ function renderSchedule(schedule) {
     $("#schedule-repeat-hours").value = schedule.repeat_hours || schedule.interval_hours || 6;
     $("#schedule-worker-count").value = schedule.worker_count || 10;
     $("#schedule-worker-start-delay-seconds").value = schedule.worker_start_delay_seconds ?? 30;
+    $("#schedule-proxy-workers-per-proxy").value = schedule.proxy_workers_per_proxy ?? 6;
     $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
   }
 
@@ -370,6 +371,7 @@ $("#build-button").addEventListener("click", async () => {
       worker_count: Number($("#worker-count").value),
       start_after_build: false,
       server: $("#server-select").value,
+      proxy_workers_per_proxy: Number($("#proxy-workers-per-proxy").value),
     }});
     watchBuild(job);
   } catch (error) {
@@ -434,12 +436,18 @@ $("#schedule-form").addEventListener("submit", async (event) => {
       repeat_hours: Number($("#schedule-repeat-hours").value),
       worker_count: Number($("#schedule-worker-count").value),
       worker_start_delay_seconds: Number($("#schedule-worker-start-delay-seconds").value),
+      proxy_workers_per_proxy: Number($("#schedule-proxy-workers-per-proxy").value),
       server: $("#schedule-server").value,
     };
     if (!Number.isInteger(payload.worker_start_delay_seconds)
         || payload.worker_start_delay_seconds < 0
         || payload.worker_start_delay_seconds > 3600) {
       throw new Error("Giãn cách worker phải từ 0 đến 3600 giây");
+    }
+    if (!Number.isInteger(payload.proxy_workers_per_proxy)
+        || payload.proxy_workers_per_proxy < 0
+        || payload.proxy_workers_per_proxy > 500) {
+      throw new Error("Số worker dùng chung proxy phải từ 0 đến 500");
     }
     const updated = await api("/api/schedule", { method: "POST", json: payload });
     scheduleSaving = false;

@@ -22,6 +22,7 @@ class BuildRequest(BaseModel):
     worker_count: int = Field(ge=1, le=500)
     start_after_build: bool = True
     server: Literal["ninjamobile", "ninjamobileSV4", "tk"] = "tk"
+    proxy_workers_per_proxy: Optional[int] = Field(default=None, ge=0, le=500)
 
 
 class SupervisorRequest(BaseModel):
@@ -49,6 +50,7 @@ class ScheduleRequest(BaseModel):
     interval_hours: Optional[int] = Field(default=None, ge=1, le=72)
     worker_count: int = 10
     worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
+    proxy_workers_per_proxy: Optional[int] = Field(default=None, ge=0, le=500)
     auto_ta_thu: bool = True
     server: Literal["ninjamobile", "ninjamobileSV4", "tk"] = "tk"
 
@@ -142,6 +144,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             worker_count=body.worker_count,
             worker_start_delay_seconds=body.worker_start_delay_seconds,
+            proxy_workers_per_proxy=body.proxy_workers_per_proxy,
             auto_ta_thu=body.auto_ta_thu,
             server=body.server,
         )
@@ -151,7 +154,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async with scheduler.transition_lock:
             require_idle()
             try:
-                await manager.stop_ta_thu()
+                if not await manager.stop_ta_thu():
+                    raise ControlError("Không dừng được toàn bộ Tà Thú trước khi Start NVHN")
                 selected_server = body.server if body is not None else manager.selected_server()
                 result = await manager.start_supervisor(
                     server=selected_server,
@@ -197,7 +201,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async with scheduler.transition_lock:
             require_idle()
             # Dừng cả supervisor NVHN và Tà Thú
-            await manager.stop_ta_thu()
+            if not await manager.stop_ta_thu():
+                raise ControlError("Không dừng được toàn bộ Tà Thú")
             return await manager.stop_supervisor()
 
     @app.post("/api/ta-thu/supervisor/stop")
@@ -302,7 +307,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/build")
     async def build(body: BuildRequest) -> dict[str, object]:
-        job = await jobs.create(body.worker_count, body.start_after_build, body.server)
+        job = await jobs.create(
+            body.worker_count,
+            body.start_after_build,
+            body.server,
+            body.proxy_workers_per_proxy,
+        )
         return job.public()
 
     @app.get("/api/jobs/{job_id}")

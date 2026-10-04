@@ -44,6 +44,9 @@ class ScheduleManager:
             if manager is not None
             else DEFAULT_WORKER_START_DELAY_SECONDS
         )
+        self.proxy_workers_per_proxy: int = (
+            manager.proxy_workers_per_proxy() if manager is not None else 6
+        )
         self.current_phase: Literal["nvhn", "ta_thu"] = "nvhn"
         self.last_run_at: str | None = None
         self.next_run_at: str | None = None
@@ -81,6 +84,15 @@ class ScheduleManager:
                 self.worker_start_delay_seconds = max(0, min(int(raw_delay), 3600))
             except (TypeError, ValueError):
                 self.worker_start_delay_seconds = DEFAULT_WORKER_START_DELAY_SECONDS
+            raw_proxy_group_size = data.get(
+                "proxy_workers_per_proxy", self.proxy_workers_per_proxy
+            )
+            try:
+                self.proxy_workers_per_proxy = max(0, min(int(raw_proxy_group_size), 500))
+            except (TypeError, ValueError):
+                self.proxy_workers_per_proxy = (
+                    self.manager.proxy_workers_per_proxy() if self.manager is not None else 6
+                )
             if self.manager is not None:
                 self.manager.set_worker_start_delay_seconds(self.worker_start_delay_seconds)
             self.current_phase = data.get("current_phase", "nvhn")
@@ -108,6 +120,7 @@ class ScheduleManager:
             "start_time" not in data
             or "repeat_hours" not in data
             or "worker_start_delay_seconds" not in data
+            or "proxy_workers_per_proxy" not in data
         ):
             self._save()
 
@@ -124,6 +137,7 @@ class ScheduleManager:
             "interval_hours": self.repeat_hours,
             "worker_count": self.worker_count,
             "worker_start_delay_seconds": self.worker_start_delay_seconds,
+            "proxy_workers_per_proxy": self.proxy_workers_per_proxy,
             "server": self.server,
             "auto_ta_thu": self.auto_ta_thu,
             "current_phase": self.current_phase,
@@ -194,6 +208,7 @@ class ScheduleManager:
             "interval_hours": self.repeat_hours,
             "worker_count": self.worker_count,
             "worker_start_delay_seconds": self.worker_start_delay_seconds,
+            "proxy_workers_per_proxy": self.proxy_workers_per_proxy,
             "server": self.server,
             "auto_ta_thu": self.auto_ta_thu,
             "current_phase": self.current_phase,
@@ -216,6 +231,7 @@ class ScheduleManager:
         start_time: str | None = None,
         repeat_hours: int | None = None,
         worker_start_delay_seconds: int | None = None,
+        proxy_workers_per_proxy: int | None = None,
     ) -> dict[str, Any]:
         selected_start_time = start_time if start_time is not None else daily_time
         selected_repeat_hours = repeat_hours if repeat_hours is not None else interval_hours
@@ -239,6 +255,11 @@ class ScheduleManager:
             self.worker_start_delay_seconds = int(worker_start_delay_seconds)
             if self.manager is not None:
                 self.manager.set_worker_start_delay_seconds(self.worker_start_delay_seconds)
+
+        if proxy_workers_per_proxy is not None:
+            if proxy_workers_per_proxy < 0 or proxy_workers_per_proxy > 500:
+                raise ControlError("Số worker dùng chung proxy phải từ 0 đến 500")
+            self.proxy_workers_per_proxy = int(proxy_workers_per_proxy)
 
         # Lưu cấu hình mới là bắt đầu một chu kỳ mới. Nhờ xóa last_run_at,
         # lần chạy đầu tiên luôn lấy đúng Giờ chạy đầu tiên người dùng chọn.
@@ -320,12 +341,14 @@ class ScheduleManager:
             try:
                 if self.manager is not None:
                     # Dừng toàn bộ tiến trình Tà Thú trước.
-                    await self.manager.stop_ta_thu()
+                    if not await self.manager.stop_ta_thu():
+                        raise ControlError("Không dừng được toàn bộ Tà Thú trước khi build NVHN")
                 self.current_phase = "nvhn"
                 await self.jobs.create(
                     worker_count=self.worker_count,
                     start_after_build=True,
                     server=self.server,
+                    proxy_workers_per_proxy=self.proxy_workers_per_proxy,
                 )
                 # Mốc lặp tính từ lúc job được nhận, không phải từ lúc build
                 # hoàn thành; nếu build còn chạy thì active_job sẽ trì hoãn.
@@ -356,7 +379,10 @@ class ScheduleManager:
                 and not nvhn_status.get("supervisor", {}).get("running")
             ):
                 logger.info("Tất cả %s worker NVHN đã hoàn thành; khởi chạy Tà Thú...", total_workers)
-                if await self.manager.start_ta_thu(worker_count=self.worker_count):
+                if await self.manager.start_ta_thu(
+                    worker_count=self.worker_count,
+                    server=self.manager.selected_server(),
+                ):
                     self.current_phase = "ta_thu"
                     self._save()
                     logger.info("Đã khởi chạy thành công Auto Tà Thú.")

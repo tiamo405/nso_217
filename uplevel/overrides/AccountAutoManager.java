@@ -1,0 +1,899 @@
+import java.io.InputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Vector;
+
+/** Sequential account/character runner for daily missions. */
+public final class AccountAutoManager implements Runnable {
+    private static final int MAX_CONNECT_RETRIES = 3;
+    private static final long CONNECT_RETRY_DELAY = 10000L;
+    private static final Vector usernames = new Vector();
+    private static final Vector passwords = new Vector();
+    private static int accountIndex;
+    private static int characterIndex;
+    private static String[] characterNames;
+    private static boolean enabled;
+    private static boolean started;
+    private static boolean switching;
+    private static boolean waitingForGame;
+    private static volatile boolean waitingForCharacters;
+    private static boolean enteringCave;
+    private static boolean postDailyProcessing;
+    private static boolean reconnecting;
+    private static int disconnectRetryCount;
+    private static int connectRetryCount;
+    private static volatile int progressMonitorGeneration;
+    private static volatile String lastProgressSnapshot = "";
+    private static volatile long lastProgressLog;
+
+    private AccountAutoManager() {
+    }
+
+    public static synchronized void start() {
+        if (started) {
+            return;
+        }
+        started = true;
+        loadAccounts();
+        if (usernames.size() == 0) {
+            System.out.println("AUTO NVHN: account.csv không có tài khoản, bỏ qua tự đăng nhập.");
+            finishAll();
+            return;
+        }
+        enabled = true;
+        accountIndex = 0;
+        characterIndex = 0;
+        characterNames = null;
+        switching = true;
+        reconnecting = false;
+        disconnectRetryCount = 0;
+        connectRetryCount = 0;
+        (new Thread(new AccountAutoManager())).start();
+    }
+
+    private static void loadAccounts() {
+        InputStream input = null;
+        try {
+            input = AccountAutoManager.class.getResourceAsStream("/account.csv");
+            if (input == null) {
+                System.out.println("AUTO NVHN: không tìm thấy account.csv trong JAR.");
+                return;
+            }
+            byte[] bytes = new byte[input.available()];
+            int offset = 0;
+            while (offset < bytes.length) {
+                int read = input.read(bytes, offset, bytes.length - offset);
+                if (read < 0) {
+                    break;
+                }
+                offset += read;
+            }
+            String content = new String(bytes, 0, offset, "UTF-8");
+            int start = 0;
+            while (start <= content.length()) {
+                int end = content.indexOf('\n', start);
+                if (end < 0) {
+                    end = content.length();
+                }
+                addAccount(content.substring(start, end).trim());
+                if (end == content.length()) {
+                    break;
+                }
+                start = end + 1;
+            }
+        } catch (Exception ex) {
+            System.out.println("AUTO NVHN: lỗi đọc account.csv: " + ex.toString());
+        } finally {
+            try {
+                if (input != null) {
+                    input.close();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static void addAccount(String line) {
+        if (line.length() == 0 || line.charAt(0) == '#') {
+            return;
+        }
+        int comma = line.indexOf(',');
+        if (comma <= 0 || comma == line.length() - 1) {
+            System.out.println("AUTO NVHN: bỏ qua dòng account.csv sai định dạng.");
+            return;
+        }
+        String username = line.substring(0, comma).trim();
+        String password = line.substring(comma + 1).trim();
+        if (username.equalsIgnoreCase("username") && password.equalsIgnoreCase("password")) {
+            return;
+        }
+        if (username.length() > 0 && password.length() > 0) {
+            usernames.addElement(username);
+            passwords.addElement(password);
+        }
+    }
+
+    public void run() {
+        try {
+            Thread.sleep(3000L);
+            loginCurrentAccount();
+        } catch (InterruptedException ignored) {
+        }
+    }
+
+    private static void loginCurrentAccount() {
+        if (!enabled || accountIndex >= usernames.size()) {
+            finishAll();
+            return;
+        }
+        String username = (String) usernames.elementAt(accountIndex);
+        String password = (String) passwords.elementAt(accountIndex);
+        SelectServerScr.uname = username;
+        SelectServerScr.pass = password;
+        SelectServerScr.unameChange = "";
+        SelectServerScr.passChange = "";
+        GameMidlet.IP = UpdateServer.listIP[0];
+        GameMidlet.PORT = UpdateServer.listPort[0];
+        GameMidlet.serverLogin = UpdateServer.serverLoginList[0];
+        System.out.println("AUTO NVHN: server=" + UpdateServer.listName[0] + " (" + GameMidlet.IP + ":" + GameMidlet.PORT + ")");
+        // Keep the original name order across logins: the server moves the last
+        // selected character to the front of each new list.
+        waitingForCharacters = false;
+        waitingForGame = false;
+        enteringCave = false;
+        postDailyProcessing = false;
+
+        System.out.println("AUTO NVHN: đăng nhập tài khoản " + username + " (" + (accountIndex + 1) + "/" + usernames.size() + ")");
+        Code.fieldAG();
+        Session_ME session = Session_ME.gI();
+        session.gameAC();
+        session.gameAA11(GameMidlet.IP, GameMidlet.PORT);
+        long deadline = System.currentTimeMillis() + 20000L;
+        while ((!session.connected || !session.getKeyComplete) && System.currentTimeMillis() < deadline) {
+            sleep(100L);
+        }
+        if (!session.connected || !session.getKeyComplete) {
+            session.gameAC();
+            int retryNumber = ++connectRetryCount;
+            if (retryNumber <= MAX_CONNECT_RETRIES) {
+                System.out.println("AUTO NVHN: kết nối thất bại, thử lại tài khoản " + username
+                        + " sau " + (CONNECT_RETRY_DELAY / 1000L) + " giây (lần "
+                        + retryNumber + "/" + MAX_CONNECT_RETRIES + ").");
+                sleep(CONNECT_RETRY_DELAY);
+                loginCurrentAccount();
+                return;
+            }
+            System.out.println("AUTO NVHN: kết nối tài khoản " + username + " vẫn thất bại sau "
+                    + MAX_CONNECT_RETRIES + " lần thử lại, chuyển tài khoản tiếp theo.");
+            connectRetryCount = 0;
+            nextAccount();
+            return;
+        }
+        connectRetryCount = 0;
+        waitingForCharacters = true;
+        Service.gI().login(username, password, "2.1.7");
+    }
+
+    public static synchronized boolean isRunning() {
+        return enabled;
+    }
+
+    /** Route legacy reconnect requests through the account runner as well. */
+    public static synchronized boolean onReconnectRequested() {
+        if (!enabled) {
+            return false;
+        }
+        if (switching || reconnecting) {
+            return true;
+        }
+        Code.fieldAG();
+        Session_ME.gI().gameAC();
+        return onDisconnected();
+    }
+
+    public static synchronized void onCharacterList(String[] names) {
+        if (!enabled || !waitingForCharacters) {
+            return;
+        }
+        waitingForCharacters = false;
+        if (characterNames == null) {
+            characterNames = new String[names.length];
+            System.arraycopy(names, 0, characterNames, 0, names.length);
+        }
+        while (characterIndex < characterNames.length
+                && (characterNames[characterIndex] == null || characterNames[characterIndex].length() == 0)) {
+            ++characterIndex;
+        }
+        if (characterIndex >= characterNames.length) {
+            switching = true;
+            (new Thread(new Runnable() {
+                public void run() {
+                    nextAccount();
+                }
+            })).start();
+            return;
+        }
+        String name = characterNames[characterIndex];
+        boolean found = false;
+        for (int i = 0; i < names.length; ++i) {
+            if (name.equals(names[i])) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            skipCurrentCharacter("nhân vật " + name + " không còn trong danh sách server");
+            return;
+        }
+        BotMetrics.begin(getCurrentUsername(), name);
+        SelectCharScr.fieldAK = name;
+        waitingForGame = true;
+        switching = false;
+        System.out.println("AUTO NVHN: chọn nhân vật " + name);
+        Service.gI().selectCharToPlay(name);
+    }
+
+    public static synchronized void onServerMessage(String message) {
+        if (!enabled || !switching) {
+            return;
+        }
+        System.out.println("AUTO NVHN: đăng nhập không thành công, chuyển tài khoản. " + message);
+        (new Thread(new Runnable() {
+            public void run() {
+                sleep(1000L);
+                nextAccount();
+            }
+        })).start();
+    }
+
+    public static synchronized void onGameReady() {
+        if (!enabled || !waitingForGame) {
+            return;
+        }
+        Char me = Char.getMyChar();
+        if (characterNames == null || characterIndex >= characterNames.length
+                || !characterNames[characterIndex].equals(me.cName)) {
+            System.out.println("AUTO LOGIN: nhân vật vào game không khớp tên đang chờ, đăng nhập lại");
+            reconnecting = false;
+            onReconnectRequested();
+            return;
+        }
+        reconnecting = false;
+        disconnectRetryCount = 0;
+        waitingForGame = false;
+        BotMetrics.event("game_ready", me.nClass == null ? "" : String.valueOf(me.nClass.classId), me.clevel);
+        int mode = Integer.getInteger("nso.as20.mode", 0);
+        if (mode < 1 || mode > 6) {
+            mode = 1;
+        }
+        System.out.println("AUTO AS20: mode=" + mode + " requestedClass=kiếm actualClass="
+                + (me.nClass == null ? "unknown" : me.nClass.name + "#" + me.nClass.classId)
+                + " level=" + me.clevel);
+        startProgressMonitor(me);
+        Code.fieldAA((Auto) new As20(mode));
+    }
+
+    private static void startProgressMonitor(final Char monitored) {
+        final int generation = ++progressMonitorGeneration;
+        lastProgressSnapshot = "";
+        lastProgressLog = 0L;
+        (new Thread(new Runnable() {
+            public void run() {
+                while (enabled && generation == progressMonitorGeneration && !switching
+                        && Char.getMyChar() == monitored) {
+                    try {
+                        String snapshot = compactProgressSnapshot(monitored);
+                        long now = System.currentTimeMillis();
+                        if (!snapshot.equals(lastProgressSnapshot) || now - lastProgressLog >= 30000L) {
+                            System.out.println("UPLEVEL STATE " + snapshot);
+                            lastProgressSnapshot = snapshot;
+                            lastProgressLog = now;
+                        }
+                    } catch (Exception ex) {
+                        System.out.println("UPLEVEL STATE error=" + ex.toString());
+                    }
+                    sleep(5000L);
+                }
+            }
+        })).start();
+    }
+
+    private static String compactProgressSnapshot(Char me) {
+        StringBuilder out = new StringBuilder();
+        out.append("name=").append(me.cName)
+                .append(" level=").append(me.clevel)
+                .append(" exp=").append(me.gameBE).append('/').append(expForLevel(me.clevel))
+                .append(" totalExp=").append(me.cEXP)
+                .append(" map=").append(TileMap.mapID).append(" zone=").append(TileMap.zoneID)
+                .append(" hp=").append(me.cHP).append('/').append(me.cMaxHP)
+                .append(" mob=").append(mobState(me))
+                .append(" drops=").append(itemMapState())
+                .append(" task=").append(me.ctaskId);
+        Task task = me.taskMaint;
+        if (task != null) {
+            out.append(':').append(task.index);
+            if (task.counts != null && task.index >= 0 && task.index < task.counts.length) {
+                out.append(" progress=").append(task.count).append('/').append(task.counts[task.index]);
+            }
+        }
+        return out.toString();
+    }
+
+    private static String progressSnapshot(Char me) {
+        StringBuilder out = new StringBuilder();
+        out.append("name=").append(me.cName)
+                .append(" level=").append(me.clevel)
+                .append(" exp=").append(me.gameBE).append('/').append(expForLevel(me.clevel))
+                .append(" totalExp=").append(me.cEXP)
+                .append(" class=").append(me.nClass == null ? "unknown" : me.nClass.name + "#" + me.nClass.classId)
+                .append(" map=").append(TileMap.mapID).append(" zone=").append(TileMap.zoneID)
+                .append(" pos=").append(me.cx).append(',').append(me.cy)
+                .append(" npcs=").append(allNpcState())
+                .append(" npcTemplates=").append(npcTemplateState())
+                .append(" uiMenu=").append(GameCanvas.menu.showMenu).append(':')
+                .append(GameCanvas.menu.showbyServer).append(':').append(GameCanvas.menu.menuSelectedItem)
+                .append(" menuItems=").append(menuItems())
+                .append(" dialog=").append(GameCanvas.currentDialog == null ? "none" : GameCanvas.currentDialog.getClass().getSimpleName())
+                .append(" focusNpc=").append(me.npcFocus == null || me.npcFocus.template == null
+                        ? "none" : logSafe(me.npcFocus.template.name) + "#" + me.npcFocus.template.npcTemplateId)
+                .append(" task=").append(me.ctaskId);
+        Task task = me.taskMaint;
+        if (task != null) {
+            out.append(':').append(task.index);
+            if (task.subNames != null && task.index >= 0 && task.index < task.subNames.length) {
+                out.append(" objective=\"").append(logSafe(task.subNames[task.index])).append('"');
+            }
+            if (task.counts != null && task.index >= 0 && task.index < task.counts.length) {
+                out.append(" progress=").append(task.count).append('/').append(task.counts[task.index]);
+            }
+        }
+        out.append(" weapon=").append(itemState(me.arrItemBody == null ? null : me.arrItemBody[1]))
+                .append(" body9=").append(itemState(me.arrItemBody == null ? null : me.arrItemBody[9]))
+                .append(" drops=").append(itemMapState())
+                .append(" bagWeapons=").append(bagItems(me))
+                .append(" bagAll=").append(allBagItems(me))
+                .append(" books=").append(bagBooks(me))
+                .append(" skills=").append(skills(me))
+                .append(" activeSkill=").append(me.myskill == null || me.myskill.template == null
+                        ? "none" : logSafe(me.myskill.template.name) + ":" + me.myskill.point)
+                .append(" mob=").append(mobState(me))
+                .append(" points(skill=").append(me.sPoint).append(",potential=").append(me.pPoint).append(')')
+                .append(" currency(yen=").append(me.yen).append(",xu=").append(me.xu).append(",luong=").append(me.luong).append(')')
+                .append(" potential=").append(me.potential == null ? "unknown" : me.potential[0] + "," + me.potential[1]
+                        + "," + me.potential[2] + "," + me.potential[3]);
+        return out.toString();
+    }
+
+    private static String itemMapState() {
+        StringBuilder out = new StringBuilder("[");
+        for (int i = 0; i < GameScr.vItemMap.size(); i++) {
+            ItemMap item = (ItemMap) GameScr.vItemMap.elementAt(i);
+            if (item == null || item.fieldAK) continue;
+            if (out.length() > 1) out.append(',');
+            out.append(logSafe(item.template == null ? "unknown" : item.template.name))
+                    .append('#').append(item.template == null ? -1 : item.template.id)
+                    .append('@').append(item.xEnd).append(',').append(item.yEnd);
+        }
+        return out.append(']').toString();
+    }
+
+    private static String expForLevel(int level) {
+        return GameScr.exps != null && level >= 0 && level < GameScr.exps.length
+                ? String.valueOf(GameScr.exps[level]) : "unknown";
+    }
+
+    private static String mobState(Char me) {
+        StringBuilder out = new StringBuilder();
+        Mob focus = me.mobFocus;
+        if (focus == null) {
+            out.append("none");
+        } else {
+            MobTemplate template = focus.getTemplate();
+            out.append(template == null ? "unknown" : logSafe(template.name))
+                    .append('#').append(focus.templateId).append(" lv=").append(focus.level)
+                    .append(" hp=").append(focus.hp).append('/').append(focus.maxHp);
+        }
+        out.append(" alive=[");
+        int added = 0;
+        for (int i = 0; i < GameScr.vMob.size() && added < 6; i++) {
+            Mob mob = (Mob) GameScr.vMob.elementAt(i);
+            if (mob == null || mob.hp <= 0 || mob.status == 0 || mob.status == 1) continue;
+            if (added++ > 0) out.append(',');
+            MobTemplate template = mob.getTemplate();
+            out.append(template == null ? "unknown" : logSafe(template.name))
+                    .append('#').append(mob.templateId).append(" lv=").append(mob.level)
+                    .append(" hp=").append(mob.hp).append('/').append(mob.maxHp);
+        }
+        return out.append(']').toString();
+    }
+
+    private static String menuItems() {
+        if (!GameCanvas.menu.showMenu) return "closed";
+        try {
+            java.lang.reflect.Field field = Menu.class.getDeclaredField("menuItems");
+            field.setAccessible(true);
+            MyVector items = (MyVector) field.get(GameCanvas.menu);
+            StringBuilder out = new StringBuilder("[");
+            for (int i = 0; items != null && i < items.size(); i++) {
+                if (i > 0) out.append(',');
+                Command item = (Command) items.elementAt(i);
+                out.append(i).append(':').append(logSafe(item.caption)).append('#').append(item.idAction);
+                if (item.p instanceof String[]) {
+                    out.append(java.util.Arrays.toString((String[]) item.p));
+                }
+            }
+            return out.append(']').toString();
+        } catch (Exception ex) {
+            return "error:" + ex.getClass().getSimpleName();
+        }
+    }
+
+    private static String npcState(int id) {
+        Npc npc = GameScr.fieldAI(id);
+        if (npc == null) return "missing";
+        StringBuilder state = new StringBuilder(logSafe(npc.template.name)).append('@')
+                .append(npc.cx).append(',').append(npc.cy).append(" menu=[");
+        String[][] menu = npc.template.menu;
+        if (menu != null) {
+            for (int i = 0; i < menu.length; i++) {
+                if (i > 0) state.append(',');
+                state.append(i).append(":");
+                if (menu[i] != null) {
+                    for (int j = 0; j < menu[i].length; j++) {
+                        if (j > 0) state.append('|');
+                        state.append(logSafe(menu[i][j]));
+                    }
+                }
+            }
+        }
+        return state.append(']').toString();
+    }
+
+    private static String allNpcState() {
+        StringBuilder state = new StringBuilder("[");
+        for (int i = 0; i < GameScr.vNpc.size(); i++) {
+            Npc npc = (Npc) GameScr.vNpc.elementAt(i);
+            if (npc == null || npc.template == null) continue;
+            if (state.length() > 1) state.append(',');
+            state.append(npc.template.npcTemplateId).append(':')
+                    .append(logSafe(npc.template.name)).append(" menu=")
+                    .append(npcMenuState(npc.template));
+        }
+        return state.append(']').toString();
+    }
+
+    private static String npcMenuState(NpcTemplate template) {
+        StringBuilder state = new StringBuilder("{");
+        String[][] menu = template.menu;
+        for (int i = 0; menu != null && i < menu.length; i++) {
+            if (i > 0) state.append(';');
+            state.append(i).append(':');
+            for (int j = 0; menu[i] != null && j < menu[i].length; j++) {
+                if (j > 0) state.append('|');
+                state.append(logSafe(menu[i][j]));
+            }
+        }
+        return state.append('}').toString();
+    }
+
+    private static String npcTemplateState() {
+        StringBuilder state = new StringBuilder("[");
+        for (int i = 0; Npc.arrNpcTemplate != null && i < Npc.arrNpcTemplate.length; i++) {
+            NpcTemplate template = Npc.arrNpcTemplate[i];
+            if (template == null || template.name == null) continue;
+            if (state.length() > 1) state.append(',');
+            state.append(i).append(':').append(logSafe(template.name)).append(" menu=")
+                    .append(npcMenuState(template));
+        }
+        return state.append(']').toString();
+    }
+
+    private static String bagItems(Char me) {
+        StringBuilder out = new StringBuilder("[");
+        boolean first = true;
+        if (me.arrItemBag != null) {
+            for (int i = 0; i < me.arrItemBag.length; i++) {
+                Item item = me.arrItemBag[i];
+                if (item == null || item.template == null || !item.isTypeWeapon()) continue;
+                if (!first) out.append(',');
+                out.append(itemState(item));
+                first = false;
+            }
+        }
+        return out.append(']').toString();
+    }
+
+    private static String allBagItems(Char me) {
+        StringBuilder out = new StringBuilder("[");
+        boolean first = true;
+        if (me.arrItemBag != null) {
+            for (int i = 0; i < me.arrItemBag.length; i++) {
+                Item item = me.arrItemBag[i];
+                if (item == null || item.template == null) continue;
+                if (!first) out.append(',');
+                out.append(i).append(':').append(itemState(item)).append('x').append(item.quantity)
+                        .append("/t").append(item.template.type);
+                first = false;
+            }
+        }
+        return out.append(']').toString();
+    }
+
+    private static String bagBooks(Char me) {
+        StringBuilder out = new StringBuilder("[");
+        boolean first = true;
+        if (me.arrItemBag != null) {
+            for (int i = 0; i < me.arrItemBag.length; i++) {
+                Item item = me.arrItemBag[i];
+                if (item == null || item.template == null) continue;
+                String name = item.template.name == null ? "" : item.template.name.toLowerCase();
+                if (item.template.type != 22 && item.template.type != 27
+                        && !name.contains("sách") && !name.contains("book")) continue;
+                if (!first) out.append(',');
+                out.append(itemState(item)).append('x').append(item.quantity);
+                first = false;
+            }
+        }
+        return out.append(']').toString();
+    }
+
+    private static String skills(Char me) {
+        StringBuilder out = new StringBuilder("[");
+        boolean first = true;
+        if (me.vSkill != null) {
+            for (int i = 0; i < me.vSkill.size(); i++) {
+                Skill skill = (Skill) me.vSkill.elementAt(i);
+                if (skill == null || skill.template == null) continue;
+                if (!first) out.append(',');
+                out.append(logSafe(skill.template.name)).append(':').append(skill.point);
+                first = false;
+            }
+        }
+        return out.append(']').toString();
+    }
+
+    private static String itemState(Item item) {
+        if (item == null || item.template == null) return "none";
+        return logSafe(item.template.name) + "#" + item.template.id + "+" + item.upgrade
+                + "@" + item.indexUI + (item.isLock ? "/L" : "/U");
+    }
+
+    private static String logSafe(String value) {
+        return value == null ? "" : value.replace('\r', ' ').replace('\n', ' ').replace('"', '\'');
+    }
+
+    /** Reconnects the current account when an established socket is closed before/during play. */
+    public static synchronized boolean onDisconnected() {
+        if (!enabled) {
+            return false;
+        }
+        if (switching) {
+            return true;
+        }
+        if (reconnecting) {
+            return true;
+        }
+
+        reconnecting = true;
+        Code.fieldAG();
+        waitingForCharacters = false;
+        final int retryAccount = accountIndex;
+        final int retryCharacter = characterIndex;
+        BotMetrics.event("reconnect", "", 1);
+        waitingForGame = false;
+        enteringCave = false;
+        int retryNumber = ++disconnectRetryCount;
+        final long delay = Math.min(30000L, 5000L * retryNumber);
+        System.out.println("AUTO LOGIN: mất kết nối, đăng nhập lại tài khoản hiện tại sau "
+                + (delay / 1000L) + " giây (lần " + retryNumber + ")");
+
+        (new Thread(new Runnable() {
+            public void run() {
+                sleep(delay);
+                synchronized (AccountAutoManager.class) {
+                    if (!enabled || switching || !reconnecting
+                            || accountIndex != retryAccount || characterIndex != retryCharacter) {
+                        return;
+                    }
+                    reconnecting = false;
+                }
+                loginCurrentAccount();
+            }
+        })).start();
+        return true;
+    }
+
+    public static synchronized void onCharacterBelowLevel30(String message) {
+        if (!enabled || switching) {
+            return;
+        }
+        skipCurrentCharacter("NPC báo chưa đạt cấp 30, bỏ qua nhân vật. " + message);
+    }
+
+    /**
+     * NPC 25 reports that the character has not unlocked enough main-story
+     * areas for a daily mission. This is a terminal condition for the current
+     * character; retrying the same NPC request only floods the log.
+     */
+    public static synchronized void onDailyTaskUnavailable(String message) {
+        // NPC responses can arrive after the current Auto has already changed
+        // (for example while switching characters or while Stanima is active).
+        // Never let a late/unrelated NPC25 response advance the account runner.
+        if (!enabled || switching || Code.fieldAB != Code.fieldAD || !isCurrentCharacter()) {
+            return;
+        }
+        Char current = Char.getMyChar();
+        String safeMessage = message == null ? "" : message.replace('\r', ' ').replace('\n', ' ');
+        writeDailyTaskUnavailableCsv(current, safeMessage);
+        skipCurrentCharacter("NPC25 không có NVHN phù hợp với tiến trình, chuyển nhân vật.");
+    }
+
+    /**
+     * Keeps the progression error separate from the noisy worker stdout log.
+     * Each worker gets its own CSV file so independent JVMs never append to a
+     * shared file. The optional directory is passed by both Linux and Windows
+     * launchers and is outside workers/ so rebuilding workers does not delete it.
+     */
+    private static void writeDailyTaskUnavailableCsv(Char current, String message) {
+        FileOutputStream output = null;
+        FileLock lock = null;
+        try {
+            String userHome = System.getProperty("user.home", ".");
+            String configuredDirectory = System.getProperty("nso.nvhn.error.dir");
+            File directory = configuredDirectory == null || configuredDirectory.length() == 0
+                    ? new File(userHome, "nvhn-errors")
+                    : new File(configuredDirectory);
+            if (!directory.isDirectory() && !directory.mkdirs() && !directory.isDirectory()) {
+                throw new Exception("không tạo được thư mục " + directory.getAbsolutePath());
+            }
+
+            String workerName = System.getProperty("nso.worker.name");
+            if (workerName == null || workerName.length() == 0) {
+                File home = new File(userHome);
+                File workerDirectory = home.getParentFile();
+                workerName = workerDirectory == null ? "unknown-worker" : workerDirectory.getName();
+            }
+            workerName = workerName.replaceAll("[^A-Za-z0-9._-]", "_");
+            File csvFile = new File(directory, workerName + ".csv");
+
+            output = new FileOutputStream(csvFile, true);
+            FileChannel channel = output.getChannel();
+            lock = channel.lock();
+            PrintWriter writer = new PrintWriter(new OutputStreamWriter(output, "UTF-8"));
+            if (csvFile.length() == 0L) {
+                writer.println("timestamp,server,worker,username,character,character_index,character_total,level,map_id,map_name,error_code,message,pass");
+            }
+            writer.println(csvField(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSSZ").format(new Date()))
+                    + "," + csvField(System.getProperty("nso.server", "unknown"))
+                    + "," + csvField(workerName)
+                    + "," + csvField(getCurrentUsername())
+                    + "," + csvField(current.cName)
+                    + "," + csvField(characterIndex + 1)
+                    + "," + csvField(characterNames.length)
+                    + "," + csvField(current.clevel)
+                    + "," + csvField(TileMap.mapID)
+                    + "," + csvField(TileMap.mapName)
+                    + "," + csvField("daily_task_unavailable")
+                    + "," + csvField(message)
+                    + "," + csvField(isSecondWorkerPass(userHome) ? "2" : "1"));
+            writer.flush();
+            System.out.println("AUTO NVHN: đã ghi lỗi tiến trình vào " + csvFile.getAbsolutePath()
+                    + " (" + getCurrentUsername() + "/" + current.cName + ")");
+        } catch (Exception ex) {
+            System.err.println("AUTO NVHN: không ghi được CSV lỗi tiến trình: " + ex.toString());
+        } finally {
+            if (lock != null) {
+                try {
+                    lock.release();
+                } catch (Exception ignored) {
+                }
+            }
+            if (output != null) {
+                try {
+                    output.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+    }
+
+    private static boolean isSecondWorkerPass(String userHome) {
+        return new File(userHome, "worker.first-pass.done").isFile();
+    }
+
+    private static String csvField(Object value) {
+        String text = value == null ? "" : String.valueOf(value);
+        text = text.replace('\r', ' ').replace('\n', ' ');
+        return "\"" + text.replace("\"", "\"\"") + "\"";
+    }
+
+    /**
+     * Handles the server telling us to accept the daily task before using it.
+     * This normally means a stale local TaskOrder; recover once, then abandon
+     * only the current character if the server repeats the rejection.
+     */
+    public static synchronized void onDailyTaskRequiresAcceptance(String message) {
+        if (!enabled || switching || Code.fieldAB != Code.fieldAD || !isCurrentCharacter()) {
+            return;
+        }
+        if (Code.fieldAD.recoverTaskAcceptanceRequired()) {
+            System.out.println("AUTO NVHN: server yêu cầu nhận lại NVHN, đã xóa task cục bộ và sẽ nhận lại. " + message);
+            return;
+        }
+        skipCurrentCharacter("NPC25 vẫn yêu cầu nhận NVHN sau khi phục hồi, chuyển nhân vật. " + message);
+    }
+
+    private static boolean isCurrentCharacter() {
+        if (characterNames == null || characterIndex < 0 || characterIndex >= characterNames.length) {
+            return false;
+        }
+        Char me = Char.getMyChar();
+        return me != null && characterNames[characterIndex] != null
+                && characterNames[characterIndex].equals(me.cName);
+    }
+
+    public static synchronized void onDailyTasksFinished() {
+        if (!enabled || switching) {
+            return;
+        }
+        startPostDailyActions();
+    }
+
+    /** Called immediately when NPC 25 says today's daily-task limit is exhausted. */
+    public static synchronized void onDailyLimitReached() {
+        if (!enabled || switching) {
+            return;
+        }
+        startPostDailyActions();
+    }
+
+    private static void startPostDailyActions() {
+        if (postDailyProcessing) {
+            return;
+        }
+        postDailyProcessing = true;
+        BotMetrics.event("daily_finished", "", Code.fieldAD.didDailyWorkThisRun() ? 1 : 0);
+        if (!Code.fieldAD.didDailyWorkThisRun()) {
+            System.out.println("AUTO NVHN LAT HINH: nhân vật không làm nhiệm vụ nào trong lượt chạy này, bỏ qua lật thẻ");
+            startCaveEntry();
+            return;
+        }
+        System.out.println("AUTO NVHN: đã hết nhiệm vụ, bắt đầu lật thẻ trước khi đi hang.");
+        AutoFlipNvhn flip = new AutoFlipNvhn();
+        BotMetrics.event("flip_started", "", 0);
+        flip.fieldAD();
+        Code.fieldAA((Auto) flip);
+    }
+
+    public static synchronized void onPostDailyFlipFinished() {
+        if (!enabled || switching) {
+            return;
+        }
+        BotMetrics.event("flip_finished", "processed_not_server_confirmed", 0);
+        startCaveEntry();
+    }
+
+    private static void startCaveEntry() {
+        if (enteringCave) {
+            return;
+        }
+        enteringCave = true;
+        BotMetrics.event("cave_started", "", 0);
+        System.out.println("AUTO NVHN: nhân vật đã hết nhiệm vụ, bắt đầu vào hang trước khi đổi nhân vật.");
+        AutoEnterCave cave = new AutoEnterCave();
+        cave.fieldAD();
+        Code.fieldAA((Auto) cave);
+    }
+
+    public static synchronized void onCaveEntered() {
+        if (!enabled || switching) {
+            return;
+        }
+        boolean entered = TileMap.isHang(TileMap.mapID);
+        BotMetrics.event("cave_finished", entered ? "entered" : "skipped_or_rejected", TileMap.mapID);
+        BotMetrics.finish(entered ? "completed" : "cave_skipped", "cave processing finished");
+        skipCurrentCharacter("đã xử lý hang động, chuyển nhân vật");
+    }
+
+    private static void skipCurrentCharacter(String reason) {
+        reconnecting = false;
+        waitingForCharacters = false;
+        BotMetrics.finish("skipped", reason);
+        switching = true;
+        waitingForGame = false;
+        enteringCave = false;
+        postDailyProcessing = false;
+        Code.fieldAG();
+        System.out.println("AUTO NVHN: " + reason);
+        (new Thread(new Runnable() {
+            public void run() {
+                sleep(1500L);
+                advanceCharacterOrAccount();
+            }
+        })).start();
+    }
+
+    private static void advanceCharacterOrAccount() {
+        characterIndex++;
+        while (characterNames != null && characterIndex < characterNames.length
+                && (characterNames[characterIndex] == null || characterNames[characterIndex].length() == 0)) {
+            characterIndex++;
+        }
+        if (characterNames != null && characterIndex < characterNames.length) {
+            loginCurrentAccount();
+        } else {
+            nextAccount();
+        }
+    }
+
+    public static synchronized String getCurrentUsername() {
+        if (!enabled || accountIndex < 0 || accountIndex >= usernames.size()) {
+            return "-";
+        }
+        return (String) usernames.elementAt(accountIndex);
+    }
+
+    private static void nextAccount() {
+        reconnecting = false;
+        waitingForCharacters = false;
+        BotMetrics.finish("account_abandoned", "advancing account before character completion");
+        accountIndex++;
+        characterIndex = 0;
+        characterNames = null;
+        connectRetryCount = 0;
+        switching = true;
+        loginCurrentAccount();
+    }
+
+    private static void finishAll() {
+        BotMetrics.finish("interrupted", "worker finishing with active character");
+        enabled = false;
+        switching = false;
+        reconnecting = false;
+        System.out.println("AUTO NVHN: đã xử lý hết toàn bộ tài khoản và nhân vật, dừng worker.");
+        markWorkerCompleted();
+        Session_ME.gI().gameAC();
+        sleep(500L);
+        if (GameMidlet.instance != null) {
+            GameMidlet.instance.notifyDestroyed();
+        }
+        System.exit(0);
+    }
+
+    private static void markWorkerCompleted() {
+        FileOutputStream output = null;
+        try {
+            String userHome = System.getProperty("user.home");
+            if (userHome == null || userHome.length() == 0) {
+                return;
+            }
+            File marker = new File(userHome, "worker.done");
+            output = new FileOutputStream(marker);
+            output.write("completed\n".getBytes("UTF-8"));
+            output.flush();
+            System.out.println("AUTO NVHN: đã tạo marker hoàn tất " + marker.getAbsolutePath());
+        } catch (Exception ex) {
+            System.out.println("AUTO NVHN: không thể tạo marker hoàn tất: " + ex.toString());
+        } finally {
+            try {
+                if (output != null) {
+                    output.close();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ignored) {
+        }
+    }
+}

@@ -613,11 +613,12 @@ class HeadlessManager:
             "pid": pid if running else None,
         }
 
-    async def start_ta_thu(self, worker_count: int = 10) -> bool:
+    async def start_ta_thu(self, worker_count: int = 10, server: str | None = None) -> bool:
         async with self.control_lock:
             status = self.ta_thu_supervisor_status()
             if status["running"]:
                 return True
+            selected_server = self.selected_server() if server is None else self.set_server(server)
 
             # 1. Build workers Tà Thú
             build_script = self.settings.ta_thu_dir / "scripts" / "build-workers.sh"
@@ -628,7 +629,7 @@ class HeadlessManager:
                 str(build_script),
                 str(worker_count),
                 timeout=300,
-                server=self.selected_server(),
+                server=selected_server,
             )
             if code != 0:
                 return False
@@ -644,7 +645,7 @@ class HeadlessManager:
                 subprocess.Popen(
                     [str(sup_script), "--delay", str(self.worker_start_delay_seconds())],
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(self.selected_server()),
+                    env=self.settings.command_env(selected_server),
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,
@@ -667,8 +668,10 @@ class HeadlessManager:
 
             # 2. Chạy stop-workers.sh
             stop_script = self.settings.ta_thu_dir / "scripts" / "stop-workers.sh"
+            stop_failed = False
             if stop_script.is_file():
-                await self._capture(str(stop_script), timeout=30)
+                code, _ = await self._capture(str(stop_script), timeout=30)
+                stop_failed = code != 0
 
             # 3. Đảm bảo supervisor đã bị kill
             if sup_pid is not None:
@@ -702,4 +705,4 @@ class HeadlessManager:
 
             if self.ta_thu_supervisor_pid_file.exists():
                 self.ta_thu_supervisor_pid_file.unlink(missing_ok=True)
-            return True
+            return not stop_failed

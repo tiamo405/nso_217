@@ -20,8 +20,7 @@ public final class AutoTaThuDaily extends Auto {
         this.nextActionAt = 0L;
         this.finished = false;
         this.startedAt = System.currentTimeMillis();
-        System.out.println("AUTO TA THU DAILY: bắt đầu ordersUsed=" + this.state.ordersUsed
-                + " completed=" + this.state.questsCompleted
+        System.out.println("AUTO TA THU DAILY: bắt đầu completed=" + this.state.questsCompleted
                 + " savedMap=" + this.state.mapId + " savedZone=" + this.state.zoneId
                 + " savedKill=" + this.state.killId);
     }
@@ -48,15 +47,6 @@ public final class AutoTaThuDaily extends Auto {
                     this.finishDaily();
                 } else if ("fight".equals(TaThuAccountManager.getStage())) {
                     TaThuAccountManager.onTestStageFinished("đã đánh và trả thành công một nhiệm vụ");
-                } else if (this.state.ordersUsed < 2 && !this.state.ordersPurchaseSkipped) {
-                    // A restarted worker may have lost local order state while
-                    // the server still has an active task. Only use missing
-                    // orders after that task has been safely turned in.
-                    this.finished = true;
-                    System.out.println("AUTO TA THU DAILY: task đã trả; quay lại kiểm tra Tà Thú Lệnh còn thiếu");
-                    AutoTaThuOrders orders = new AutoTaThuOrders(false);
-                    orders.fieldAD();
-                    Code.fieldAA((Auto) orders);
                 }
                 return;
             }
@@ -75,12 +65,8 @@ public final class AutoTaThuDaily extends Auto {
                 return;
             }
             int remaining = this.refreshRemainingRuns();
-            if (remaining == 0 && (this.state.ordersUsed >= 2 || this.state.ordersPurchaseSkipped)) {
+            if (remaining == 0) {
                 this.finishDaily();
-                return;
-            }
-            if (this.state.questsCompleted > 0 && this.state.ordersUsed < 2 && !this.state.ordersPurchaseSkipped) {
-                this.switchToOrders();
                 return;
             }
             if (TileMap.mapID != TASK_MAP) {
@@ -166,14 +152,6 @@ public final class AutoTaThuDaily extends Auto {
         if (latest.questsCompleted >= this.state.questsCompleted) {
             this.state = latest;
         }
-    }
-
-    private void switchToOrders() {
-        this.finished = true;
-        System.out.println("AUTO TA THU DAILY: task đã được server xác nhận; kiểm tra Tà Thú Lệnh còn thiếu");
-        AutoTaThuOrders orders = new AutoTaThuOrders(false);
-        orders.fieldAD();
-        Code.fieldAA((Auto) orders);
     }
 
     private static boolean isNoRunsMessage(String message) {

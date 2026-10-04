@@ -39,14 +39,6 @@ public final class TaThuAccountManager implements Runnable {
         return System.getProperty("ta.thu.stage", "full").toLowerCase();
     }
 
-    public static boolean isObserveStage() {
-        return "observe".equals(getStage());
-    }
-
-    public static boolean isShopStage() {
-        return "shop".equals(getStage());
-    }
-
     public static synchronized void start() {
         if (started) {
             return;
@@ -260,12 +252,6 @@ public final class TaThuAccountManager implements Runnable {
             resumePostProcessing(savedState);
             return;
         }
-        if (isObserveStage() || isShopStage()) {
-            AutoTaThuOrders observer = new AutoTaThuOrders(isObserveStage());
-            observer.fieldAD();
-            Code.fieldAA((Auto) observer);
-            return;
-        }
         if (!savedState.finished && savedState.mapId >= 0 && savedState.zoneId >= 0 && savedState.killId >= 0) {
             System.out.println("AUTO TA THU: có nhiệm vụ dở map="
                     + savedState.mapId + " zone=" + savedState.zoneId + " killId=" + savedState.killId
@@ -286,25 +272,6 @@ public final class TaThuAccountManager implements Runnable {
             System.out.println("AUTO TA THU: chuẩn bị xong; tiếp tục nhiệm vụ dở"
                     + (task == null ? " theo state đã lưu" : " TaskOrder map=" + task.mapId
                     + " killId=" + task.killId + " count=" + task.count + "/" + task.maxCount));
-            AutoTaThuDaily daily = new AutoTaThuDaily();
-            daily.fieldAD();
-            Code.fieldAA((Auto) daily);
-            return;
-        }
-        AutoTaThuOrders orders = new AutoTaThuOrders(false);
-        orders.fieldAD();
-        Code.fieldAA((Auto) orders);
-    }
-
-    public static synchronized void onOrdersReady() {
-        if (!enabled || switching) {
-            return;
-        }
-        if (!"full".equals(getStage()) && !"receive".equals(getStage()) && !"fight".equals(getStage())) {
-            System.out.println("AUTO TA THU: test stage " + getStage() + " hoàn tất một nhân vật, dừng test");
-            Code.fieldAG();
-            finishAll();
-            return;
         }
         AutoTaThuDaily daily = new AutoTaThuDaily();
         daily.fieldAD();
@@ -325,20 +292,14 @@ public final class TaThuAccountManager implements Runnable {
             return;
         }
         postProcessing = true;
-        System.out.println("AUTO TA THU: đã hết lượt, bắt đầu lật hình");
-        AutoFlipNvhn flip = new AutoFlipNvhn();
-        flip.fieldAD();
-        Code.fieldAA((Auto) flip);
+        continueAfterDaily();
     }
 
-    public static synchronized void onPostDailyFlipFinished() {
-        if (!enabled || switching) {
-            return;
-        }
+    private static void continueAfterDaily() {
         TaThuDailyState state = TaThuDailyState.loadCurrent();
         state.flipDone = true;
         state.save();
-        System.out.println("AUTO TA THU: đã ghi nhận hoàn tất lật hình, bắt đầu đi hang");
+        System.out.println("AUTO TA THU: bỏ qua lật hình, bắt đầu đi hang");
         AutoEnterCave cave = new AutoEnterCave();
         cave.fieldAD();
         Code.fieldAA((Auto) cave);
@@ -475,20 +436,17 @@ public final class TaThuAccountManager implements Runnable {
     private static void resumePostProcessing(TaThuDailyState state) {
         postProcessing = true;
         if (state.caveDone) {
-            skipCurrentCharacter("hôm nay đã hoàn tất Tà Thú, lật hình và hang động");
+            skipCurrentCharacter("hôm nay đã hoàn tất Tà Thú và hang động");
             return;
         }
         if (state.flipDone) {
-            System.out.println("AUTO TA THU: daily và lật hình đã xong, tiếp tục đi hang");
+            System.out.println("AUTO TA THU: daily đã xong, tiếp tục đi hang");
             AutoEnterCave cave = new AutoEnterCave();
             cave.fieldAD();
             Code.fieldAA((Auto) cave);
             return;
         }
-        System.out.println("AUTO TA THU: daily đã xong, tiếp tục từ bước lật hình");
-        AutoFlipNvhn flip = new AutoFlipNvhn();
-        flip.fieldAD();
-        Code.fieldAA((Auto) flip);
+        continueAfterDaily();
     }
 
     public static int getLastNpcId() {

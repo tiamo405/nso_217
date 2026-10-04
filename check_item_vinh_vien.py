@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -110,12 +110,24 @@ _INVENTORY_MODULE.logger.addHandler(_InventoryLogHandler())
 
 
 @dataclass
+class FoundItem:
+    username: str
+    character_name: str
+    slot: int
+    template_id: int
+    name: str
+    quantity: int
+    is_lock: bool
+
+
+@dataclass
 class CheckResult:
     account_ok: bool = False
     characters: int = 0
     matched: int = 0
     permanent: int = 0
     failed: int = 0
+    items: list[FoundItem] = field(default_factory=list)
 
 
 def check_character(client, username: str, character_name: str, item_ids) -> CheckResult:
@@ -128,6 +140,18 @@ def check_character(client, username: str, character_name: str, item_ids) -> Che
     ]
     result.matched = len(targets)
     result.permanent = len(targets)
+    result.items.extend(
+        FoundItem(
+            username=username,
+            character_name=character_name,
+            slot=item.index,
+            template_id=item.template_id,
+            name=item.name,
+            quantity=item.quantity,
+            is_lock=item.is_lock,
+        )
+        for item in targets
+    )
 
     log(
         f"  Hanh trang {username}/{character_name}: "
@@ -201,6 +225,7 @@ def process_account(username: str, password: str, args, item_ids) -> CheckResult
             total.characters += char_result.characters
             total.matched += char_result.matched
             total.permanent += char_result.permanent
+            total.items.extend(char_result.items)
     except Exception as exc:
         log(f"LOI: Xu ly tai khoan {username}: {exc}")
         total.failed += 1
@@ -254,8 +279,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--login-timeout", type=float, default=15.0)
     parser.add_argument("--game-timeout", type=float, default=15.0)
     parser.add_argument("--ready-delay", type=float, default=1.0)
-    parser.add_argument("--character-delay", type=float, default=5.0)
-    parser.add_argument("--account-delay", type=float, default=11.0)
+    parser.add_argument("--character-delay", type=float, default=3.0)
+    parser.add_argument("--account-delay", type=float, default=3.0)
     parser.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     parser.add_argument("--log-file", type=Path)
     return parser
@@ -267,6 +292,7 @@ def add_result(total: CheckResult, result: CheckResult):
     total.matched += result.matched
     total.permanent += result.permanent
     total.failed += result.failed
+    total.items.extend(result.items)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -354,6 +380,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             f"vinh vien={total.permanent} | "
             f"that bai={total.failed}"
         )
+        log("CHI TIET ITEM VINH VIEN:")
+        if total.items:
+            for item in sorted(
+                total.items,
+                key=lambda value: (
+                    value.username,
+                    value.character_name,
+                    value.slot,
+                ),
+            ):
+                log(
+                    f"  tai khoan={item.username} | nhan vat={item.character_name} | "
+                    f"item={item.name} | id={item.template_id} | "
+                    f"so luong={item.quantity} | slot={item.slot:02d} | "
+                    f"khoa={item.is_lock}"
+                )
+        else:
+            log("  Khong co item vinh vien nao trong hanh trang")
         log(f"MAIN LOG: {log_file}")
         return 1 if total.failed else 0
     finally:

@@ -34,6 +34,12 @@ class CheckItemVinhVienTest(unittest.TestCase):
             (result.matched, result.permanent),
             (1, 1),
         )
+        self.assertEqual(
+            result.items[0].username,
+            "user",
+        )
+        self.assertEqual(result.items[0].character_name, "char")
+        self.assertEqual(result.items[0].quantity, 2)
 
 
 if __name__ == "__main__":

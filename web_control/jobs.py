@@ -21,6 +21,7 @@ class BuildJob:
     worker_count: int
     start_after_build: bool
     server: str = "tk"
+    proxy_workers_per_proxy: int = 6
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: str | None = None
@@ -36,6 +37,7 @@ class BuildJob:
             "worker_count": self.worker_count,
             "start_after_build": self.start_after_build,
             "server": self.server,
+            "proxy_workers_per_proxy": self.proxy_workers_per_proxy,
             "status": self.status,
             "created_at": self.created_at,
             "started_at": self.started_at,
@@ -78,7 +80,11 @@ class BuildJobManager:
         )
 
     async def create(
-        self, worker_count: int, start_after_build: bool, server: str = "tk"
+        self,
+        worker_count: int,
+        start_after_build: bool,
+        server: str = "tk",
+        proxy_workers_per_proxy: int | None = None,
     ) -> BuildJob:
         if worker_count < 1 or worker_count > 500:
             raise ControlError("Số worker phải từ 1 đến 500")
@@ -87,6 +93,10 @@ class BuildJobManager:
             raise ControlError("Chưa có account.csv")
         if worker_count > account_count:
             raise ControlError(f"Có {account_count} account nhưng yêu cầu {worker_count} worker")
+        if proxy_workers_per_proxy is None:
+            proxy_workers_per_proxy = self.manager.proxy_workers_per_proxy()
+        if proxy_workers_per_proxy < 0 or proxy_workers_per_proxy > 500:
+            raise ControlError("Số worker dùng chung proxy phải từ 0 đến 500")
         active = self.active_job()
         if active is not None:
             raise ControlError(f"Build {active.id} đang chạy")
@@ -96,6 +106,7 @@ class BuildJobManager:
             worker_count=worker_count,
             start_after_build=start_after_build,
             server=server,
+            proxy_workers_per_proxy=proxy_workers_per_proxy,
         )
         self.jobs[job.id] = job
         task = asyncio.create_task(self._run(job))
@@ -111,6 +122,7 @@ class BuildJobManager:
             was_desired = self.manager.desired_supervisor()
             was_running = self.manager.supervisor_status()["running"]
             was_server = self.manager.selected_server()
+            was_proxy_workers_per_proxy = self.manager.proxy_workers_per_proxy()
             should_restart = job.start_after_build
             try:
                 await job.append("Đang dừng supervisor và worker...")
@@ -157,7 +169,11 @@ class BuildJobManager:
                 await job.append("Build và kiểm tra worker thành công.")
                 if should_restart:
                     await job.append("Đang khởi động supervisor...")
-                    await self.manager.start_supervisor(remember=True, server=job.server)
+                    await self.manager.start_supervisor(
+                        remember=True,
+                        server=job.server,
+                        proxy_workers_per_proxy=job.proxy_workers_per_proxy,
+                    )
                 else:
                     self.manager._set_desired_supervisor(False)
                 job.status = "succeeded"
@@ -168,7 +184,11 @@ class BuildJobManager:
                 if was_desired or was_running:
                     try:
                         await job.append("Đang phục hồi supervisor với runtime cũ...")
-                        await self.manager.start_supervisor(remember=True, server=was_server)
+                        await self.manager.start_supervisor(
+                            remember=True,
+                            server=was_server,
+                            proxy_workers_per_proxy=was_proxy_workers_per_proxy,
+                        )
                     except Exception as restart_exc:
                         await job.append(f"Không thể phục hồi supervisor: {restart_exc}")
             finally:

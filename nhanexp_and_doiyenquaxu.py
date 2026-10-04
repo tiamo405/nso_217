@@ -56,9 +56,9 @@ from map_graph import MAP_GRAPH, find_map_path
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-nhanexp.csv"
-# DEFAULT_HOST = "Nsm4.ninjasm.net" # sv4 k có nhận exp nên thêm biến --bo-qua-exp để bỏ qua bước nhận exp
+DEFAULT_HOST = "Nsm1.ninjasm.net" # sv4 k có nhận exp nên thêm biến --bo-qua-exp để bỏ qua bước nhận exp
 # server TK
-DEFAULT_HOST = "Nsotk1.nsotk.online"
+# DEFAULT_HOST = "Nsotk1.nsotk.online"
 DEFAULT_PORT = 14444
 DEFAULT_DELAY = 3.0
 DEFAULT_RETRY_ATTEMPTS = 2
@@ -727,7 +727,7 @@ def build_parser():
     )
     parser.set_defaults(receive_exp=True)
     parser.add_argument(
-        "--luong", type=int, default=1,
+        "--luong", type=int, default=10,
         help="Số tài khoản chạy song song (mặc định 1)",
     )
     parser.add_argument(

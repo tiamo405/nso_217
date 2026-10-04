@@ -117,7 +117,6 @@ def _apply_ta_thu_hooks(work_src: Path) -> None:
         ("Controller.java", "AccountAutoManager.onGameReady()", "TaThuAccountManager.onGameReady()"),
         ("Controller.java", "AccountAutoManager.onCharacterList(var49.name)", "TaThuAccountManager.onCharacterList(var49.name)"),
         ("AutoPrepareNvhn.java", "Code.fieldAD();", "TaThuAccountManager.onPreparationFinished();"),
-        ("AutoFlipNvhn.java", "AccountAutoManager.onPostDailyFlipFinished()", "TaThuAccountManager.onPostDailyFlipFinished()"),
     ]
     for filename, old, new in replacements:
         path = work_src / filename
@@ -187,7 +186,6 @@ def _apply_ta_thu_hooks(work_src: Path) -> None:
         ("Controller.java", "TaThuAccountManager.onCharacterList("),
         ("InfoMe.java", "TaThuAccountManager.onServerMessage("),
         ("AutoPrepareNvhn.java", "TaThuAccountManager.onPreparationFinished()"),
-        ("AutoFlipNvhn.java", "TaThuAccountManager.onPostDailyFlipFinished()"),
         ("AutoEnterCave.java", "TaThuAccountManager.onCaveEntered()"),
     )
     for filename, pattern in required:

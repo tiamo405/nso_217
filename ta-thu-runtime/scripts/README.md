@@ -8,5 +8,5 @@
 - `logs-workers.sh [worker_number]`: lọc log `AUTO TA THU`.
 - `supervise-workers.sh`: tự khởi động lại worker lỗi hoặc im log.
 
-Có thể truyền `TA_THU_STAGE=observe|shop|orders|receive|fight|full` cho
+Có thể truyền `TA_THU_STAGE=receive|fight|full` cho
 `start-workers.sh`. Production dùng `full`.
