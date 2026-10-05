@@ -10,6 +10,9 @@ public class As20 extends As10 {
    private boolean uplevelNoelReady;
    private boolean uplevelNoelBoxChecked;
    private boolean uplevelNoelShopRequested;
+   private int uplevelNoelUseSlot = -1;
+   private long uplevelNoelUseSentAt;
+   private int uplevelNoelUseAttempts;
    private static  int[] fieldAW;
    private static  int[] fieldAX;
    private static  int[] fieldAY;
@@ -52,16 +55,34 @@ public class As20 extends As10 {
          return true;
       }
 
-      int hatId = me.cgender == 0 ? UplevelNoelHatMaleId : UplevelNoelHatFemaleId;
+      int hatId = this.getUplevelNoelHatId(me.cgender);
       ItemTemplate hatTemplate = ItemTemplates.gameAA((short)hatId);
-      Item[] body = me.arrItemBody;
-      boolean active = hatTemplate != null && body != null && ((hatTemplate.type >= 0 && hatTemplate.type < body.length
-            && body[hatTemplate.type] != null && body[hatTemplate.type].template.id == hatId)
-            || hatTemplate.part >= 0 && me.ID_MAT_NA == hatTemplate.part);
-      if (active) {
+      if (this.isUplevelNoelActive(me, hatTemplate)) {
          System.out.println("UPLEVEL NOEL active id=" + hatId);
+         this.uplevelNoelUseSlot = -1;
          this.uplevelNoelReady = true;
          return true;
+      }
+
+      if (this.uplevelNoelUseSlot >= 0) {
+         if (this.isUplevelNoelActive(me, hatTemplate)
+               || me.arrItemBag == null || this.uplevelNoelUseSlot >= me.arrItemBag.length
+               || me.arrItemBag[this.uplevelNoelUseSlot] == null) {
+            System.out.println("UPLEVEL NOEL use confirmed id=" + hatId);
+            this.uplevelNoelUseSlot = -1;
+            this.uplevelNoelReady = true;
+            return true;
+         }
+         if (System.currentTimeMillis() - this.uplevelNoelUseSentAt < 8000L) {
+            return false;
+         }
+         if (this.uplevelNoelUseAttempts >= 3) {
+            System.out.println("UPLEVEL NOEL use timeout id=" + hatId + "; continue task");
+            this.uplevelNoelUseSlot = -1;
+            this.uplevelNoelReady = true;
+            return true;
+         }
+         this.uplevelNoelUseSlot = -1;
       }
 
       if (TileMap.mapID != UplevelNoelMap) {
@@ -75,15 +96,14 @@ public class As20 extends As10 {
          this.uplevelNoelBoxChecked = true;
          me.arrItemBox = null;
          Service.gI().requestItem(4);
-         Auto.fieldAA(2500L);
+         this.waitForUplevelBoxItem(me, -1, 5000L);
       }
       if (hat == null) {
          Item boxHat = this.findUplevelItem(me.arrItemBox, hatId);
          if (boxHat != null) {
             System.out.println("UPLEVEL NOEL move box index=" + boxHat.indexUI);
             Service.gI().itemBoxToBag(boxHat.indexUI);
-            Auto.fieldAA(1500L);
-            hat = this.findUplevelItem(me.arrItemBag, hatId);
+            hat = this.waitForUplevelBagItem(me, hatId, 5000L);
          }
       }
 
@@ -93,7 +113,7 @@ public class As20 extends As10 {
          Service.gI().requestItem(32);
          this.uplevelNoelShopRequested = true;
          System.out.println("UPLEVEL NOEL request shop id=" + hatId);
-         Auto.fieldAA(2500L);
+         this.waitForUplevelFashionItem(hatId, 5000L);
       }
 
       if (hat == null) {
@@ -105,17 +125,15 @@ public class As20 extends As10 {
          }
          System.out.println("UPLEVEL NOEL buy id=" + hatId + " shopIndex=" + shopHat.indexUI);
          Service.gI().buyItem(shopHat.typeUI, shopHat.indexUI, 1);
-         Auto.fieldAA(1500L);
-         hat = this.findUplevelItem(me.arrItemBag, hatId);
+         hat = this.waitForUplevelBagItem(me, hatId, 5000L);
          if (hat == null) {
             me.arrItemBox = null;
             Service.gI().requestItem(4);
-            Auto.fieldAA(1500L);
+            this.waitForUplevelBoxItem(me, -1, 5000L);
             Item boxHat = this.findUplevelItem(me.arrItemBox, hatId);
             if (boxHat != null) {
                Service.gI().itemBoxToBag(boxHat.indexUI);
-               Auto.fieldAA(1500L);
-               hat = this.findUplevelItem(me.arrItemBag, hatId);
+               hat = this.waitForUplevelBagItem(me, hatId, 5000L);
             }
          }
       }
@@ -126,11 +144,72 @@ public class As20 extends As10 {
          return true;
       }
 
-      System.out.println("UPLEVEL NOEL use id=" + hatId + " bagIndex=" + hat.indexUI);
+      System.out.println("UPLEVEL NOEL use id=" + hatId + " bagIndex=" + hat.indexUI
+            + " type=" + hat.template.type + " part=" + hat.template.part
+            + " itemGender=" + hat.template.gender + " charGender=" + me.cgender);
+      this.uplevelNoelUseSlot = hat.indexUI;
+      this.uplevelNoelUseSentAt = System.currentTimeMillis();
+      ++this.uplevelNoelUseAttempts;
       Service.gI().useItem(hat.indexUI);
-      Auto.fieldAA(1500L);
-      this.uplevelNoelReady = true;
-      return true;
+      return false;
+   }
+
+   private boolean isUplevelNoelActive(Char me, ItemTemplate template) {
+      if (template == null) {
+         return false;
+      }
+      if (me.arrItemBody != null && template.type >= 0 && template.type < me.arrItemBody.length
+            && me.arrItemBody[template.type] != null
+            && me.arrItemBody[template.type].template.id == template.id) {
+         return true;
+      }
+      return template.part >= 0 && me.ID_MAT_NA == template.part;
+   }
+
+   private int getUplevelNoelHatId(int characterGender) {
+      ItemTemplate male = ItemTemplates.gameAA((short)UplevelNoelHatMaleId);
+      ItemTemplate female = ItemTemplates.gameAA((short)UplevelNoelHatFemaleId);
+      if (male != null && male.gender == characterGender) {
+         return UplevelNoelHatMaleId;
+      }
+      if (female != null && female.gender == characterGender) {
+         return UplevelNoelHatFemaleId;
+      }
+      System.out.println("UPLEVEL NOEL gender fallback charGender=" + characterGender);
+      return characterGender == 0 ? UplevelNoelHatMaleId : UplevelNoelHatFemaleId;
+   }
+
+   private Item waitForUplevelBagItem(Char me, int templateId, long timeout) {
+      long deadline = System.currentTimeMillis() + timeout;
+      Item item;
+      while ((item = this.findUplevelItem(me.arrItemBag, templateId)) == null
+            && System.currentTimeMillis() < deadline) {
+         Auto.fieldAA(100L);
+      }
+      return item;
+   }
+
+   private Item waitForUplevelBoxItem(Char me, int templateId, long timeout) {
+      long deadline = System.currentTimeMillis() + timeout;
+      Item item;
+      while (System.currentTimeMillis() < deadline) {
+         item = this.findUplevelItem(me.arrItemBox, templateId);
+         if (templateId < 0 ? me.arrItemBox != null : item != null) {
+            return item;
+         }
+         Auto.fieldAA(100L);
+      }
+      return this.findUplevelItem(me.arrItemBox, templateId);
+   }
+
+   private Item waitForUplevelFashionItem(int templateId, long timeout) {
+      long deadline = System.currentTimeMillis() + timeout;
+      Item item;
+      while ((item = this.findUplevelItem(GameScr.arrItemFashion, templateId)) == null
+            && GameScr.arrItemFashion == null && System.currentTimeMillis() < deadline) {
+         Auto.fieldAA(100L);
+      }
+      return item;
    }
 
    private Item findUplevelItem(Item[] items, int templateId) {
