@@ -1,6 +1,15 @@
 public class As20 extends As10 {
+   private static final int UplevelNoelMap = 72;
+   private static final int UplevelGooshoNpc = 30;
+   private static final int UplevelNoelHatMaleId = 351;
+   private static final int UplevelNoelHatFemaleId = 352;
    private int fieldAV;
    private boolean uplevelTask13WeaponEquipped;
+   private int uplevelTask14PendingItem = -1;
+   private long uplevelTask14PickSentAt;
+   private boolean uplevelNoelReady;
+   private boolean uplevelNoelBoxChecked;
+   private boolean uplevelNoelShopRequested;
    private static  int[] fieldAW;
    private static  int[] fieldAX;
    private static  int[] fieldAY;
@@ -23,6 +32,12 @@ public class As20 extends As10 {
       fieldAM();
    }
 
+   private static boolean uplevelUpgradeCrystal(Item item) {
+      return item != null && item.template != null
+            && item.template.type == 26 && item.template.id >= 0
+            && item.template.id <= 3 && item.template.id < GameScr.upClothe.length;
+   }
+
    public As20(int var1) {
       super.fieldAD();
       this.fieldAV = var1;
@@ -32,7 +47,109 @@ public class As20 extends As10 {
       return var1.clevel >= 20;
    }
 
+   private boolean ensureUplevelNoelHat(Char me) {
+      if (this.uplevelNoelReady) {
+         return true;
+      }
+
+      int hatId = me.cgender == 0 ? UplevelNoelHatMaleId : UplevelNoelHatFemaleId;
+      ItemTemplate hatTemplate = ItemTemplates.gameAA((short)hatId);
+      Item[] body = me.arrItemBody;
+      boolean active = hatTemplate != null && body != null && ((hatTemplate.type >= 0 && hatTemplate.type < body.length
+            && body[hatTemplate.type] != null && body[hatTemplate.type].template.id == hatId)
+            || hatTemplate.part >= 0 && me.ID_MAT_NA == hatTemplate.part);
+      if (active) {
+         System.out.println("UPLEVEL NOEL active id=" + hatId);
+         this.uplevelNoelReady = true;
+         return true;
+      }
+
+      if (TileMap.mapID != UplevelNoelMap) {
+         System.out.println("UPLEVEL NOEL route map=" + TileMap.mapID + " -> " + UplevelNoelMap);
+         this.fieldAA(UplevelNoelMap, -2, -1, -1);
+         return false;
+      }
+
+      Item hat = this.findUplevelItem(me.arrItemBag, hatId);
+      if (!this.uplevelNoelBoxChecked) {
+         this.uplevelNoelBoxChecked = true;
+         me.arrItemBox = null;
+         Service.gI().requestItem(4);
+         Auto.fieldAA(2500L);
+      }
+      if (hat == null) {
+         Item boxHat = this.findUplevelItem(me.arrItemBox, hatId);
+         if (boxHat != null) {
+            System.out.println("UPLEVEL NOEL move box index=" + boxHat.indexUI);
+            Service.gI().itemBoxToBag(boxHat.indexUI);
+            Auto.fieldAA(1500L);
+            hat = this.findUplevelItem(me.arrItemBag, hatId);
+         }
+      }
+
+      if (hat == null && !this.uplevelNoelShopRequested) {
+         GameScr.arrItemFashion = null;
+         GameScr.fieldAB(UplevelGooshoNpc, 0, 0);
+         Service.gI().requestItem(32);
+         this.uplevelNoelShopRequested = true;
+         System.out.println("UPLEVEL NOEL request shop id=" + hatId);
+         Auto.fieldAA(2500L);
+      }
+
+      if (hat == null) {
+         Item shopHat = this.findUplevelItem(GameScr.arrItemFashion, hatId);
+         if (shopHat == null) {
+            System.out.println("UPLEVEL NOEL unavailable id=" + hatId + "; continue task");
+            this.uplevelNoelReady = true;
+            return true;
+         }
+         System.out.println("UPLEVEL NOEL buy id=" + hatId + " shopIndex=" + shopHat.indexUI);
+         Service.gI().buyItem(shopHat.typeUI, shopHat.indexUI, 1);
+         Auto.fieldAA(1500L);
+         hat = this.findUplevelItem(me.arrItemBag, hatId);
+         if (hat == null) {
+            me.arrItemBox = null;
+            Service.gI().requestItem(4);
+            Auto.fieldAA(1500L);
+            Item boxHat = this.findUplevelItem(me.arrItemBox, hatId);
+            if (boxHat != null) {
+               Service.gI().itemBoxToBag(boxHat.indexUI);
+               Auto.fieldAA(1500L);
+               hat = this.findUplevelItem(me.arrItemBag, hatId);
+            }
+         }
+      }
+
+      if (hat == null) {
+         System.out.println("UPLEVEL NOEL purchase not in bag id=" + hatId + "; continue task");
+         this.uplevelNoelReady = true;
+         return true;
+      }
+
+      System.out.println("UPLEVEL NOEL use id=" + hatId + " bagIndex=" + hat.indexUI);
+      Service.gI().useItem(hat.indexUI);
+      Auto.fieldAA(1500L);
+      this.uplevelNoelReady = true;
+      return true;
+   }
+
+   private Item findUplevelItem(Item[] items, int templateId) {
+      if (items == null) {
+         return null;
+      }
+      for (int i = 0; i < items.length; i++) {
+         Item item = items[i];
+         if (item != null && item.template != null && item.template.id == templateId) {
+            return item;
+         }
+      }
+      return null;
+   }
+
    public void fieldAA(Char var1, byte var2, byte var3) {
+      if (var1.cHP > 0 && !this.ensureUplevelNoelHat(var1)) {
+         return;
+      }
       if (var1.ctaskId < 9) {
          super.fieldAA(var1, var2, var3);
       } else {
@@ -266,7 +383,8 @@ public class As20 extends As10 {
             for (int crystalIndex = 0; crystalIndex < var1.arrItemBag.length; ++crystalIndex) {
                Item crystal = var1.arrItemBag[crystalIndex];
                if (crystal != null && crystal.template.type == 26 && crystal.template.id <= 3) {
-                  usableUpgradeCrystal += GameScr.upClothe[crystal.template.id];
+                  usableUpgradeCrystal += GameScr.upClothe[crystal.template.id]
+                        * (crystal.quantity > 0 ? crystal.quantity : 1);
                }
             }
             if (var13 << 1 > usableUpgradeCrystal || var18 << 1 > var1.yen) {
@@ -301,10 +419,14 @@ public class As20 extends As10 {
                int var24 = 0;
 
                for(var20 = 0; var20 < var1.arrItemBag.length && var24 < var13; ++var20) {
-                  if ((var21 = var1.arrItemBag[var20]) != null && var21.template.type == 26 && var21.template.id <= 3) {
+                  if ((var21 = var1.arrItemBag[var20]) != null && uplevelUpgradeCrystal(var21)) {
+                     int crystalCopies = var21.quantity > 0 ? var21.quantity : 1;
+                     for (int crystalCopy = 0; crystalCopy < crystalCopies
+                           && var24 < var13 && var9 < GameScr.arrItemUpGrade.length; ++crystalCopy) {
+                        GameScr.arrItemUpGrade[var9++] = var21;
+                        var24 += GameScr.upClothe[var21.template.id];
+                     }
                      var1.arrItemBag[var20] = null;
-                     GameScr.arrItemUpGrade[var9++] = var21;
-                     var24 += GameScr.upClothe[var21.template.id];
                   }
                }
 
@@ -438,9 +560,29 @@ public class As20 extends As10 {
             }
 
             if (var1.taskMaint.index == 1) {
-               if (TileMap.mapID == 29 && super.fieldAC == TileMap.zoneID) {
-                  var5 = Code.fieldAM < 0 ? -1 : Code.fieldAM * Code.fieldAM;
+               if (TileMap.mapID == 29) {
+                  var5 = -1;
                   ItemMap var12 = null;
+
+                  if (uplevelTask14PendingItem >= 0) {
+                     ItemMap pending = null;
+                     for (int pendingIndex = 0; pendingIndex < GameScr.vItemMap.size(); ++pendingIndex) {
+                        ItemMap candidate = (ItemMap)GameScr.vItemMap.elementAt(pendingIndex);
+                        if (candidate != null && candidate.itemMapID == uplevelTask14PendingItem) {
+                           pending = candidate;
+                           break;
+                        }
+                     }
+                     if (pending == null) {
+                        uplevelTask14PendingItem = -1;
+                        return;
+                     }
+                     if (System.currentTimeMillis() - uplevelTask14PickSentAt < 5000L) {
+                        return;
+                     }
+                     pending.fieldAK = false;
+                     uplevelTask14PendingItem = -1;
+                  }
 
                   for(var13 = 0; var13 < GameScr.vItemMap.size(); ++var13) {
                      ItemMap var6;
@@ -458,7 +600,12 @@ public class As20 extends As10 {
                      return;
                   }
 
-                  Char.fieldAC(var12.xEnd, var12.yEnd);
+                  if (Math.abs(var12.xEnd - var1.cx) > 22 || Math.abs(var12.yEnd - var1.cy) > 22) {
+                     Char.fieldAC(var12.xEnd, var12.yEnd);
+                     return;
+                  }
+                  uplevelTask14PendingItem = var12.itemMapID;
+                  uplevelTask14PickSentAt = System.currentTimeMillis();
                   Service.gI().pickItem(var12.itemMapID);
 
                   for(var13 = 0; var13 < 5 && !LockGame.fieldAC(); ++var13) {

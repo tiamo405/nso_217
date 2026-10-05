@@ -132,16 +132,16 @@ if [[ "$SERVER_NAME" == "tk" ]]; then
     if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; then
         proxy_prepare_needed=true
     elif (( PROXY_GROUP_SIZE > 0 )); then
+        proxy_marker="$WORKERS_DIR/.proxy-group-size"
+        if [[ ! -f "$proxy_marker" ]] || [[ "$(<"$proxy_marker")" != "$PROXY_GROUP_SIZE" ]]; then
+            proxy_prepare_needed=true
+        fi
         for worker_dir in "${worker_dirs[@]}"; do
             [[ -d "$worker_dir" ]] || continue
             [[ -f "$worker_dir/.paused" ]] && continue
             [[ -f "$worker_dir/home/worker.done" ]] && continue
+            # Stop worker removes bot.pid but keeps its proxy assignment.
             if [[ ! -s "$worker_dir/.proxy" ]]; then
-                proxy_prepare_needed=true
-                break
-            fi
-            pid_file="$worker_dir/bot.pid"
-            if [[ ! -f "$pid_file" ]] || ! is_optimized_worker_pid "$(<"$pid_file")" "$worker_dir"; then
                 proxy_prepare_needed=true
                 break
             fi

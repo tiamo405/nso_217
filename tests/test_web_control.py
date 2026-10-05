@@ -82,10 +82,10 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         write_script(scripts / "stop-workers.sh", "exit 0\n")
         write_script(
             scripts / "start-workers.sh",
-            'number="${3:-${1:-1}}"\nprintf "started worker-%02d\\n" "$number"\n',
+            'number="${3:-${1:-1}}"\nprintf "started worker-%02d proxy=%s\\n" "$number" "${NSO_PROXY_WORKERS_PER_PROXY:-missing}"\n',
         )
         write_script(
-            scripts / "restart-workers.sh", 'printf "restarted worker-%02d\\n" "$1"\n'
+            scripts / "restart-workers.sh", 'printf "restarted worker-%02d proxy=%s\\n" "$1" "${NSO_PROXY_WORKERS_PER_PROXY:-missing}"\n'
         )
         write_script(
             scripts / "build-workers.sh",
@@ -377,7 +377,9 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_worker_pause_start_and_restart_actions(self) -> None:
         marker = self.settings.workers_dir / "worker-01" / ".paused"
-        transport = ASGITransport(app=create_app(self.settings))
+        app = create_app(self.settings)
+        app.state.manager.set_proxy_workers_per_proxy(0)
+        transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             stopped = await client.post("/api/workers/worker-01/stop")
             self.assertEqual(stopped.status_code, 200, stopped.text)
@@ -387,13 +389,14 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             started = await client.post("/api/workers/worker-01/start")
             self.assertEqual(started.status_code, 200, started.text)
             self.assertFalse(marker.exists())
-            self.assertIn("started worker-01", started.json()["output"])
+            self.assertIn("started worker-01 proxy=0", started.json()["output"])
 
             marker.touch()
+            app.state.manager.set_proxy_workers_per_proxy(4)
             restarted = await client.post("/api/workers/worker-01/restart")
             self.assertEqual(restarted.status_code, 200, restarted.text)
             self.assertFalse(marker.exists())
-            self.assertIn("restarted worker-01", restarted.json()["output"])
+            self.assertIn("restarted worker-01 proxy=4", restarted.json()["output"])
 
     async def test_schedule_api_configuration(self) -> None:
         transport = ASGITransport(app=create_app(self.settings))

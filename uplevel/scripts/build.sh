@@ -540,7 +540,6 @@ path.write_text(source.replace(needle, replacement, 1))
 UPLEVELPY
 sed -i '/private static boolean uplevelCrystalSplitPending;/a\   private static int uplevelTaskPickItemMap = -1;\n   private static long uplevelTaskPickSentAt;' "$WORK_SRC_DIR/As20.java"
 sed -i 's/return slot == 9 ?/return slot == 8 || slot == 9 ?/' "$WORK_SRC_DIR/As20.java"
-sed -i '/case 12:/a\            if (var1.taskMaint.index == 1 && var1.arrItemBody != null && var1.arrItemBody[1] == null && !uplevelForcedEquip) { Item forceWeapon = Char.fieldAF(94); if (forceWeapon != null) { uplevelForcedEquip = true; Service.gI().useItem(forceWeapon.indexUI); LockGame.fieldAQ(); } return; }' "$WORK_SRC_DIR/As20.java"
 python3 - "$WORK_SRC_DIR/As20.java" <<'PY'
 import pathlib
 import sys
@@ -957,7 +956,8 @@ replacement = '''            if (var1.taskMaint.index >= 1 && var1.taskMaint.ind
                for (int splitSlot = 0; splitSlot < var1.arrItemBag.length
                        && uplevelCrystalValue < uplevelNeed; ++splitSlot) {
                   Item split = var1.arrItemBag[splitSlot];
-                  if (!Boolean.getBoolean("nso.uplevel.no.split")
+                  if (var1.taskMaint.index >= 2 && var1.taskMaint.index <= 3
+                          && !Boolean.getBoolean("nso.uplevel.no.split")
                           && !uplevelCrystalSplitPending && split != null
                           && split.template.type == 26 && split.quantity > 1
                           && GameScr.crystals != null && split.template.id >= 0
@@ -1171,6 +1171,100 @@ import sys
 path = pathlib.Path(sys.argv[1])
 source = path.read_text()
 source = source.replace('                            System.out.println("Bi PK: " + var186);\n', '')
+path.write_text(source)
+UPLEVELPY
+python3 - "$WORK_SRC_DIR/As20.java" <<'UPLEVELPY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+task_start = source.index("         case 12:")
+task_end = source.index("         case 13:", task_start)
+task = source[task_start:task_end]
+
+task = task.replace("var5 = Code.fieldAM < 0 ? -1 : Code.fieldAM * Code.fieldAM;", "var5 = -1;")
+for expression in ("GameScr.upClothe[var11.upgrade]", "GameScr.upAdorn[var11.upgrade]", "GameScr.upWeapon[var11.upgrade]"):
+    task = task.replace(expression + ";", expression + " / 2;")
+task = task.replace(
+    "if (var13 > Char.fieldBE() || var18 > var1.yen)",
+    "if (var13 << 1 > Char.fieldBE() || var18 << 1 > var1.yen)",
+)
+
+loop_start = task.index("            for(var8 = 0;")
+loop_end = task.index("            GameScr.itemUpGrade = null;\n            if (var11.upgrade > var7)", loop_start)
+loop = """            if (!Boolean.getBoolean("nso.uplevel.no.split")) {
+               int uplevelCrystalValue = 0;
+               for (var20 = 0; var20 < var1.arrItemBag.length; ++var20) {
+                  var21 = var1.arrItemBag[var20];
+                  if (var21 != null && var21.quantity == 1 && uplevelUpgradeCrystal(var21)) {
+                     uplevelCrystalValue += GameScr.upClothe[var21.template.id];
+                  }
+               }
+               if (uplevelCrystalValue < var13) {
+                  for (var20 = 0; var20 < var1.arrItemBag.length; ++var20) {
+                     var21 = var1.arrItemBag[var20];
+                     if (var21 != null && var21.quantity > 1 && uplevelUpgradeCrystal(var21)) {
+                        if (!uplevelCrystalSplitPending) {
+                           uplevelCrystalSplitStart(var21);
+                           Service.gI().inputNumSplit(var21.indexUI, 1);
+                           LockGame.fieldAQ();
+                           if (uplevelCrystalSplitPending) uplevelCrystalSplitDone();
+                        }
+                        return;
+                     }
+                  }
+               }
+            }
+
+            for(var8 = 0; var8 < 2 && var11.upgrade == var7; ++var8) {
+               GameScr.arrItemUpGrade = new Item[18];
+               var9 = 0;
+               int var24 = 0;
+
+               for(var20 = 0; var20 < var1.arrItemBag.length && var24 < var13; ++var20) {
+                  if ((var21 = var1.arrItemBag[var20]) != null && var21.quantity == 1
+                        && uplevelUpgradeCrystal(var21)) {
+                     GameScr.arrItemUpGrade[var9++] = var21;
+                     var24 += GameScr.upClothe[var21.template.id];
+                     var1.arrItemBag[var20] = null;
+                  }
+               }
+
+               if (var24 < var13) {
+                  for (var20 = 0; var20 < GameScr.arrItemUpGrade.length; ++var20) {
+                     if ((var21 = GameScr.arrItemUpGrade[var20]) != null) {
+                        var1.arrItemBag[var21.indexUI] = var21;
+                     }
+                  }
+                  if (GameScr.itemUpGrade != null) {
+                     var1.arrItemBag[GameScr.itemUpGrade.indexUI] = GameScr.itemUpGrade;
+                  }
+                  GameScr.itemUpGrade = null;
+                  GameScr.arrItemUpGrade = null;
+                  return;
+               }
+
+               Service.gI().upgradeItem(var11, GameScr.arrItemUpGrade, false);
+               LockGame.fieldAQ();
+               if (GameScr.arrItemUpGrade[0] != null) {
+                  for (var20 = 0; var20 < GameScr.arrItemUpGrade.length; ++var20) {
+                     if ((var21 = GameScr.arrItemUpGrade[var20]) != null) {
+                        var1.arrItemBag[var21.indexUI] = var21;
+                     }
+                  }
+                  if (GameScr.itemUpGrade != null) {
+                     var1.arrItemBag[GameScr.itemUpGrade.indexUI] = GameScr.itemUpGrade;
+                  }
+                  GameScr.itemUpGrade = null;
+                  GameScr.arrItemUpGrade = null;
+                  return;
+               }
+            }
+
+"""
+task = task[:loop_start] + loop + task[loop_end:]
+source = source[:task_start] + task + source[task_end:]
 path.write_text(source)
 UPLEVELPY
 find "$WORK_SRC_DIR" -name '*.java' | sort >"$SOURCES_FILE"

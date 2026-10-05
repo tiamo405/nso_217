@@ -56,13 +56,20 @@ class HeadlessManager:
         return path
 
     async def _capture(
-        self, *args: str, timeout: int | None = None, server: str | None = None
+        self,
+        *args: str,
+        timeout: int | None = None,
+        server: str | None = None,
+        proxy_workers_per_proxy: int | None = None,
     ) -> tuple[int, str]:
+        environment = self.settings.command_env(server)
+        if proxy_workers_per_proxy is not None:
+            environment["NSO_PROXY_WORKERS_PER_PROXY"] = str(proxy_workers_per_proxy)
         try:
             process = await asyncio.create_subprocess_exec(
                 *args,
                 cwd=self.settings.repo_dir,
-                env=self.settings.command_env(server),
+                env=environment,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -467,6 +474,7 @@ class HeadlessManager:
                 number,
                 timeout=30,
                 server=self.selected_server(),
+                proxy_workers_per_proxy=self.proxy_workers_per_proxy(),
             )
             if code != 0:
                 if was_paused:
@@ -485,6 +493,7 @@ class HeadlessManager:
                 number,
                 timeout=30,
                 server=self.selected_server(),
+                proxy_workers_per_proxy=self.proxy_workers_per_proxy(),
             )
             if code != 0:
                 if was_paused:
