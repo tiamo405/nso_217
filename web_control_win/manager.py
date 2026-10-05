@@ -516,7 +516,11 @@ class WindowsHeadlessManager:
         data["supervisor"] = self.ta_thu_supervisor_status()
         return data
 
-    async def start_ta_thu(self, worker_count: int = 10) -> bool:
+    async def start_ta_thu(
+        self,
+        worker_count: int = 10,
+        nvhn_workers_dir: Path | None = None,
+    ) -> bool:
         async with self.control_lock:
             if self.ta_thu_supervisor_status()["running"]:
                 return True
@@ -544,6 +548,8 @@ class WindowsHeadlessManager:
                 "--interval", "20",
             ]
             environment = self.settings.command_env(self.selected_server())
+            if nvhn_workers_dir is not None:
+                environment["TA_THU_NVHN_WORKERS_DIR"] = str(nvhn_workers_dir)
             try:
                 self._ta_thu_supervisor_process = subprocess.Popen(
                     command,

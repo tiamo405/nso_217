@@ -50,7 +50,7 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
    - **Lặp lại sau (giờ)**: sau mỗi lần lịch được kích hoạt, hệ thống chờ đúng số giờ này rồi build & run lại toàn bộ worker. Hai giá trị này luôn dùng cùng nhau, không còn là hai chế độ loại trừ.
    - **Giãn cách worker (giây)**: thời gian chờ giữa hai worker khi lịch tự động khởi động NVHN hoặc Tà Thú; `0` để chạy liên tiếp.
    - **Bật tự động Build & Run NVHN**: bật chu kỳ ở trên.
-   - **Auto Tà Thú khi NVHN xong**: Khi toàn bộ worker hoàn tất NVHN, hệ thống tự động build và chạy supervisor Tà Thú (`ta-thu-runtime/`).
+   - **Auto Tà Thú khi NVHN xong**: Khi từng worker hoàn tất NVHN, worker Tà Thú cùng số thứ tự được tự động khởi chạy; worker NVHN lỗi không chặn worker khác. Hệ thống build Tà Thú một lần theo tổng số worker (`ta-thu-runtime/`).
    - **Ưu tiên NVHN**: Khi đến mốc hẹn giờ của ngày hôm sau, hệ thống tự động ngắt toàn bộ tiến trình Tà Thú để ưu tiên Build & Run lại NVHN.
 6. Xem status, tên nhân vật đang chạy, live log; Stop, Start hoặc Restart từng worker.
 7. Stop tất cả sẽ dừng cả supervisor NVHN và Tà Thú, đồng thời ghi nhớ không tự bật lại sau reboot.

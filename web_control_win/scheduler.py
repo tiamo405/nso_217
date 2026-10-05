@@ -349,17 +349,20 @@ class WindowsScheduleManager:
         nvhn_status = await self.manager.status()
         totals = nvhn_status.get("totals", {})
         total_workers = totals.get("total", 0)
-        supervisor = nvhn_status.get("supervisor", {})
+        done_workers = totals.get("done", 0)
         if (
             total_workers > 0
-            and totals.get("done", 0) == total_workers
-            and not supervisor.get("running")
+            and done_workers > 0
         ):
             logger.info(
-                "Tất cả %s worker NVHN đã hoàn thành; build và chạy Tà Thú...",
+                "%s/%s worker NVHN đã hoàn thành; build và chạy Tà Thú theo từng worker...",
+                done_workers,
                 total_workers,
             )
-            if await self.manager.start_ta_thu(worker_count=self.worker_count):
+            if await self.manager.start_ta_thu(
+                worker_count=total_workers,
+                nvhn_workers_dir=self.manager.settings.workers_dir,
+            ):
                 self.current_phase = "ta_thu"
                 self._save()
                 logger.info("Đã khởi chạy thành công Auto Tà Thú trên Windows.")

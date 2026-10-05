@@ -371,9 +371,37 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             await scheduler._check_auto_ta_thu()
             self.assertEqual(scheduler.current_phase, "ta_thu")
             start.assert_awaited_with(
-                worker_count=scheduler.worker_count,
+                worker_count=1,
                 server="ninjamobileSV4",
+                nvhn_workers_dir=manager.settings.workers_dir,
             )
+
+    async def test_auto_ta_thu_starts_when_one_nvhn_worker_done(self) -> None:
+        app = create_app(self.settings)
+        manager = app.state.manager
+        scheduler = app.state.scheduler
+        manager._set_desired_supervisor(True)
+        partial = {
+            "totals": {"total": 3, "done": 1},
+            "workers": [
+                {"name": "worker-01", "state": "DONE"},
+                {"name": "worker-02", "state": "RUNNING"},
+                {"name": "worker-03", "state": "RUNNING"},
+            ],
+            # NVHN supervisor remains alive while other workers continue.
+            "supervisor": {"running": True},
+        }
+        with patch.object(manager, "status", new_callable=AsyncMock, return_value=partial), patch.object(
+            manager, "start_ta_thu", new_callable=AsyncMock, return_value=True
+        ) as start_ta_thu:
+            await scheduler._check_auto_ta_thu()
+
+        start_ta_thu.assert_awaited_once_with(
+            worker_count=3,
+            server=manager.selected_server(),
+            nvhn_workers_dir=manager.settings.workers_dir,
+        )
+        self.assertEqual(scheduler.current_phase, "ta_thu")
 
     async def test_worker_pause_start_and_restart_actions(self) -> None:
         marker = self.settings.workers_dir / "worker-01" / ".paused"

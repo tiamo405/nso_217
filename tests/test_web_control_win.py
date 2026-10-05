@@ -272,12 +272,13 @@ sys.exit(0)
 
     async def test_auto_ta_thu_starts_after_all_nvhn_workers_done(self) -> None:
         app = create_app(self.settings)
+        manager = app.state.manager
         scheduler = app.state.scheduler
         scheduler.auto_ta_thu = True
         scheduler.current_phase = "nvhn"
-        app.state.manager._set_desired_supervisor(True)
+        manager._set_desired_supervisor(True)
         with patch.object(
-            app.state.manager,
+            manager,
             "status",
             new_callable=AsyncMock,
             return_value={
@@ -285,14 +286,42 @@ sys.exit(0)
                 "supervisor": {"running": False},
             },
         ), patch.object(
-            app.state.manager,
+            manager,
             "start_ta_thu",
             new_callable=AsyncMock,
             return_value=True,
         ) as start_ta_thu:
             await scheduler._check_auto_ta_thu()
 
-        start_ta_thu.assert_awaited_once_with(worker_count=scheduler.worker_count)
+        start_ta_thu.assert_awaited_once_with(
+            worker_count=1,
+            nvhn_workers_dir=manager.settings.workers_dir,
+        )
+        self.assertEqual(scheduler.current_phase, "ta_thu")
+
+    async def test_auto_ta_thu_starts_when_one_nvhn_worker_done(self) -> None:
+        app = create_app(self.settings)
+        manager = app.state.manager
+        scheduler = app.state.scheduler
+        manager._set_desired_supervisor(True)
+        partial = {
+            "totals": {"total": 3, "done": 1},
+            "workers": [
+                {"name": "worker-01", "state": "DONE"},
+                {"name": "worker-02", "state": "RUNNING"},
+                {"name": "worker-03", "state": "RUNNING"},
+            ],
+            "supervisor": {"running": True},
+        }
+        with patch.object(manager, "status", new_callable=AsyncMock, return_value=partial), patch.object(
+            manager, "start_ta_thu", new_callable=AsyncMock, return_value=True
+        ) as start_ta_thu:
+            await scheduler._check_auto_ta_thu()
+
+        start_ta_thu.assert_awaited_once_with(
+            worker_count=3,
+            nvhn_workers_dir=manager.settings.workers_dir,
+        )
         self.assertEqual(scheduler.current_phase, "ta_thu")
 
     async def test_schedule_does_not_skip_when_build_is_active(self) -> None:

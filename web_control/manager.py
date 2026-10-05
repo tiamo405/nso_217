@@ -622,7 +622,12 @@ class HeadlessManager:
             "pid": pid if running else None,
         }
 
-    async def start_ta_thu(self, worker_count: int = 10, server: str | None = None) -> bool:
+    async def start_ta_thu(
+        self,
+        worker_count: int = 10,
+        server: str | None = None,
+        nvhn_workers_dir: Path | None = None,
+    ) -> bool:
         async with self.control_lock:
             status = self.ta_thu_supervisor_status()
             if status["running"]:
@@ -651,10 +656,13 @@ class HeadlessManager:
             self.settings.runtime_dir.mkdir(parents=True, exist_ok=True)
             log_stream = self.ta_thu_supervisor_log.open("ab", buffering=0)
             try:
+                environment = self.settings.command_env(selected_server)
+                if nvhn_workers_dir is not None:
+                    environment["TA_THU_NVHN_WORKERS_DIR"] = str(nvhn_workers_dir)
                 subprocess.Popen(
                     [str(sup_script), "--delay", str(self.worker_start_delay_seconds())],
                     cwd=self.settings.repo_dir,
-                    env=self.settings.command_env(selected_server),
+                    env=environment,
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,

@@ -373,15 +373,20 @@ class ScheduleManager:
             nvhn_status = await self.manager.status()
             totals = nvhn_status.get("totals", {})
             total_workers = totals.get("total", 0)
+            done_workers = totals.get("done", 0)
             if (
                 total_workers > 0
-                and totals.get("done", 0) == total_workers
-                and not nvhn_status.get("supervisor", {}).get("running")
+                and done_workers > 0
             ):
-                logger.info("Tất cả %s worker NVHN đã hoàn thành; khởi chạy Tà Thú...", total_workers)
+                logger.info(
+                    "%s/%s worker NVHN đã hoàn thành; khởi chạy Tà Thú theo từng worker...",
+                    done_workers,
+                    total_workers,
+                )
                 if await self.manager.start_ta_thu(
-                    worker_count=self.worker_count,
+                    worker_count=total_workers,
                     server=self.manager.selected_server(),
+                    nvhn_workers_dir=self.manager.settings.workers_dir,
                 ):
                     self.current_phase = "ta_thu"
                     self._save()

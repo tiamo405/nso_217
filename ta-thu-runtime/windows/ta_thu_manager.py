@@ -37,6 +37,11 @@ ACCOUNT_CSV = Path(
 STATE_DIR = Path(
     os.environ.get("TA_THU_STATE_DIR", TA_THU_DIR / "ta-thu-state")
 ).resolve()
+NVHN_WORKERS_DIR = (
+    Path(os.environ["TA_THU_NVHN_WORKERS_DIR"]).resolve()
+    if os.environ.get("TA_THU_NVHN_WORKERS_DIR")
+    else None
+)
 JAVA_BIN = os.environ.get("JAVA_BIN", "java")
 JAVA_XMS = os.environ.get("JAVA_XMS", "8m")
 JAVA_XMX = os.environ.get("JAVA_XMX", "48m")
@@ -170,6 +175,12 @@ def selected_worker_dirs(values: list[str]) -> list[Path]:
     return [path for path in paths if int(path.name.removeprefix("worker-")) in wanted]
 
 
+def nvhn_worker_done(worker: Path) -> bool:
+    if NVHN_WORKERS_DIR is None:
+        return True
+    return (NVHN_WORKERS_DIR / worker.name / "home" / "worker.done").is_file()
+
+
 def run_build() -> None:
     builder = SCRIPT_DIR / "build_ta_thu.py"
     command = [sys.executable, str(builder)]
@@ -272,6 +283,8 @@ def start_workers(values: list[str], delay: int) -> int:
     for worker in paths:
         if (worker / ".paused").is_file():
             print(f"{worker.name} đang tạm dừng, bỏ qua")
+            continue
+        if not nvhn_worker_done(worker):
             continue
         if (worker / "worker.done").is_file() or (worker / "home" / "worker.done").is_file():
             print(f"{worker.name} đã hoàn tất, bỏ qua")

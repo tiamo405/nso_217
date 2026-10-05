@@ -11,6 +11,7 @@ JAVA_XMX=${JAVA_XMX:-48m}
 JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true"}
 TA_THU_STAGE=${TA_THU_STAGE:-full}
 NSO_SERVER=${NSO_SERVER:-tk}
+TA_THU_NVHN_WORKERS_DIR=${TA_THU_NVHN_WORKERS_DIR:-}
 START_DELAY=${START_DELAY:-10}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
@@ -102,6 +103,12 @@ for worker_dir in "${worker_dirs[@]}"; do
         paused=$((paused + 1))
         continue
     fi
+
+    if [[ -n "$TA_THU_NVHN_WORKERS_DIR" \
+        && ! -f "$TA_THU_NVHN_WORKERS_DIR/$worker_name/home/worker.done" ]]; then
+        continue
+    fi
+
     worker_pass=1
 
     if [[ -f "$worker_dir/worker.done" || -f "$worker_dir/home/worker.done" ]]; then
