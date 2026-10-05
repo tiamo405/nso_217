@@ -18287,6 +18287,13 @@ public final class GameScr extends mScreen implements IActionListener, IChatable
         Session_ME.gameAP = false;
         Session_ME.fieldAE();
         TileMap.fieldBE = false;
+        Char currentChar = Char.getMyChar();
+        if (Code.fieldAB instanceof AutoPrepareNvhn
+                && (currentChar == null || currentChar.arrItemBag == null)) {
+            // Login can signal game-ready before inventory packet is complete.
+            super.update();
+            return;
+        }
         Code.fieldAA.fieldAA();
         super.update();
     }
