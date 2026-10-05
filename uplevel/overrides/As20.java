@@ -3,10 +3,27 @@ public class As20 extends As10 {
    private static final int UplevelGooshoNpc = 30;
    private static final int UplevelNoelHatMaleId = 351;
    private static final int UplevelNoelHatFemaleId = 352;
+   private static final int UplevelTeacherHpId = 14;
+   private static final int UplevelTeacherHpQuantity = 10000;
+   private static final int UplevelFoodType = 18;
+   private static final int UplevelFoodNpc = 4;
+   private static final int UplevelFoodStock = 2;
    private int fieldAV;
    private boolean uplevelTask13WeaponEquipped;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
+   private boolean uplevelTeacherHpBuyPending;
+   private long uplevelTeacherHpBuySentAt;
+   private long uplevelTeacherHpUseSentAt;
+   private int uplevelFoodLevel = -1;
+   private boolean uplevelFoodBoxRequested;
+   private boolean uplevelFoodBoxChecked;
+   private int uplevelFoodBoxMoveSlot = -1;
+   private long uplevelFoodBoxActionAt;
+   private boolean uplevelFoodBuyPending;
+   private long uplevelFoodBuySentAt;
+   private long uplevelFoodLastBuyAt;
+   private long uplevelFoodUseSentAt;
    private boolean uplevelNoelReady;
    private boolean uplevelNoelBoxChecked;
    private boolean uplevelNoelShopRequested;
@@ -225,8 +242,255 @@ public class As20 extends As10 {
       return null;
    }
 
+   private int countUplevelItem(Char me, int templateId) {
+      int count = 0;
+      if (me.arrItemBag == null) {
+         return count;
+      }
+      for (int i = 0; i < me.arrItemBag.length; i++) {
+         Item item = me.arrItemBag[i];
+         if (item != null && item.template != null && item.template.id == templateId) {
+            count += item.quantity;
+         }
+      }
+      return count;
+   }
+
+   private boolean ensureUplevelTeacherHp(Char me) {
+      int count = this.countUplevelItem(me, UplevelTeacherHpId);
+      if (count > 0) {
+         if (this.uplevelTeacherHpBuyPending) {
+            System.out.println("UPLEVEL TEACHER HP ready id=" + UplevelTeacherHpId + " count=" + count);
+            this.uplevelTeacherHpBuyPending = false;
+         }
+         return true;
+      }
+
+      long now = System.currentTimeMillis();
+      if (this.uplevelTeacherHpBuyPending) {
+         if (now - this.uplevelTeacherHpBuySentAt < 8000L) {
+            return false;
+         }
+         System.out.println("UPLEVEL TEACHER HP buy timeout id=" + UplevelTeacherHpId + "; continue task");
+         this.uplevelTeacherHpBuyPending = false;
+         return true;
+      }
+
+      System.out.println("UPLEVEL TEACHER HP buy id=" + UplevelTeacherHpId
+            + " quantity=" + UplevelTeacherHpQuantity + " npc=3 shop=7 index=1");
+      this.uplevelTeacherHpBuyPending = true;
+      this.uplevelTeacherHpBuySentAt = now;
+      GameScr.fieldAB(3, 0, 0);
+      Service.gI().buyItem(7, 1, UplevelTeacherHpQuantity);
+      LockGame.fieldAG();
+      return false;
+   }
+
+   private boolean useUplevelTeacherHp(Char me) {
+      if (me.cHP <= 0 || (long)me.cHP * 100L >= (long)me.cMaxHP * 90L) {
+         return false;
+      }
+      Item hp = this.findUplevelItem(me.arrItemBag, UplevelTeacherHpId);
+      if (hp == null || hp.quantity <= 0) {
+         return false;
+      }
+      long now = System.currentTimeMillis();
+      if (now - this.uplevelTeacherHpUseSentAt < 1000L) {
+         return true;
+      }
+      System.out.println("UPLEVEL TEACHER HP use id=" + UplevelTeacherHpId
+            + " bagIndex=" + hp.indexUI + " hp=" + me.cHP + "/" + me.cMaxHP);
+      this.uplevelTeacherHpUseSentAt = now;
+      Service.gI().useItem(hp.indexUI);
+      return true;
+   }
+
+   private int getUplevelFoodLevel(Char me) {
+      int level = me.clevel / 10 * 10;
+      if (level < 10) {
+         return 10;
+      }
+      return level > 50 ? 50 : level;
+   }
+
+   private Item findUplevelFood(Item[] items, int level) {
+      if (items == null) {
+         return null;
+      }
+      for (int i = 0; i < items.length; i++) {
+         Item item = items[i];
+         if (item != null && item.template != null && item.template.type == UplevelFoodType
+               && item.template.level == level && item.quantity > 0) {
+            return item;
+         }
+      }
+      return null;
+   }
+
+   private int countUplevelFood(Item[] items, int level) {
+      int count = 0;
+      if (items == null) {
+         return count;
+      }
+      for (int i = 0; i < items.length; i++) {
+         Item item = items[i];
+         if (item != null && item.template != null && item.template.type == UplevelFoodType
+               && item.template.level == level) {
+            count += item.quantity;
+         }
+      }
+      return count;
+   }
+
+   private boolean isUplevelFoodActive(Char me) {
+      if (me.vEff == null) {
+         return false;
+      }
+      for (int i = 0; i < me.vEff.size(); i++) {
+         Effect effect = (Effect)me.vEff.elementAt(i);
+         if (effect != null && effect.template != null && effect.template.type == 0) {
+            return true;
+         }
+      }
+      return false;
+   }
+
+   private int getUplevelSchoolMap(Char me) {
+      int classId = me.nClass == null ? 0 : me.nClass.classId;
+      return classId <= 2 ? 1 : (classId <= 4 ? 27 : 72);
+   }
+
+   private boolean ensureUplevelFood(Char me) {
+      int foodLevel = this.getUplevelFoodLevel(me);
+      if (this.uplevelFoodLevel != foodLevel) {
+         this.uplevelFoodLevel = foodLevel;
+         this.uplevelFoodBoxRequested = false;
+         this.uplevelFoodBoxChecked = false;
+         this.uplevelFoodBoxMoveSlot = -1;
+         Char.aFoodValue = foodLevel;
+         Char.isAFood = true;
+         System.out.println("UPLEVEL FOOD enable level=" + foodLevel);
+      } else {
+         Char.aFoodValue = foodLevel;
+         Char.isAFood = true;
+      }
+
+      Item food = this.findUplevelFood(me.arrItemBag, foodLevel);
+      if (food != null) {
+         if (this.uplevelFoodBuyPending) {
+            System.out.println("UPLEVEL FOOD ready level=" + foodLevel
+                  + " count=" + this.countUplevelFood(me.arrItemBag, foodLevel));
+            this.uplevelFoodBuyPending = false;
+         }
+         this.uplevelFoodBoxRequested = false;
+         this.uplevelFoodBoxChecked = false;
+         this.uplevelFoodBoxMoveSlot = -1;
+         if (!this.isUplevelFoodActive(me)) {
+            long now = System.currentTimeMillis();
+            if (now - this.uplevelFoodUseSentAt >= 5000L) {
+               this.uplevelFoodUseSentAt = now;
+               Service.gI().useItem(food.indexUI);
+               System.out.println("UPLEVEL FOOD use level=" + foodLevel
+                     + " bagIndex=" + food.indexUI);
+               return false;
+            }
+         }
+         return true;
+      }
+
+      long now = System.currentTimeMillis();
+      if (this.uplevelFoodBoxMoveSlot >= 0) {
+         if (this.findUplevelFood(me.arrItemBag, foodLevel) != null
+               || me.arrItemBox == null || this.uplevelFoodBoxMoveSlot >= me.arrItemBox.length
+               || me.arrItemBox[this.uplevelFoodBoxMoveSlot] == null) {
+            this.uplevelFoodBoxMoveSlot = -1;
+            this.uplevelFoodBoxChecked = false;
+         } else if (now - this.uplevelFoodBoxActionAt < 8000L) {
+            return false;
+         } else {
+            System.out.println("UPLEVEL FOOD chest move timeout level=" + foodLevel);
+            this.uplevelFoodBoxMoveSlot = -1;
+            this.uplevelFoodBoxChecked = true;
+         }
+      }
+
+      if (!this.uplevelFoodBoxChecked) {
+         if (me.arrItemBox == null) {
+            if (!this.uplevelFoodBoxRequested) {
+               me.arrItemBox = null;
+               Service.gI().requestItem(4);
+               this.uplevelFoodBoxRequested = true;
+               this.uplevelFoodBoxActionAt = now;
+               System.out.println("UPLEVEL FOOD chest check level=" + foodLevel);
+            } else if (now - this.uplevelFoodBoxActionAt >= 8000L) {
+               this.uplevelFoodBoxRequested = false;
+               this.uplevelFoodBoxChecked = true;
+               System.out.println("UPLEVEL FOOD chest timeout level=" + foodLevel);
+            }
+            return false;
+         }
+         this.uplevelFoodBoxRequested = false;
+         Item boxFood = this.findUplevelFood(me.arrItemBox, foodLevel);
+         this.uplevelFoodBoxChecked = true;
+         if (boxFood != null) {
+            System.out.println("UPLEVEL FOOD chest->bag level=" + foodLevel
+                  + " chestIndex=" + boxFood.indexUI);
+            this.uplevelFoodBoxMoveSlot = boxFood.indexUI;
+            this.uplevelFoodBoxActionAt = now;
+            Service.gI().itemBoxToBag(boxFood.indexUI);
+            return false;
+         }
+         System.out.println("UPLEVEL FOOD chest empty level=" + foodLevel);
+      }
+
+      if (this.uplevelFoodBuyPending) {
+         if (now - this.uplevelFoodBuySentAt < 10000L) {
+            return false;
+         }
+         System.out.println("UPLEVEL FOOD buy timeout level=" + foodLevel + "; continue task");
+         this.uplevelFoodBuyPending = false;
+      }
+      if (now - this.uplevelFoodLastBuyAt < 30000L) {
+         return true;
+      }
+
+      int schoolMap = this.getUplevelSchoolMap(me);
+      if (TileMap.mapID != schoolMap) {
+         System.out.println("UPLEVEL FOOD route school map=" + TileMap.mapID + " -> " + schoolMap
+               + " level=" + foodLevel);
+         this.fieldAA(schoolMap, -2, -1, -1);
+         return false;
+      }
+
+      Npc foodNpc = GameScr.fieldAI(UplevelFoodNpc);
+      if (foodNpc == null) {
+         return false;
+      }
+      if (Math.abs(foodNpc.cx - me.cx) > 22 || Math.abs(foodNpc.cy - me.cy) > 22) {
+         Char.fieldAC(foodNpc.cx, foodNpc.cy);
+         return false;
+      }
+
+      int missing = UplevelFoodStock - this.countUplevelFood(me.arrItemBag, foodLevel);
+      if (missing < 1) {
+         return true;
+      }
+      int shopIndex = foodLevel == 50 ? 7 : foodLevel / 10;
+      GameScr.fieldAB(UplevelFoodNpc, 0, 0);
+      Service.gI().buyItem1(9, shopIndex, missing);
+      this.uplevelFoodBuyPending = true;
+      this.uplevelFoodBuySentAt = now;
+      this.uplevelFoodLastBuyAt = now;
+      System.out.println("UPLEVEL FOOD buy level=" + foodLevel + " quantity=" + missing
+            + " npc=" + UplevelFoodNpc + " shop=9 index=" + shopIndex);
+      return false;
+   }
+
    public void fieldAA(Char var1, byte var2, byte var3) {
       if (var1.cHP > 0 && !this.ensureUplevelNoelHat(var1)) {
+         return;
+      }
+      if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelFood(var1)) {
          return;
       }
       if (var1.ctaskId < 9) {
@@ -554,7 +818,12 @@ public class As20 extends As10 {
                   return;
                }
 
-               if (GameScr.hpPotion < 10 && var1.yen >= 300 * (10 - GameScr.hpPotion)) {
+               if (var1.taskMaint.index == 1 && !this.ensureUplevelTeacherHp(var1)) {
+                  return;
+               }
+
+               if (var1.taskMaint.index != 1 && GameScr.hpPotion < 10
+                     && var1.yen >= 300 * (10 - GameScr.hpPotion)) {
                   GameScr.fieldAB(3, 0, 0);
                   Service.gI().buyItem(7, 1, 10 - GameScr.hpPotion);
                   LockGame.fieldAG();
@@ -576,7 +845,11 @@ public class As20 extends As10 {
                return;
             }
 
-            if (var1.cHP < var1.cMaxHP / 2 && var1.cHP > 0) {
+            if (var1.taskMaint.index == 1 && this.useUplevelTeacherHp(var1)) {
+               return;
+            }
+
+            if (var1.taskMaint.index != 1 && var1.cHP < var1.cMaxHP / 2 && var1.cHP > 0) {
                var1.gameAE(16);
             }
 
