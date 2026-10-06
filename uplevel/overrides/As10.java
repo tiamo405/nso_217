@@ -348,6 +348,10 @@ public class As10 extends Auto {
             if (Char.getMyChar().cHP <= 0) {
                 Auto.fieldAA(false);
             } else if (var1.taskMaint == null) {
+                if (this instanceof As20 && var1.ctaskId == 17) {
+                    this.fieldAA(var1, var2, var3);
+                    return;
+                }
                 if (this instanceof As20 && var1.ctaskId == 9
                         && var1.nClass != null && var1.nClass.classId == 0) {
                     if (var1.clevel < 10) {

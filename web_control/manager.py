@@ -508,8 +508,12 @@ class HeadlessManager:
         if filename is None:
             raise ControlError("Loại log không hợp lệ")
 
-        # Nếu runtime chỉ định là ta_thu hoặc ta-thu supervisor đang chạy thì đọc từ ta-thu-runtime
-        if runtime == "ta_thu" or (runtime == "auto" and self.ta_thu_supervisor_status()["running"]):
+        # Explicit Tà Thú logs must not fall back to NVHN when worker has not started yet.
+        if runtime == "ta_thu":
+            ta_thu_path = self.settings.ta_thu_dir / "workers" / f"worker-{int(number):02d}" / filename
+            return ta_thu_path
+
+        if runtime == "auto" and self.ta_thu_supervisor_status()["running"]:
             ta_thu_path = self.settings.ta_thu_dir / "workers" / f"worker-{int(number):02d}" / filename
             if ta_thu_path.is_file():
                 return ta_thu_path
@@ -627,6 +631,7 @@ class HeadlessManager:
         worker_count: int = 10,
         server: str | None = None,
         nvhn_workers_dir: Path | None = None,
+        rebuild_workers: bool = True,
     ) -> bool:
         async with self.control_lock:
             status = self.ta_thu_supervisor_status()
@@ -634,19 +639,23 @@ class HeadlessManager:
                 return True
             selected_server = self.selected_server() if server is None else self.set_server(server)
 
-            # 1. Build workers Tà Thú
+            # 1. Build workers Tà Thú on first start. Recovery reuses existing
+            # worker directories so live Tà Thú processes are not destroyed.
             build_script = self.settings.ta_thu_dir / "scripts" / "build-workers.sh"
             if not build_script.is_file():
                 return False
 
-            code, output = await self._capture(
-                str(build_script),
-                str(worker_count),
-                timeout=300,
-                server=selected_server,
-            )
-            if code != 0:
-                return False
+            worker_root = self.settings.ta_thu_dir / "workers"
+            has_workers = any(path.is_dir() for path in worker_root.glob("worker-*"))
+            if rebuild_workers or not has_workers:
+                code, output = await self._capture(
+                    str(build_script),
+                    str(worker_count),
+                    timeout=300,
+                    server=selected_server,
+                )
+                if code != 0:
+                    return False
 
             # 2. Start supervisor Tà Thú
             sup_script = self.settings.ta_thu_dir / "scripts" / "supervise-workers.sh"
@@ -654,6 +663,7 @@ class HeadlessManager:
                 return False
 
             self.settings.runtime_dir.mkdir(parents=True, exist_ok=True)
+            self.ta_thu_supervisor_pid_file.unlink(missing_ok=True)
             log_stream = self.ta_thu_supervisor_log.open("ab", buffering=0)
             try:
                 environment = self.settings.command_env(selected_server)

@@ -309,6 +309,30 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(capture.call_args.kwargs["server"], "ninjamobileSV4")
         self.assertEqual(popen.call_args.kwargs["env"]["NSO_SERVER"], "ninjamobileSV4")
 
+    async def test_ta_thu_log_path_does_not_fallback_to_nvhn(self) -> None:
+        manager = HeadlessManager(self.settings)
+        expected = self.settings.ta_thu_dir / "workers" / "worker-01" / "stdout.log"
+        self.assertEqual(manager.log_path("worker-01", "stdout", runtime="ta_thu"), expected)
+
+    async def test_auto_ta_thu_recovers_dead_supervisor_without_rebuild(self) -> None:
+        app = create_app(self.settings)
+        manager = app.state.manager
+        scheduler = app.state.scheduler
+        scheduler.current_phase = "ta_thu"
+        manager._set_desired_supervisor(True)
+        status = {"totals": {"total": 3, "done": 1}}
+        with patch.object(manager, "status", new_callable=AsyncMock, return_value=status), patch.object(
+            manager, "ta_thu_supervisor_status", return_value={"running": False}
+        ), patch.object(manager, "start_ta_thu", new_callable=AsyncMock, return_value=True) as start:
+            await scheduler._check_auto_ta_thu()
+
+        start.assert_awaited_once_with(
+            worker_count=3,
+            server=manager.selected_server(),
+            nvhn_workers_dir=manager.settings.workers_dir,
+            rebuild_workers=False,
+        )
+
     async def test_completed_start_does_not_trigger_ta_thu(self) -> None:
         home = self.settings.workers_dir / "worker-01" / "home"
         (home / "worker.done").touch()

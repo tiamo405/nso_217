@@ -364,7 +364,6 @@ class ScheduleManager:
         async with self.transition_lock:
             if (
                 not self.auto_ta_thu
-                or self.current_phase != "nvhn"
                 or self.manager is None
                 or not self.manager.desired_supervisor()
                 or self.jobs.active_job() is not None
@@ -374,6 +373,26 @@ class ScheduleManager:
             totals = nvhn_status.get("totals", {})
             total_workers = totals.get("total", 0)
             done_workers = totals.get("done", 0)
+
+            if self.current_phase == "ta_thu":
+                if self.manager.ta_thu_supervisor_status()["running"]:
+                    return
+                logger.warning("Tà Thú supervisor đã dừng; khởi động lại và giữ worker hiện có.")
+                worker_count = total_workers or self.worker_count
+                if await self.manager.start_ta_thu(
+                    worker_count=worker_count,
+                    server=self.manager.selected_server(),
+                    nvhn_workers_dir=self.manager.settings.workers_dir,
+                    rebuild_workers=False,
+                ):
+                    logger.info("Đã khôi phục Auto Tà Thú supervisor.")
+                else:
+                    logger.warning("Khôi phục Auto Tà Thú supervisor thất bại.")
+                return
+
+            if self.current_phase != "nvhn":
+                return
+
             if (
                 total_workers > 0
                 and done_workers > 0

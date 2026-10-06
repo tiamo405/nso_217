@@ -8,6 +8,13 @@ public class As20 extends As10 {
    private static final int UplevelFoodType = 18;
    private static final int UplevelFoodNpc = 4;
    private static final int UplevelFoodStock = 2;
+   private static final int UplevelTask16LevelTarget = 22;
+   private static final int UplevelTask16ScorpionMob = 23;
+   private static final int UplevelTask16SnakeMob = 24;
+   private static final int UplevelTask16MobCount = 250;
+   private static final int UplevelTask17ToneMap = 22;
+   private static final int UplevelTask17FishingVillageMap = 32;
+   private static final int UplevelTask17NaoNpc = 16;
    private int fieldAV;
    private boolean uplevelTask13WeaponEquipped;
    private int uplevelTask14PendingItem = -1;
@@ -33,6 +40,15 @@ public class As20 extends As10 {
    private long uplevelTask2UseSentAt;
    private long uplevelTask2MissingLogAt;
    private long uplevelCombatPotionUseSentAt;
+   private int uplevelTask16LoggedIndex = -1;
+   private int uplevelTask16LoggedLevel = -1;
+   private int uplevelTask16LoggedCount = -1;
+   private int uplevelTask17LoggedIndex = -1;
+   private int uplevelTask17LoggedCount = -1;
+   private long uplevelTask17WaitingLogAt;
+   private long uplevelTask17EntryLogAt;
+   private long uplevelTask17RequestSentAt;
+   private long uplevelTask17NpcLogAt;
    private static  int[] fieldAW;
    private static  int[] fieldAX;
    private static  int[] fieldAY;
@@ -67,7 +83,113 @@ public class As20 extends As10 {
    }
 
    public boolean fieldAA(Char var1) {
-      return var1.clevel >= 20;
+      return var1.ctaskId != 16 && var1.ctaskId != 17 && var1.clevel >= 20;
+   }
+
+   private void logUplevelTask16(Char me) {
+      if (me.taskMaint == null) return;
+      int index = me.taskMaint.index;
+      if (index == this.uplevelTask16LoggedIndex
+            && (index != 0 || me.clevel == this.uplevelTask16LoggedLevel)
+            && me.taskMaint.count == this.uplevelTask16LoggedCount) {
+         return;
+      }
+      this.uplevelTask16LoggedIndex = index;
+      this.uplevelTask16LoggedLevel = me.clevel;
+      this.uplevelTask16LoggedCount = me.taskMaint.count;
+      if (index == 0) {
+         System.out.println("UPLEVEL TASK16 phase=level " + UplevelTask16LevelTarget
+               + " map=8 currentLevel=" + me.clevel);
+      } else if (index == 1) {
+         System.out.println("UPLEVEL TASK16 phase=map63 mob=" + UplevelTask16ScorpionMob
+               + " count=" + UplevelTask16MobCount + " progress=" + me.taskMaint.count);
+      } else if (index == 2) {
+         System.out.println("UPLEVEL TASK16 phase=map47 mob=" + UplevelTask16SnakeMob
+               + " count=" + UplevelTask16MobCount + " progress=" + me.taskMaint.count);
+      } else {
+         System.out.println("UPLEVEL TASK16 phase index=" + index
+               + " progress=" + me.taskMaint.count);
+      }
+   }
+
+   private void logUplevelTask17(Char me) {
+      if (me.taskMaint == null) return;
+      int index = me.taskMaint.index;
+      int count = me.taskMaint.count;
+      if (index == this.uplevelTask17LoggedIndex && count == this.uplevelTask17LoggedCount) {
+         return;
+      }
+      this.uplevelTask17LoggedIndex = index;
+      this.uplevelTask17LoggedCount = count;
+      StringBuilder log = new StringBuilder("UPLEVEL TASK17 index=").append(index);
+      if (me.taskMaint.subNames != null) {
+         for (int i = 0; i < me.taskMaint.subNames.length; i++) {
+            log.append(" phase").append(i).append("=\"")
+                  .append(me.taskMaint.subNames[i]).append("\"");
+            if (me.taskMaint.counts != null && i < me.taskMaint.counts.length) {
+               log.append(" target=").append(me.taskMaint.counts[i]);
+            }
+         }
+      }
+      log.append(" progress=").append(count);
+      System.out.println(log.toString());
+   }
+
+   private boolean receiveUplevelTask17(Char me, int targetNpc) {
+      int schoolMap = this.getUplevelSchoolMap(me);
+      if (TileMap.mapID == schoolMap) {
+         System.out.println("UPLEVEL TASK17 route Tone map=" + TileMap.mapID
+               + " -> " + UplevelTask17ToneMap);
+         this.fieldAA(UplevelTask17ToneMap, -2, -1, -1);
+         return false;
+      }
+      if (TileMap.mapID == UplevelTask17ToneMap) {
+         System.out.println("UPLEVEL TASK17 route fishing village map=" + TileMap.mapID
+               + " -> " + UplevelTask17FishingVillageMap);
+         this.fieldAA(UplevelTask17FishingVillageMap, -2, -1, -1);
+         return false;
+      }
+      if (TileMap.mapID != UplevelTask17FishingVillageMap) {
+         System.out.println("UPLEVEL TASK17 route school map=" + TileMap.mapID + " -> " + schoolMap);
+         this.fieldAA(schoolMap, -2, -1, -1);
+         return false;
+      }
+
+      int npcId = targetNpc >= 0 ? targetNpc : UplevelTask17NaoNpc;
+      Npc nao = GameScr.fieldAI(npcId);
+      if (nao == null) {
+         long now = System.currentTimeMillis();
+         if (now - this.uplevelTask17NpcLogAt >= 5000L) {
+            this.uplevelTask17NpcLogAt = now;
+            StringBuilder npcs = new StringBuilder();
+            for (int i = 0; i < GameScr.vNpc.size(); i++) {
+               Npc npc = (Npc)GameScr.vNpc.elementAt(i);
+               if (npc != null && npc.template != null) {
+                  if (npcs.length() > 0) npcs.append(',');
+                  npcs.append(npc.template.npcTemplateId).append(':').append(npc.template.name);
+               }
+            }
+            System.out.println("UPLEVEL TASK17 target missing npc=" + npcId
+                  + " map=" + TileMap.mapID + " npcs=" + npcs);
+         }
+         return false;
+      }
+      if (Math.abs(nao.cx - me.cx) > 22 || Math.abs(nao.cy - me.cy) > 22) {
+         Char.fieldAC(nao.cx, nao.cy);
+         return false;
+      }
+
+      long now = System.currentTimeMillis();
+      if (now - this.uplevelTask17RequestSentAt < 5000L) {
+         return false;
+      }
+      this.uplevelTask17RequestSentAt = now;
+      GameScr.fieldAB(npcId, 0, 0);
+      Service.gI().getTask(npcId, 0, -1);
+      LockGame.fieldAO();
+      System.out.println("UPLEVEL TASK17 receive npc=" + npcId
+            + " map=" + UplevelTask17FishingVillageMap);
+      return false;
    }
 
    private boolean ensureUplevelNoelHat(Char me) {
@@ -527,6 +649,15 @@ public class As20 extends As10 {
    }
 
    public void fieldAA(Char var1, byte var2, byte var3) {
+      if (var1.ctaskId == 17) {
+         long now = System.currentTimeMillis();
+         if (now - this.uplevelTask17EntryLogAt >= 5000L) {
+            this.uplevelTask17EntryLogAt = now;
+            System.out.println("UPLEVEL TASK17 enter task=" + (var1.taskMaint == null
+                  ? "null" : String.valueOf(var1.taskMaint.index))
+                  + " map=" + TileMap.mapID + " hp=" + var1.cHP);
+         }
+      }
       int autoItemLevel = this.getUplevelFoodLevel(var1);
       Char.aHpValue = autoItemLevel;
       Char.aMpValue = autoItemLevel;
@@ -534,6 +665,10 @@ public class As20 extends As10 {
       Char.isAHP = true;
       Char.isAMP = true;
       Char.isAFood = true;
+      if (var1.ctaskId == 17 && var1.taskMaint == null) {
+         this.receiveUplevelTask17(var1, var3);
+         return;
+      }
       if (var1.cHP > 0 && (!uplevelGiftDone || (var1.ctaskId >= 9
             && (!uplevelGiftBoxReady || uplevelGiftItemStage < uplevelGiftItems.length + 2)))) {
          if (var1.ctaskId >= 6) {
@@ -1095,6 +1230,7 @@ public class As20 extends As10 {
             Auto.fieldAH();
             return;
          case 16:
+            this.logUplevelTask16(var1);
             if (var1.clevel >= 20 && (var11 = Char.fieldAF(fieldBC[var1.nClass.classId])) != null) {
                GameScr.fieldAC("Học sách kĩ năng");
                Service.gI().useItem(var11.indexUI);
@@ -1102,6 +1238,9 @@ public class As20 extends As10 {
             }
 
             if (var1.taskMaint.index == 0) {
+               if (var1.clevel >= UplevelTask16LevelTarget) {
+                  return;
+               }
                if (TileMap.mapID == 8) {
                   this.fieldAC(-1);
                   this.fieldAB(-1, 1);
@@ -1115,7 +1254,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 1) {
                if (TileMap.mapID == 63) {
                   this.fieldAC(-1);
-                  this.fieldAB(23, 1);
+                  this.fieldAB(UplevelTask16ScorpionMob, 1);
                   return;
                }
 
@@ -1126,12 +1265,26 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 2) {
                if (TileMap.mapID == 47) {
                   this.fieldAC(-1);
-                  this.fieldAB(24, 1);
+                  this.fieldAB(UplevelTask16SnakeMob, 1);
                   return;
                }
 
                this.fieldAA(47, -1, -1, -1);
             }
+            break;
+         case 17:
+            if (var1.taskMaint == null) {
+               long now = System.currentTimeMillis();
+               if (now - this.uplevelTask17WaitingLogAt >= 5000L) {
+                  this.uplevelTask17WaitingLogAt = now;
+                  Npc targetNpc = GameScr.fieldAI(var3);
+                  System.out.println("UPLEVEL TASK17 waiting task map=" + TileMap.mapID
+                        + " targetMap=" + var2 + " targetNpc=" + var3
+                        + " npcPresent=" + (targetNpc != null));
+               }
+            }
+            this.logUplevelTask17(var1);
+            return;
          }
 
       }
