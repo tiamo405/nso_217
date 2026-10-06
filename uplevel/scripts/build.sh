@@ -47,6 +47,20 @@ if not source.startswith("import java.io.DataInputStream;"):
 path.write_text(source)
 UPLEVELPY
 
+# Let As20 process final subtasks that require work before task completion.
+python3 - "$WORK_SRC_DIR/As10.java" <<'UPLEVELPY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+needle = "            } else if (var1.taskMaint.index >= var1.taskMaint.subNames.length - 1) {\n"
+replacement = "            } else if (var1.taskMaint.index >= var1.taskMaint.subNames.length - 1\n                    && !(this instanceof As20\n                    && ((var1.ctaskId == 12 && var1.taskMaint.index < 4)\n                    || (var1.ctaskId == 13 && var1.taskMaint.index == 1)))) {\n"
+if source.count(needle) != 1:
+    raise SystemExit("expected As10 final-task branch")
+path.write_text(source.replace(needle, replacement, 1))
+UPLEVELPY
+
 sed -i 's#"".getClass().getResourceAsStream("/map/" + var1)#TileMap.class.getResourceAsStream("/map/" + var1)#g' "$WORK_SRC_DIR/TileMap.java"
 sed -i 's#"".getClass().getResourceAsStream("/map/" + mapID)#TileMap.class.getResourceAsStream("/map/" + mapID)#g' "$WORK_SRC_DIR/TileMap.java"
 sed -i 's#"".getClass().getResourceAsStream(var0)#RMS.class.getResourceAsStream(var0)#g' "$WORK_SRC_DIR/RMS.java"
@@ -238,6 +252,15 @@ replacement = '''   private static boolean uplevelGiftStarted;
    private static int uplevelGiftUseSlot = -1;
    private static int uplevelGiftUseQuantity;
    private static long uplevelGiftItemLastAction;
+   private static final int[] uplevelGiftBoxItems = new int[]{383, 242, 523};
+   private static boolean uplevelGiftBoxRequested;
+   private static boolean uplevelGiftBoxReady;
+   private static int uplevelGiftBoxMoveSlot = -1;
+   private static int uplevelGiftBoxMoveId = -1;
+   private static long uplevelGiftBoxActionAt;
+   private static int uplevelGiftBoxRequestRetries;
+   private static int uplevelGiftBoxMoveAttempts;
+   private static int uplevelGiftBoxMoved;
 
    private static Item uplevelGiftFreeSlotItem(Char me) {
       for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
@@ -304,6 +327,106 @@ replacement = '''   private static boolean uplevelGiftStarted;
       return null;
    }
 
+   private static Item uplevelGiftBoxBagItem(Char me) {
+      for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
+         Item item = me.arrItemBag[i];
+         if (item == null || item.template == null) continue;
+         for (int target : uplevelGiftBoxItems) {
+            if (item.template.id == target) return item;
+         }
+      }
+      return null;
+   }
+
+   private boolean uplevelPrepareGiftBox(Char me) {
+      if (uplevelGiftBoxReady) return false;
+
+      long now = System.currentTimeMillis();
+      if (uplevelGiftBoxMoveSlot >= 0) {
+         Item pending = me.arrItemBag != null && uplevelGiftBoxMoveSlot < me.arrItemBag.length
+                 ? me.arrItemBag[uplevelGiftBoxMoveSlot] : null;
+         if (pending == null || pending.template == null || pending.template.id != uplevelGiftBoxMoveId) {
+            System.out.println("UPLEVEL GIFT BOX moved id=" + uplevelGiftBoxMoveId
+                    + " bagSlot=" + uplevelGiftBoxMoveSlot);
+            ++uplevelGiftBoxMoved;
+            uplevelGiftBoxMoveSlot = -1;
+            uplevelGiftBoxMoveId = -1;
+            uplevelGiftBoxMoveAttempts = 0;
+         } else if (now - uplevelGiftBoxActionAt < 8000L) {
+            return true;
+         } else {
+            System.out.println("UPLEVEL GIFT BOX move timeout id=" + uplevelGiftBoxMoveId
+                    + " bagSlot=" + uplevelGiftBoxMoveSlot);
+            if (++uplevelGiftBoxMoveAttempts >= 3) {
+               System.out.println("UPLEVEL GIFT BOX move unavailable id=" + uplevelGiftBoxMoveId
+                       + "; continue task");
+               uplevelGiftBoxReady = true;
+               return false;
+            }
+            uplevelGiftBoxMoveSlot = -1;
+            uplevelGiftBoxMoveId = -1;
+         }
+      }
+
+      Item bagItem = uplevelGiftBoxBagItem(me);
+      if (bagItem == null) {
+         uplevelGiftBoxReady = true;
+         System.out.println("UPLEVEL GIFT BOX done moved items=" + uplevelGiftBoxMoved);
+         return false;
+      }
+
+      int schoolMap = this.getUplevelSchoolMap(me);
+      if (TileMap.mapID != schoolMap) {
+         System.out.println("UPLEVEL GIFT BOX route map=" + TileMap.mapID + " -> " + schoolMap);
+         this.fieldAA(schoolMap, -2, -1, -1);
+         return true;
+      }
+
+      Npc kamakura = GameScr.fieldAI(5);
+      if (kamakura == null) {
+         if (now - uplevelGiftBoxActionAt >= 5000L) {
+            uplevelGiftBoxActionAt = now;
+            System.out.println("UPLEVEL GIFT BOX NPC missing npc=5 map=" + TileMap.mapID);
+         }
+         return true;
+      }
+      if (Math.abs(kamakura.cx - me.cx) > 22 || Math.abs(kamakura.cy - me.cy) > 22) {
+         Char.fieldAC(kamakura.cx, kamakura.cy);
+         return true;
+      }
+
+      if (!uplevelGiftBoxRequested) {
+         me.arrItemBox = null;
+         GameScr.fieldAB(5, 0, 0);
+         Service.gI().requestItem(4);
+         uplevelGiftBoxRequested = true;
+         uplevelGiftBoxActionAt = now;
+         System.out.println("UPLEVEL GIFT BOX open npc=5");
+         return true;
+      }
+      if (me.arrItemBox == null) {
+         if (now - uplevelGiftBoxActionAt < 8000L) return true;
+         if (++uplevelGiftBoxRequestRetries <= 3) {
+            uplevelGiftBoxRequested = false;
+            uplevelGiftBoxActionAt = now;
+            System.out.println("UPLEVEL GIFT BOX retry request=" + uplevelGiftBoxRequestRetries);
+            return true;
+         }
+         System.out.println("UPLEVEL GIFT BOX unavailable; continue task");
+         uplevelGiftBoxReady = true;
+         return false;
+      }
+
+      uplevelGiftBoxMoveSlot = bagItem.indexUI;
+      uplevelGiftBoxMoveId = bagItem.template.id;
+      uplevelGiftBoxActionAt = now;
+      uplevelGiftBoxMoveAttempts = 1;
+      Service.gI().itemBagToBox(bagItem.indexUI);
+      System.out.println("UPLEVEL GIFT BOX move id=" + bagItem.template.id
+              + " bagSlot=" + bagItem.indexUI + " quantity=" + bagItem.quantity);
+      return true;
+   }
+
    private static Item uplevelGiftStoreItem(int templateId) {
       for (int i = 0; GameScr.arrItemStore != null && i < GameScr.arrItemStore.length; i++) {
          Item item = GameScr.arrItemStore[i];
@@ -322,6 +445,7 @@ replacement = '''   private static boolean uplevelGiftStarted;
    }
 
    private boolean uplevelPrepareGiftItems(Char me) {
+      if (this.uplevelPrepareGiftBox(me)) return true;
       if (uplevelGiftItemStage >= uplevelGiftItems.length + 2) return false;
       if (TileMap.mapID != 72) {
          this.fieldAA(72, -2, -1, -1);
@@ -398,6 +522,7 @@ replacement = '''   private static boolean uplevelGiftStarted;
       }
       if (me.xu > 0L) {
          uplevelGiftDone = true;
+         if (me.ctaskId < 9) return false;
          return uplevelPrepareGiftItems(me);
       }
       if (!uplevelGiftStarted) {
@@ -524,6 +649,7 @@ replacement = '''   private static boolean uplevelGiftStarted;
          System.out.println("UPLEVEL GIFT claim result mail=" + mailId + " success=" + success);
          if (mailId == uplevelGiftMailId && success) {
             uplevelGiftDone = true;
+            uplevelGiftMailReceived = true;
             uplevelGiftMailClaimRequested = false;
          } else if (mailId == uplevelGiftMailId && !success) {
             uplevelGiftMailClaimRequested = false;
@@ -804,6 +930,26 @@ replacement = '''    public final void uplevelMailAction(int action, int mailId)
 if source.count(needle) != 1:
     raise SystemExit("expected Service textBoxId")
 path.write_text(source.replace(needle, replacement, 1))
+UPLEVELPY
+python3 - "$WORK_SRC_DIR/Char.java" <<'UPLEVELPY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+replacements = {
+    "                if (this.me && this.myskill.template.type == 2) {\n":
+        "                if (this.me && this.myskill != null && this.myskill.template != null\n"
+        "                        && this.myskill.template.type == 2) {\n",
+    "            if (this.myskill.template.type != 1 && this.gameGK != null) {\n":
+        "            if (this.myskill != null && this.myskill.template != null\n"
+        "                    && this.myskill.template.type != 1 && this.gameGK != null) {\n",
+}
+for needle, replacement in replacements.items():
+    if source.count(needle) != 1:
+        raise SystemExit("expected Char.myskill null guard")
+    source = source.replace(needle, replacement, 1)
+path.write_text(source)
 UPLEVELPY
 python3 - "$WORK_SRC_DIR/Controller.java" <<'UPLEVELPY'
 import pathlib

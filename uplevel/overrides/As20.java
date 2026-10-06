@@ -30,6 +30,9 @@ public class As20 extends As10 {
    private int uplevelNoelUseSlot = -1;
    private long uplevelNoelUseSentAt;
    private int uplevelNoelUseAttempts;
+   private long uplevelTask2UseSentAt;
+   private long uplevelTask2MissingLogAt;
+   private long uplevelCombatPotionUseSentAt;
    private static  int[] fieldAW;
    private static  int[] fieldAX;
    private static  int[] fieldAY;
@@ -256,6 +259,40 @@ public class As20 extends As10 {
       return count;
    }
 
+   private boolean useUplevelCombatPotions(Char me) {
+      if (me.cHP <= 0) {
+         return false;
+      }
+      long now = System.currentTimeMillis();
+      if (now - this.uplevelCombatPotionUseSentAt < 2500L) {
+         return false;
+      }
+      if ((long)me.cHP * 100L < (long)me.cMaxHP * 50L && me.gameAE(16)) {
+         this.uplevelCombatPotionUseSentAt = now;
+         System.out.println("UPLEVEL COMBAT HP use hp=" + me.cHP + "/" + me.cMaxHP);
+         return true;
+      }
+      if ((long)me.cMP * 100L < (long)me.cMaxMP * 50L && me.gameAE(17)) {
+         this.uplevelCombatPotionUseSentAt = now;
+         System.out.println("UPLEVEL COMBAT MP use mp=" + me.cMP + "/" + me.cMaxMP);
+         return true;
+      }
+      return false;
+   }
+
+   private boolean pickupUplevelConsumable() {
+      for (int i = 0; i < GameScr.vItemMap.size(); i++) {
+         ItemMap drop = (ItemMap)GameScr.vItemMap.elementAt(i);
+         if (drop != null && !drop.fieldAK && drop.template != null
+               && (drop.template.type == 16 || drop.template.type == 17 || drop.template.type == 18)) {
+            this.fieldAC(drop.template.id);
+            System.out.println("UPLEVEL PICK consumable id=" + drop.template.id);
+            return true;
+         }
+      }
+      return false;
+   }
+
    private boolean ensureUplevelTeacherHp(Char me) {
       int count = this.countUplevelItem(me, UplevelTeacherHpId);
       if (count > 0) {
@@ -308,7 +345,7 @@ public class As20 extends As10 {
    private int getUplevelFoodLevel(Char me) {
       int level = me.clevel / 10 * 10;
       if (level < 10) {
-         return 10;
+         return 1;
       }
       return level > 50 ? 50 : level;
    }
@@ -357,6 +394,9 @@ public class As20 extends As10 {
 
    private int getUplevelSchoolMap(Char me) {
       int classId = me.nClass == null ? 0 : me.nClass.classId;
+      if (classId == 0 && this.fieldAV > 0) {
+         return this.fieldAV <= 2 ? 1 : (this.fieldAV <= 4 ? 72 : 27);
+      }
       return classId <= 2 ? 1 : (classId <= 4 ? 27 : 72);
    }
 
@@ -487,7 +527,58 @@ public class As20 extends As10 {
    }
 
    public void fieldAA(Char var1, byte var2, byte var3) {
-      if (var1.cHP > 0 && !this.ensureUplevelNoelHat(var1)) {
+      int autoItemLevel = this.getUplevelFoodLevel(var1);
+      Char.aHpValue = autoItemLevel;
+      Char.aMpValue = autoItemLevel;
+      Char.aFoodValue = autoItemLevel;
+      Char.isAHP = true;
+      Char.isAMP = true;
+      Char.isAFood = true;
+      if (var1.cHP > 0 && (!uplevelGiftDone || (var1.ctaskId >= 9
+            && (!uplevelGiftBoxReady || uplevelGiftItemStage < uplevelGiftItems.length + 2)))) {
+         if (var1.ctaskId >= 6) {
+            this.uplevelPrepareGift(var1);
+            return;
+         }
+      }
+      if (var1.taskMaint != null
+            && ((var1.ctaskId == 2 && var1.taskMaint.index == 0)
+            || (var1.ctaskId == 3 && var1.taskMaint.index == 1))) {
+         Item taskItem = null;
+         for (int i = 0; var1.arrItemBag != null && i < var1.arrItemBag.length; i++) {
+            Item item = var1.arrItemBag[i];
+            if (item != null && item.template != null
+                  && (var1.ctaskId == 2 ? item.isTypeWeapon() : item.template.type == UplevelFoodType)) {
+               taskItem = item;
+               break;
+            }
+         }
+         long now = System.currentTimeMillis();
+         if (taskItem != null) {
+            if (now - this.uplevelTask2UseSentAt >= 1000L) {
+               Service.gI().useItem(taskItem.indexUI);
+               this.uplevelTask2UseSentAt = now;
+               System.out.println("UPLEVEL TASK" + var1.ctaskId + " use slot=" + taskItem.indexUI
+                     + " id=" + taskItem.template.id + " type=" + taskItem.template.type
+                     + " quantity=" + taskItem.quantity);
+            }
+         } else if (now - this.uplevelTask2MissingLogAt >= 5000L) {
+            this.uplevelTask2MissingLogAt = now;
+            System.out.println("UPLEVEL TASK" + var1.ctaskId + " missing required item; skip LockGame.fieldAO()");
+         }
+         return;
+      }
+      if (var1.ctaskId < 9 && this.useUplevelCombatPotions(var1)) {
+         return;
+      }
+      if (var1.ctaskId < 9 && this.pickupUplevelConsumable()) {
+         return;
+      }
+      if (var1.ctaskId < 6) {
+         super.fieldAA(var1, var2, var3);
+         return;
+      }
+      if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelNoelHat(var1)) {
          return;
       }
       if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelFood(var1)) {
