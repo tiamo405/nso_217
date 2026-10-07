@@ -1,0 +1,1 @@
+Phase0 sao laij clevel >=25 nhỉ, >=25 thì làm đến phase 1 chứ, khi đạt lv25 là làm nhiệm vụ phase1 , logic ở dẫn Jaian là ở map 33 sẽ có 1 npc là Jaian, bạn sẽ dần đi từ từ (đi theo npc) đến sát mép chỗ chuyển sang map số 61 . trong quá trình làm nhiệm vụ thì nhân vật luôn phải đi gần với npc trong bán kính 100 đơn vị, không những 

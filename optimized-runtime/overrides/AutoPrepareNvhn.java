@@ -208,15 +208,21 @@ public final class AutoPrepareNvhn extends Auto {
         Char me = Char.getMyChar();
         int hatId = this.getNoelHatId(me.cgender);
         ItemTemplate hatTemplate = ItemTemplates.gameAA((short) hatId);
-        if (this.isNoelMaskActive(hatTemplate)) {
+        Item equippedHat = this.findBodyItem(hatId);
+        if (equippedHat != null) {
             System.out.println("AUTO NVHN NOEL: Mũ noel đang được sử dụng id=" + hatId
-                    + " maskPart=" + me.ID_MAT_NA + ", không mua");
+                    + " bodyIndex=" + equippedHat.indexUI + ", không mua");
             return;
         }
 
         Item hat = this.findBagItem(hatId);
-        this.refreshBox();
+        if (hat != null) {
+            System.out.println("AUTO NVHN NOEL: đã có Mũ noel trong hành trang id=" + hatId
+                    + " bagIndex=" + hat.indexUI + ", không mua");
+        }
+
         if (hat == null) {
+            this.refreshBox();
             Item boxHat = this.findBoxItem(hatId);
             if (boxHat != null) {
                 System.out.println("AUTO NVHN NOEL: tìm thấy Mũ noel trong rương, boxIndex=" + boxHat.indexUI);
@@ -302,14 +308,21 @@ public final class AutoPrepareNvhn extends Auto {
         if (template == null) {
             return false;
         }
+        return this.findBodyItem(template.id) != null;
+    }
+
+    private Item findBodyItem(int templateId) {
         Item[] body = Char.getMyChar().arrItemBody;
-        if (body != null && template.type >= 0 && template.type < body.length
-                && body[template.type] != null
-                && body[template.type].template != null
-                && body[template.type].template.id == template.id) {
-            return true;
+        if (body == null) {
+            return null;
         }
-        return template.part >= 0 && Char.getMyChar().ID_MAT_NA == template.part;
+        for (int i = 0; i < body.length; ++i) {
+            Item item = body[i];
+            if (item != null && item.template != null && item.template.id == templateId) {
+                return item;
+            }
+        }
+        return null;
     }
 
     private Item findFashionItem(int templateId) {
