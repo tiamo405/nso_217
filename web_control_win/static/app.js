@@ -117,7 +117,7 @@ async function refreshStatus() {
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
-    $("#server-select").value = data.server || supervisor.server || "tk";
+    if (data.server) $("#server-endpoint").textContent = data.server;
 
     if (!supervisorSettingsDirty && !supervisorSettingsSaving) {
       $("#periodic-restart-hours").value = supervisor.periodic_restart_hours ?? 3;
@@ -188,7 +188,6 @@ function renderSchedule(schedule) {
     $("#schedule-repeat-hours").value = schedule.repeat_hours || schedule.interval_hours || 6;
     $("#schedule-worker-count").value = schedule.worker_count || 10;
     $("#schedule-worker-start-delay-seconds").value = schedule.worker_start_delay_seconds ?? 30;
-    $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
   }
 
   $("#schedule-current-phase").textContent = schedule.current_phase === "ta_thu"
@@ -244,7 +243,6 @@ async function supervisorAction(action, button) {
       const settings = readSupervisorSettings();
       if (settings === null) return;
       options.json = {
-        server: $("#server-select").value,
         periodic_restart_hours: settings.periodicHours,
         worker_start_delay_seconds: settings.startDelaySeconds,
       };
@@ -365,7 +363,6 @@ async function triggerBuild(startAfterBuild) {
       json: {
         worker_count: count,
         start_after_build: startAfterBuild,
-        server: $("#server-select").value,
       },
     });
     notify(`Bắt đầu build với ${count} workers...`);
@@ -450,7 +447,6 @@ $("#schedule-form").addEventListener("submit", async (event) => {
         repeat_hours: repeatHours,
         worker_count: workerCount,
         worker_start_delay_seconds: workerStartDelaySeconds,
-        server: $("#schedule-server").value,
       },
     });
     scheduleSaving = false;

@@ -10,7 +10,8 @@ JAVA_XMS=${JAVA_XMS:-8m}
 JAVA_XMX=${JAVA_XMX:-48m}
 JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true"}
 TA_THU_STAGE=${TA_THU_STAGE:-full}
-NSO_SERVER=${NSO_SERVER:-tk}
+# Chỉ còn 1 server game; giá trị tên cũ (tk, ninjamobile...) Java sẽ bỏ qua.
+NSO_SERVER=${NSO_SERVER:-180.93.114.122:14444}
 TA_THU_NVHN_WORKERS_DIR=${TA_THU_NVHN_WORKERS_DIR:-}
 START_DELAY=${START_DELAY:-10}
 WORKER_NICE=${WORKER_NICE:-}

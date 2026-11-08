@@ -14,18 +14,13 @@ PROXY_GROUP_SIZE=${NSO_PROXY_WORKERS_PER_PROXY:-6}
 PROXY_SUPPORT_SCRIPT="$SCRIPT_DIR/proxy_support.py"
 
 source "$SCRIPT_DIR/tuning-options.sh"
-SERVER_NAME=${NSO_SERVER:-tk}
+# Chỉ còn 1 server game duy nhất.
+GAME_SERVER=180.93.114.122:14444
+SERVER_NAME=$GAME_SERVER
 
 normalize_server() {
-    case "${1,,}" in
-        ninjamobile|ninja) SERVER_NAME=ninjamobile ;;
-        ninjamobilesv4|"ninja mobile sv4"|ninja-sv4|nsm4.ninjasm.net) SERVER_NAME=ninjamobileSV4 ;;
-        tk|truyenky|truyen-ky) SERVER_NAME=tk ;;
-        *)
-            echo "Server không hợp lệ: $1 (chọn ninjamobile, ninjamobileSV4 hoặc tk)." >&2
-            exit 1
-            ;;
-    esac
+    # Giữ tham số --server để tương thích lệnh cũ; mọi giá trị đều dùng server duy nhất.
+    SERVER_NAME=$GAME_SERVER
 }
 
 normalize_server "$SERVER_NAME"
@@ -48,15 +43,13 @@ is_optimized_worker_pid() {
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--server ninjamobile|ninjamobileSV4|tk] [--delay seconds] [worker_number...]
+Usage: $(basename "$0") [--delay seconds] [worker_number...]
 
 Examples:
   $(basename "$0")                 # start all workers
   $(basename "$0") 3               # start only worker-03
   $(basename "$0") 3 8 10          # start worker-03, worker-08, worker-10
   $(basename "$0") --delay 5       # start all, wait 5s between workers
-  $(basename "$0") --server tk     # chạy bằng server Truyền Kỳ
-  $(basename "$0") --server ninjamobileSV4 # chạy bằng NinjaMobile SV4
 EOF
 }
 
@@ -128,32 +121,30 @@ else
 fi
 
 proxy_prepare_needed=false
-if [[ "$SERVER_NAME" == "tk" ]]; then
-    if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; then
+if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; then
+    proxy_prepare_needed=true
+elif (( PROXY_GROUP_SIZE > 0 )); then
+    proxy_marker="$WORKERS_DIR/.proxy-group-size"
+    if [[ ! -f "$proxy_marker" ]] || [[ "$(<"$proxy_marker")" != "$PROXY_GROUP_SIZE" ]]; then
         proxy_prepare_needed=true
-    elif (( PROXY_GROUP_SIZE > 0 )); then
-        proxy_marker="$WORKERS_DIR/.proxy-group-size"
-        if [[ ! -f "$proxy_marker" ]] || [[ "$(<"$proxy_marker")" != "$PROXY_GROUP_SIZE" ]]; then
+    fi
+    for worker_dir in "${worker_dirs[@]}"; do
+        [[ -d "$worker_dir" ]] || continue
+        [[ -f "$worker_dir/.paused" ]] && continue
+        [[ -f "$worker_dir/home/worker.done" ]] && continue
+        # Stop worker removes bot.pid but keeps its proxy assignment.
+        if [[ ! -s "$worker_dir/.proxy" ]]; then
             proxy_prepare_needed=true
+            break
         fi
-        for worker_dir in "${worker_dirs[@]}"; do
-            [[ -d "$worker_dir" ]] || continue
-            [[ -f "$worker_dir/.paused" ]] && continue
-            [[ -f "$worker_dir/home/worker.done" ]] && continue
-            # Stop worker removes bot.pid but keeps its proxy assignment.
-            if [[ ! -s "$worker_dir/.proxy" ]]; then
-                proxy_prepare_needed=true
-                break
-            fi
-        done
-    fi
-    if [[ "$proxy_prepare_needed" == "true" ]]; then
-        python3 "$PROXY_SUPPORT_SCRIPT" \
-            --workers-dir "$WORKERS_DIR" \
-            --proxy-file "$PROXY_FILE" \
-            --server "$SERVER_NAME" \
-            --group-size "$PROXY_GROUP_SIZE"
-    fi
+    done
+fi
+if [[ "$proxy_prepare_needed" == "true" ]]; then
+    python3 "$PROXY_SUPPORT_SCRIPT" \
+        --workers-dir "$WORKERS_DIR" \
+        --proxy-file "$PROXY_FILE" \
+        --server "$SERVER_NAME" \
+        --group-size "$PROXY_GROUP_SIZE"
 fi
 
 started=0
@@ -209,7 +200,7 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 
     proxy_env=(env -u NSO_SOCKS5_PROXY NSO_PROXY_REQUIRED=0)
-    if [[ "$SERVER_NAME" == "tk" && "$PROXY_GROUP_SIZE" -gt 0 ]]; then
+    if (( PROXY_GROUP_SIZE > 0 )); then
         if [[ ! -s "$worker_dir/.proxy" ]]; then
             echo "$worker_name thiếu proxy assignment; không khởi động." >&2
             exit 1

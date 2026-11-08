@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 from .manager import ControlError, WindowsHeadlessManager
 
 
@@ -21,7 +23,7 @@ class BuildJob:
     id: str
     worker_count: int
     start_after_build: bool
-    server: str = "tk"
+    server: str = DEFAULT_SERVER
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
     started_at: Optional[str] = None
@@ -81,7 +83,7 @@ class WindowsBuildJobManager:
         )
 
     async def create(
-        self, worker_count: int, start_after_build: bool, server: str = "tk"
+        self, worker_count: int, start_after_build: bool, server: str | None = None
     ) -> BuildJob:
         if worker_count < 1 or worker_count > 500:
             raise ControlError("Số worker phải từ 1 đến 500")
@@ -98,7 +100,7 @@ class WindowsBuildJobManager:
             id=uuid.uuid4().hex[:12],
             worker_count=worker_count,
             start_after_build=start_after_build,
-            server=server,
+            server=normalize_server(server),
         )
         self.jobs[job.id] = job
         task = asyncio.create_task(self._run(job))

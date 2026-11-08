@@ -74,12 +74,8 @@
           </div>
           <form id="build-form">
             <div class="field-group">
-              <label for="server-select">Server</label>
-              <select id="server-select">
-                <option value="tk">TK (Truyền Kỳ)</option>
-                <option value="ninjamobile">NinjaMobile</option>
-                <option value="ninjamobileSV4">NinjaMobile SV4 (nsm4.ninjasm.net)</option>
-              </select>
+              <label>Server</label>
+              <small class="muted">Server game: <code id="server-endpoint">180.93.114.122:14444</code></small>
             </div>
             <div class="field-group">
               <label for="worker-count">Số lượng worker</label>
@@ -132,15 +128,6 @@
               <label for="schedule-worker-start-delay-seconds">Giãn cách worker khi tự động (giây)</label>
               <input id="schedule-worker-start-delay-seconds" type="number" min="0" max="3600" step="1" value="30">
               <small class="muted">Áp dụng cho NVHN và Tà Thú; 0 = chạy liên tiếp.</small>
-            </div>
-
-            <div class="field-group">
-              <label for="schedule-server">Server khi hẹn giờ</label>
-              <select id="schedule-server">
-                <option value="tk">TK (Truyền Kỳ)</option>
-                <option value="ninjamobile">NinjaMobile</option>
-                <option value="ninjamobileSV4">NinjaMobile SV4 (nsm4.ninjasm.net)</option>
-              </select>
             </div>
 
             <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">

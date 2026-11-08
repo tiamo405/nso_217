@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from server_config import DEFAULT_SERVER, normalize_server
+
 from .manager import ControlError, HeadlessManager
 
 
@@ -20,7 +22,7 @@ class BuildJob:
     id: str
     worker_count: int
     start_after_build: bool
-    server: str = "tk"
+    server: str = DEFAULT_SERVER
     proxy_workers_per_proxy: int = 6
     status: str = "queued"
     created_at: str = field(default_factory=utc_now)
@@ -83,7 +85,7 @@ class BuildJobManager:
         self,
         worker_count: int,
         start_after_build: bool,
-        server: str = "tk",
+        server: str | None = None,
         proxy_workers_per_proxy: int | None = None,
     ) -> BuildJob:
         if worker_count < 1 or worker_count > 500:
@@ -105,7 +107,7 @@ class BuildJobManager:
             id=uuid.uuid4().hex[:12],
             worker_count=worker_count,
             start_after_build=start_after_build,
-            server=server,
+            server=normalize_server(server),
             proxy_workers_per_proxy=proxy_workers_per_proxy,
         )
         self.jobs[job.id] = job

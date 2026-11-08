@@ -38,7 +38,7 @@ from nhanexp_and_doiyenquaxu import MapState, OfflineExpClient, read_accounts
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-bodo.csv"
 DEFAULT_PERMANENT_ITEMS_FILE = ROOT_DIR / "item_vinh_vien.txt"
-DEFAULT_HOST = "Nsm1.ninjasm.net"
+DEFAULT_HOST = "180.93.114.122"
 DEFAULT_PORT = 14444
 TARGET_MAP_ID = 69
 TARGET_ZONE_ID = 22

@@ -20,9 +20,7 @@ from io import BytesIO
 # ─────────────────────────────────────────────
 #  Config - SỬA ĐÂY
 # ─────────────────────────────────────────────
-HOST     = "Nsm1.ninjasm.net"
-# HOST truyen ky
-# HOST     = "Nsotk1.nsotk.online"
+HOST     = "180.93.114.122"
 PORT     = 14444
 DEFAULT_CSV = Path(__file__).resolve().parent / "account-hoatdong.csv"
 DEFAULT_DELAY = 11.0

@@ -102,7 +102,8 @@ JAVA_XMS = os.environ.get("JAVA_XMS", "8m")
 JAVA_XMX = os.environ.get("JAVA_XMX", "36m")
 NSO_TICK_MS = os.environ.get("NSO_TICK_MS", "100")
 START_DELAY = int(os.environ.get("START_DELAY", "3"))
-SERVER_NAME = os.environ.get("NSO_SERVER", "tk")
+# Chỉ còn 1 server game duy nhất.
+SERVER_NAME = "180.93.114.122:14444"
 try:
     STALE_LOG_SECONDS = max(0, int(os.environ.get("STALE_LOG_SECONDS", "300")))
 except ValueError:
@@ -1355,7 +1356,7 @@ def main() -> None:
     p_start = subparsers.add_parser("start", help="Khởi động workers")
     p_start.add_argument("workers", nargs="*", help="Số thứ tự worker cần start (ví dụ 1 2 3)")
     p_start.add_argument("--delay", type=int, default=None, help="Giây giãn cách giữa các worker")
-    p_start.add_argument("--server", choices=("ninjamobile", "ninjamobileSV4", "tk"), default=None, help="Server: ninjamobile, ninjamobileSV4 hoặc tk")
+    p_start.add_argument("--server", default=None, help="Bỏ qua (giữ để tương thích); luôn dùng 180.93.114.122:14444")
 
     # stop
     p_stop = subparsers.add_parser("stop", help="Dừng workers")
@@ -1368,7 +1369,7 @@ def main() -> None:
     # delay attribute, so define it explicitly here; a single-worker restart
     # should return promptly instead of inheriting the 30s start delay.
     p_restart.add_argument("--delay", type=int, default=0, help="Giây giãn cách giữa các worker")
-    p_restart.add_argument("--server", choices=("ninjamobile", "ninjamobileSV4", "tk"), default=None, help="Server: ninjamobile, ninjamobileSV4 hoặc tk")
+    p_restart.add_argument("--server", default=None, help="Bỏ qua (giữ để tương thích); luôn dùng 180.93.114.122:14444")
 
     # status
     p_status = subparsers.add_parser("status", help="Xem trạng thái workers")
@@ -1379,7 +1380,7 @@ def main() -> None:
     p_sup.add_argument("workers", nargs="*", help="Danh sách worker cần giám sát")
     p_sup.add_argument("--delay", type=int, default=30, help="Giãn cách khởi động giữa các worker (giây)")
     p_sup.add_argument("--interval", type=int, default=20, help="Chu kỳ kiểm tra (giây)")
-    p_sup.add_argument("--server", choices=("ninjamobile", "ninjamobileSV4", "tk"), default=None, help="Server: ninjamobile, ninjamobileSV4 hoặc tk")
+    p_sup.add_argument("--server", default=None, help="Bỏ qua (giữ để tương thích); luôn dùng 180.93.114.122:14444")
 
     # reset
     subparsers.add_parser("reset", help="Reset marker hoàn tất để chạy lại")
@@ -1389,10 +1390,6 @@ def main() -> None:
     p_logs.add_argument("worker", nargs="?", help="Số worker cần xem log")
 
     args = parser.parse_args()
-
-    if getattr(args, "server", None):
-        global SERVER_NAME
-        SERVER_NAME = args.server
 
     if args.command == "build":
         sys.exit(cmd_build(args))

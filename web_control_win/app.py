@@ -20,11 +20,13 @@ from .scheduler import WindowsScheduleManager
 class BuildRequest(BaseModel):
     worker_count: int = Field(ge=1, le=500)
     start_after_build: bool = True
-    server: Literal["ninjamobile", "ninjamobileSV4", "tk"] = "tk"
+    # Chỉ còn 1 server game; giữ field để tương thích client cũ, giá trị bị bỏ qua.
+    server: Optional[str] = None
 
 
 class SupervisorRequest(BaseModel):
-    server: Literal["ninjamobile", "ninjamobileSV4", "tk"] = "tk"
+    # Chỉ còn 1 server game; giữ field để tương thích client cũ, giá trị bị bỏ qua.
+    server: Optional[str] = None
     periodic_restart_hours: Optional[int] = Field(default=None, ge=0, le=168)
     worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
 
@@ -46,7 +48,8 @@ class ScheduleRequest(BaseModel):
     worker_count: Optional[int] = 10
     worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
     auto_ta_thu: bool = True
-    server: Literal["ninjamobile", "ninjamobileSV4", "tk"] = "tk"
+    # Chỉ còn 1 server game; giữ field để tương thích client cũ, giá trị bị bỏ qua.
+    server: Optional[str] = None
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:

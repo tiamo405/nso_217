@@ -17,7 +17,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-bodo.csv"
 DEFAULT_ITEMS_FILE = ROOT_DIR / "item_vinh_vien.txt"
 DEFAULT_LOG_DIR = ROOT_DIR / "log" / "check_item_vinh_vien"
-DEFAULT_HOST = "Nsm4.ninjasm.net"
+DEFAULT_HOST = "180.93.114.122"
 DEFAULT_PORT = 14444
 
 

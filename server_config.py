@@ -1,31 +1,19 @@
-"""Server choices shared by the Ubuntu and Windows web controls."""
+"""Server game duy nhất, dùng chung cho web control Ubuntu và Windows."""
 
 from __future__ import annotations
 
 
-DEFAULT_SERVER = "tk"
-SERVER_LABELS = {
-    "ninjamobile": "NinjaMobile",
-    "ninjamobileSV4": "NinjaMobile SV4 (nsm4.ninjasm.net)",
-    "tk": "TK (Truyền Kỳ)",
-}
+GAME_HOST = "180.93.114.122"
+GAME_PORT = 14444
+# Giá trị truyền cho Java qua -Dnso.server / NSO_SERVER (dạng host:port).
+DEFAULT_SERVER = f"{GAME_HOST}:{GAME_PORT}"
+SERVER_LABELS = {DEFAULT_SERVER: f"NSO 217 ({DEFAULT_SERVER})"}
 
 
-def normalize_server(value: str | None) -> str:
-    """Return the canonical server key used by the Java runtime."""
-    key = (value or "").strip().lower()
-    aliases = {
-        "ninja": "ninjamobile",
-        "ninja mobile": "ninjamobile",
-        "ninjamobilesv4": "ninjamobileSV4",
-        "ninja mobile sv4": "ninjamobileSV4",
-        "ninja-sv4": "ninjamobileSV4",
-        "nsm4.ninjasm.net": "ninjamobileSV4",
-        "truyenky": "tk",
-        "truyền kỳ": "tk",
-        "truyen ky": "tk",
-    }
-    key = aliases.get(key, key)
-    if key not in SERVER_LABELS:
-        raise ValueError("Server phải là ninjamobile, ninjamobileSV4 hoặc tk")
-    return key
+def normalize_server(value: str | None = None) -> str:
+    """Luôn trả về server duy nhất.
+
+    Giá trị cũ ("tk", "ninjamobile", ...) trong state/schedule.json vẫn được
+    chấp nhận để không lỗi khi đọc cấu hình đã lưu, nhưng đều quy về IP mới.
+    """
+    return DEFAULT_SERVER

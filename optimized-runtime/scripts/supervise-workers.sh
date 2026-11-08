@@ -12,21 +12,16 @@ STALE_LOG_SECONDS=${STALE_LOG_SECONDS:-300}
 PERIODIC_RESTART_SECONDS=${PERIODIC_RESTART_SECONDS:-10800}
 REPEATED_STATUS_WINDOW_LINES=${REPEATED_STATUS_WINDOW_LINES:-20}
 SUPERVISOR_PID_FILE="$WORKERS_DIR/supervisor.pid"
-SERVER_NAME=${NSO_SERVER:-tk}
+# Chỉ còn 1 server game duy nhất.
+GAME_SERVER=180.93.114.122:14444
+SERVER_NAME=$GAME_SERVER
 PROXY_FILE=${PROXY_TK_FILE:-"$REPO_DIR/proxy-tk.txt"}
 PROXY_GROUP_SIZE=${NSO_PROXY_WORKERS_PER_PROXY:-6}
 PROXY_SUPPORT_SCRIPT="$SCRIPT_DIR/proxy_support.py"
 
 normalize_server() {
-    case "${1,,}" in
-        ninjamobile|ninja) SERVER_NAME=ninjamobile ;;
-        ninjamobilesv4|"ninja mobile sv4"|ninja-sv4|nsm4.ninjasm.net) SERVER_NAME=ninjamobileSV4 ;;
-        tk|truyenky|truyen-ky) SERVER_NAME=tk ;;
-        *)
-            echo "Server không hợp lệ: $1 (chọn ninjamobile, ninjamobileSV4 hoặc tk)." >&2
-            exit 1
-            ;;
-    esac
+    # Giữ tham số --server để tương thích lệnh cũ; mọi giá trị đều dùng server duy nhất.
+    SERVER_NAME=$GAME_SERVER
 }
 
 normalize_server "$SERVER_NAME"
@@ -38,7 +33,7 @@ fi
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--server ninjamobile|ninjamobileSV4|tk] [--delay seconds] [worker_number...]
+Usage: $(basename "$0") [--delay seconds] [worker_number...]
 
 Examples:
   $(basename "$0")                 # supervise all workers (default delay 15s between starts)
@@ -49,8 +44,6 @@ Examples:
   STALE_LOG_SECONDS=300 $(basename "$0") # restart nếu stdout.log im lặng 300s
   PERIODIC_RESTART_SECONDS=10800 $(basename "$0") # restart worker sau 3 giờ
   REPEATED_STATUS_WINDOW_LINES=20 $(basename "$0") # cửa sổ phát hiện NPC25
-  $(basename "$0") --server ninjamobile # chạy bằng server NinjaMobile
-  $(basename "$0") --server ninjamobileSV4 # chạy bằng NinjaMobile SV4
 EOF
 }
 

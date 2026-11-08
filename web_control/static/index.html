@@ -50,7 +50,7 @@
           <div class="field-group">
             <label for="proxy-workers-per-proxy">Số worker dùng chung 1 proxy</label>
             <input id="proxy-workers-per-proxy" type="number" min="0" max="500" step="1" value="6">
-            <p class="muted">Chỉ áp dụng server TK; 0 = không dùng proxy. Đổi cấu hình cần Stop rồi Start.</p>
+            <p class="muted">0 = không dùng proxy. Đổi cấu hình cần Stop rồi Start.</p>
           </div>
           <button id="save-supervisor-settings" type="button" class="secondary">Lưu cấu hình Supervisor</button>
           <div class="button-row">
@@ -73,12 +73,8 @@
           <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build / Run</h2></div></div>
           <form id="build-form" class="build-form">
             <div class="field-group">
-              <label for="server-select">Server</label>
-              <select id="server-select" class="custom-select">
-                <option value="tk">TK (Truyền Kỳ)</option>
-                <option value="ninjamobile">NinjaMobile</option>
-                <option value="ninjamobileSV4">NinjaMobile SV4 (nsm4.ninjasm.net)</option>
-              </select>
+              <label>Server</label>
+              <p class="muted">Server game: <code id="server-endpoint">180.93.114.122:14444</code></p>
             </div>
             <div class="field-group">
               <label for="worker-count">Số worker</label>
@@ -132,17 +128,9 @@
               <div class="field-group">
                 <label for="schedule-proxy-workers-per-proxy">Worker dùng chung 1 proxy</label>
                 <input id="schedule-proxy-workers-per-proxy" type="number" min="0" max="500" step="1" value="6">
-                <p class="muted">Chỉ áp dụng server TK; 0 = không dùng proxy.</p>
+                <p class="muted">0 = không dùng proxy.</p>
               </div>
 
-              <div class="field-group">
-                <label for="schedule-server">Server khi hẹn giờ</label>
-                <select id="schedule-server" class="custom-select">
-                  <option value="tk">TK (Truyền Kỳ)</option>
-                  <option value="ninjamobile">NinjaMobile</option>
-                  <option value="ninjamobileSV4">NinjaMobile SV4 (nsm4.ninjasm.net)</option>
-                </select>
-              </div>
             </div>
 
             <div class="schedule-info muted">

@@ -5,9 +5,9 @@ from hoatdong import NSOActivityClient
 
 
 # Sửa trực tiếp thông tin test tại đây.
-HOST = "Nsotk1.nsotk.online"
+HOST = "180.93.114.122"
 PORT = 14444
-USERNAME = "namtk0000"
+USERNAME = "acctest2"
 PASSWORD = "000111"
 
 

@@ -14,7 +14,7 @@ Quy tắc trạng thái:
 
 Cách dùng :
 python nhanexp_and_doiyenquaxu.py [--host HOST] [--port PORT] [--character-index INDEX | --character-name NAME]
-  --host HOST: địa chỉ server (mặc định Nsm4.ninjasm.net)
+  --host HOST: địa chỉ server (mặc định 180.93.114.122)
   --port PORT: cổng server (mặc định 14444)
   --character-index INDEX: chỉ xử lý nhân vật index này (0-based)
   --character-name NAME: chỉ xử lý nhân vật đúng tên này (ổn định hơn index)
@@ -56,9 +56,8 @@ from map_graph import MAP_GRAPH, find_map_path
 
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-nhanexp.csv"
-DEFAULT_HOST = "Nsm1.ninjasm.net" # sv4 k có nhận exp nên thêm biến --bo-qua-exp để bỏ qua bước nhận exp
+DEFAULT_HOST = "180.93.114.122"
 # server TK
-# DEFAULT_HOST = "Nsotk1.nsotk.online"
 DEFAULT_PORT = 14444
 DEFAULT_DELAY = 3.0
 DEFAULT_RETRY_ATTEMPTS = 2

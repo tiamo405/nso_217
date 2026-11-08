@@ -124,7 +124,7 @@ async function refreshStatus() {
   try {
     const data = await api("/api/status");
     const supervisor = data.supervisor;
-    $("#server-select").value = data.server || supervisor.server || "tk";
+    if (data.server) $("#server-endpoint").textContent = data.server;
     if (!supervisorSettingsDirty && !supervisorSettingsSaving) {
       $("#periodic-restart-hours").value = supervisor.periodic_restart_hours ?? 3;
       $("#worker-start-delay-seconds").value = supervisor.worker_start_delay_seconds ?? 30;
@@ -199,7 +199,6 @@ function renderSchedule(schedule) {
     $("#schedule-worker-count").value = schedule.worker_count || 10;
     $("#schedule-worker-start-delay-seconds").value = schedule.worker_start_delay_seconds ?? 30;
     $("#schedule-proxy-workers-per-proxy").value = schedule.proxy_workers_per_proxy ?? 6;
-    $("#schedule-server").value = schedule.server || $("#server-select").value || "tk";
   }
 
   const phaseLabel = schedule.current_phase === "ta_thu" ? "Đang chạy Tà Thú 👹" : "Nhiệm vụ hàng ngày ⚔️";
@@ -222,7 +221,6 @@ async function supervisorAction(action, button) {
       const settings = readSupervisorSettings();
       if (settings === null) return;
       options.json = {
-        server: $("#server-select").value,
         periodic_restart_hours: settings.periodicHours,
         worker_start_delay_seconds: settings.startDelaySeconds,
         proxy_workers_per_proxy: settings.proxyWorkersPerProxy,
@@ -370,7 +368,6 @@ $("#build-button").addEventListener("click", async () => {
     const job = await api("/api/build", { method: "POST", json: {
       worker_count: Number($("#worker-count").value),
       start_after_build: false,
-      server: $("#server-select").value,
       proxy_workers_per_proxy: Number($("#proxy-workers-per-proxy").value),
     }});
     watchBuild(job);
@@ -437,7 +434,6 @@ $("#schedule-form").addEventListener("submit", async (event) => {
       worker_count: Number($("#schedule-worker-count").value),
       worker_start_delay_seconds: Number($("#schedule-worker-start-delay-seconds").value),
       proxy_workers_per_proxy: Number($("#schedule-proxy-workers-per-proxy").value),
-      server: $("#schedule-server").value,
     };
     if (!Number.isInteger(payload.worker_start_delay_seconds)
         || payload.worker_start_delay_seconds < 0

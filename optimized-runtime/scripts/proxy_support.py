@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 SOCKS_VERSION = 5
-DEFAULT_TARGET_HOST = "Nsotk1.nsotk.online"
+DEFAULT_TARGET_HOST = "180.93.114.122"
 DEFAULT_TARGET_PORT = 14444
 DEFAULT_TIMEOUT = 8.0
 
@@ -169,7 +169,7 @@ def assign(args: argparse.Namespace) -> int:
     workers = active_workers(workers_dir)
     running = [worker for worker in workers if worker_is_running(worker)]
 
-    if args.server != "tk" or args.group_size == 0:
+    if args.group_size == 0:
         if running and any((worker / ".proxy").is_file() for worker in running):
             raise ProxyError("hãy Stop toàn bộ worker trước khi tắt proxy")
         clear_assignments(workers_dir)
@@ -257,7 +257,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers-dir", required=True)
     parser.add_argument("--proxy-file", required=True)
-    parser.add_argument("--server", default="tk")
+    # Giữ để tương thích lệnh cũ; chỉ còn 1 server nên giá trị bị bỏ qua.
+    parser.add_argument("--server", default="")
     parser.add_argument("--group-size", type=int, required=True)
     parser.add_argument("--target-host", default=DEFAULT_TARGET_HOST)
     parser.add_argument("--target-port", type=int, default=DEFAULT_TARGET_PORT)

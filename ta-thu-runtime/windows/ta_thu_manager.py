@@ -252,7 +252,7 @@ def build_workers(count: int) -> None:
 
 def java_command(worker: Path) -> list[str]:
     classpath = os.pathsep.join((str(worker), str(CLASSES_DIR)))
-    server = os.environ.get("NSO_SERVER", "tk")
+    server = os.environ.get("NSO_SERVER", "180.93.114.122:14444")
     return [
         JAVA_BIN,
         f"-Xms{JAVA_XMS}",

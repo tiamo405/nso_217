@@ -527,14 +527,19 @@ public final class Code implements Runnable {
                         }
 
                         if (var3.pPoint > 0 && (Char.fieldFG || fieldAB instanceof As20)) {
-                            var6 = var3.gameAC() ? 3 : 0;
-                            if (var3.pPoint >= 100) {
-                                GameScr.fieldAC("Cộng tiềm năng ");
-                                Service.gI().upPotential(2, 40);
-                                Service.gI().upPotential(var6, 60);
-                            } else {
-                                GameScr.fieldAC("Cộng tiềm năng ");
-                                Service.gI().upPotential(var6, var3.pPoint);
+                            // Tỉ lệ 7 Sức mạnh : 2 Thể lực : 1 Chakra; phần dư làm tròn vào Chakra.
+                            int potStr = var3.pPoint * 7 / 10;
+                            int potHp = var3.pPoint * 2 / 10;
+                            int potMp = var3.pPoint - potStr - potHp;
+                            GameScr.fieldAC("Cộng tiềm năng ");
+                            if (potStr > 0) {
+                                Service.gI().upPotential(0, potStr);
+                            }
+                            if (potHp > 0) {
+                                Service.gI().upPotential(2, potHp);
+                            }
+                            if (potMp > 0) {
+                                Service.gI().upPotential(3, potMp);
                             }
 
                             LockGame.fieldAW();

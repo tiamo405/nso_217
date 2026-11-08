@@ -35,15 +35,9 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 # Chia tài khoản thành 10 workers và tạo thư mục worker-XX
 ./optimized-runtime/scripts/build-workers.sh 10
 
-# Build chỉ chia account/compile class, không kết nối server. Chọn server lúc chạy:
-# Chạy tất cả workers bằng TK (mỗi worker cách nhau 3 giây)
-./optimized-runtime/scripts/start-workers.sh --server tk
-
-# Hoặc chạy bằng NinjaMobile
-./optimized-runtime/scripts/start-workers.sh --server ninjamobile
-
-# Hoặc NinjaMobile SV4 (nsm4.ninjasm.net)
-./optimized-runtime/scripts/start-workers.sh --server ninjamobileSV4
+# Chỉ có 1 server game: 180.93.114.122:14444 (khai báo trong src/UpdateServer.java
+# và server_config.py). Chạy tất cả workers (mỗi worker cách nhau 3 giây):
+./optimized-runtime/scripts/start-workers.sh
 
 # Xem trạng thái CPU, RAM và tiến độ
 ./optimized-runtime/scripts/status-workers.sh
@@ -54,7 +48,7 @@ chmod +x optimized-runtime/build-optimized.sh optimized-runtime/scripts/*.sh
 
 # Chạy supervisor bằng server đã chọn; tự restart nếu worker crash, stdout.log im lặng,
 # hoặc trạng thái tiến độ AUTO NVHN bị lặp 5 lần liên tiếp
-./optimized-runtime/scripts/supervise-workers.sh --server tk
+./optimized-runtime/scripts/supervise-workers.sh
 
 # Dừng toàn bộ workers
 ./optimized-runtime/scripts/stop-workers.sh

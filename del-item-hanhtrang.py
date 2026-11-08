@@ -34,7 +34,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-del.csv"
 DEFAULT_ITEMS_FILE = ROOT_DIR / "delllllllllll.txt"
-DEFAULT_HOST = "Nsotk1.nsotk.online"
+DEFAULT_HOST = "180.93.114.122"
 DEFAULT_PORT = 14444
 DEFAULT_CLIENT_VERSION = "2.1.7"
 

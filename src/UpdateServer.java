@@ -1,7 +1,5 @@
 
-import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
 import java.io.DataOutputStream;
 
 /**
@@ -9,8 +7,6 @@ import java.io.DataOutputStream;
  * @author cuong
  */
 public class UpdateServer {
-
-    private static final String DEFAULT_SERVER = "tk";
 
     public static int[] listPort;
     public static String[] listIP;
@@ -50,126 +46,52 @@ public class UpdateServer {
     }
 
     public static void b() {
-        try {
-            ByteArrayInputStream var0 = new ByteArrayInputStream(RMS.gameAA(new String(new char[]{'a', 'b', 'c', 'd', 'i', 'p'})));
-            DataInputStream var1 = new DataInputStream(var0);
-            if (var0.available() > 0) {
-                int var7 = var1.readInt();
-                UpdateServer.listName = new String[var7];
-                UpdateServer.listIP = new String[var7];
-                UpdateServer.listPort = new int[var7];
-                UpdateServer.serverLoginList = new byte[var7];
-                UpdateServer.serverST = new int[var7];
-
-                for (int var3 = 0; var3 < var7; ++var3) {
-                    UpdateServer.listName[var3] = var1.readUTF();
-                    UpdateServer.listIP[var3] = var1.readUTF();
-                    UpdateServer.listPort[var3] = var1.readInt();
-                    UpdateServer.serverLoginList[var3] = var1.readByte();
-                    UpdateServer.serverST[var3] = var3;
-                }
-
-                prioritizeSelectedServer();
-                var0.close();
-                var1.close();
-                return;
-            }
-        } catch (Exception var4) {
-        }
-        String decryptedM = decrypt(m);
-        String[] var5 = a(decryptedM.trim(), new String(new char[]{','}), 0);// mã hóa
-        
-        //String[] var5 = a(m.trim(), new String(new char[]{','}), 0);
-        UpdateServer.listName = new String[var5.length];
-        UpdateServer.listIP = new String[var5.length];
-        UpdateServer.listPort = new int[var5.length];
-        UpdateServer.serverLoginList = new byte[var5.length];
-        UpdateServer.serverST = new int[var5.length];
-
-        for (int var6 = 0; var6 < var5.length; ++var6) {
-            String[] var2 = a(var5[var6].trim(), new String(new char[]{':'}), 0);
-            UpdateServer.listName[var6] = var2[0];
-            UpdateServer.listIP[var6] = var2[1];
-            UpdateServer.listPort[var6] = Integer.parseInt(var2[2]);
-            UpdateServer.serverLoginList[var6] = Byte.parseByte(var2[3]);
-            UpdateServer.serverST[var6] = var6;
-        }
-
-        prioritizeSelectedServer();
-        c();
+        // Không đọc danh sách server cũ đã cache trong RMS ("abcdip") vì có
+        // thể còn domain cũ; luôn dùng server đóng gói trong client.
+        UpdateServer.b1();
     }
 
-    private static String selectedServerKey() {
+    /**
+     * Chỉ còn một server game. Có thể ghi đè bằng "host:port" qua
+     * -Dnso.server hoặc NSO_SERVER; giá trị cũ dạng tên server (tk,
+     * ninjamobile...) bị bỏ qua và dùng server mặc định.
+     */
+    private static boolean applyCustomEndpoint() {
         String value = System.getProperty("nso.server");
         if (value == null || value.trim().length() == 0) {
             value = System.getenv("NSO_SERVER");
         }
         if (value == null) {
-            return DEFAULT_SERVER;
+            return false;
         }
-
-        value = value.trim().toLowerCase();
-        if (value.equals("ninjamobilesv4") || value.equals("ninja mobile sv4")
-                || value.equals("ninja-sv4") || value.equals("nsm4.ninjasm.net")) {
-            return "ninjamobilesv4";
+        value = value.trim();
+        int colon = value.lastIndexOf(':');
+        if (colon <= 0 || colon == value.length() - 1) {
+            return false;
         }
-        if (value.equals("ninjamobile") || value.equals("ninja") || value.equals("ninja mobile")) {
-            return "ninjamobile";
+        String host = value.substring(0, colon).trim();
+        int port;
+        try {
+            port = Integer.parseInt(value.substring(colon + 1).trim());
+        } catch (NumberFormatException ex) {
+            return false;
         }
-        if (value.equals("tk") || value.equals("truyenky") || value.equals("truyen ky")
-                || value.equals("truyền kỳ")) {
-            return "tk";
+        if (host.length() == 0 || port <= 0 || port > 65535) {
+            return false;
         }
-        return DEFAULT_SERVER;
+        UpdateServer.listName[0] = "custom";
+        UpdateServer.listIP[0] = host;
+        UpdateServer.listPort[0] = port;
+        UpdateServer.serverLoginList[0] = 0;
+        return true;
     }
 
     private static void prioritizeSelectedServer() {
         if (UpdateServer.listName == null || UpdateServer.listIP == null
-                || UpdateServer.listName.length < 2) {
+                || UpdateServer.listName.length == 0) {
             return;
         }
-
-        String selected = selectedServerKey();
-        int selectedIndex = -1;
-        for (int i = 0; i < UpdateServer.listName.length; ++i) {
-            String name = UpdateServer.listName[i] == null ? "" : UpdateServer.listName[i].trim().toLowerCase();
-            String ip = UpdateServer.listIP[i] == null ? "" : UpdateServer.listIP[i].trim().toLowerCase();
-            if (selected.equals("ninjamobilesv4")
-                    && (name.equals("ninjamobilesv4") || ip.equals("nsm4.ninjasm.net"))) {
-                selectedIndex = i;
-                break;
-            }
-            if (selected.equals("ninjamobile")
-                    && (name.equals("ninjamobile") || ip.equals("nsm1.ninjasm.net"))) {
-                selectedIndex = i;
-                break;
-            }
-            if (selected.equals("tk")
-                    && (name.equals("tk") || ip.indexOf("nsotk") >= 0)) {
-                selectedIndex = i;
-                break;
-            }
-        }
-
-        if (selectedIndex <= 0) {
-            return;
-        }
-
-        String name = UpdateServer.listName[0];
-        UpdateServer.listName[0] = UpdateServer.listName[selectedIndex];
-        UpdateServer.listName[selectedIndex] = name;
-
-        String ip = UpdateServer.listIP[0];
-        UpdateServer.listIP[0] = UpdateServer.listIP[selectedIndex];
-        UpdateServer.listIP[selectedIndex] = ip;
-
-        int port = UpdateServer.listPort[0];
-        UpdateServer.listPort[0] = UpdateServer.listPort[selectedIndex];
-        UpdateServer.listPort[selectedIndex] = port;
-
-        byte login = UpdateServer.serverLoginList[0];
-        UpdateServer.serverLoginList[0] = UpdateServer.serverLoginList[selectedIndex];
-        UpdateServer.serverLoginList[selectedIndex] = login;
+        applyCustomEndpoint();
     }
 
     public static String encryptDecrypt(String input) {
@@ -227,13 +149,8 @@ public class UpdateServer {
     }
 
     static {
-        // server ninjamobile
-        // Base64("ninjamobile:Nsm1.ninjasm.net:14444:0")
-        // server ninjamobileSV4
-        // Base64("ninjamobileSV4:nsm4.ninjasm.net:14444:0")
-        // server TK
-        // Base64("TK:Nsotk1.nsotk.online:14444:0")
-        m = "bmluamFtb2JpbGU6TnNtMS5uaW5qYXNtLm5ldDoxNDQ0NDowLG5pbmphbW9iaWxlU1Y0Om5zbTQubmluamFzbS5uZXQ6MTQ0NDQ6MCxUSzpOc290azEubnNvdGsub25saW5lOjE0NDQ0OjA=";
+        // Server duy nhất: Base64("NSO217:180.93.114.122:14444:0")
+        m = "TlNPMjE3OjE4MC45My4xMTQuMTIyOjE0NDQ0OjA=";
         url = "";
     }
 

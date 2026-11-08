@@ -306,8 +306,9 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         ), patch("web_control.manager.subprocess.Popen") as popen:
             self.assertTrue(await manager.start_ta_thu(worker_count=1))
 
-        self.assertEqual(capture.call_args.kwargs["server"], "ninjamobileSV4")
-        self.assertEqual(popen.call_args.kwargs["env"]["NSO_SERVER"], "ninjamobileSV4")
+        # Chỉ còn 1 server: tên server cũ được quy về IP mới.
+        self.assertEqual(capture.call_args.kwargs["server"], "180.93.114.122:14444")
+        self.assertEqual(popen.call_args.kwargs["env"]["NSO_SERVER"], "180.93.114.122:14444")
 
     async def test_ta_thu_log_path_does_not_fallback_to_nvhn(self) -> None:
         manager = HeadlessManager(self.settings)
@@ -396,7 +397,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(scheduler.current_phase, "ta_thu")
             start.assert_awaited_with(
                 worker_count=1,
-                server="ninjamobileSV4",
+                server="180.93.114.122:14444",
                 nvhn_workers_dir=manager.settings.workers_dir,
             )
 

@@ -33,9 +33,9 @@ class ProxySupportTest(unittest.TestCase):
         return Namespace(
             workers_dir=str(workers),
             proxy_file=str(proxy_file),
-            server="tk",
+            server="",
             group_size=group_size,
-            target_host="Nsotk1.nsotk.online",
+            target_host="180.93.114.122",
             target_port=14444,
         )
 

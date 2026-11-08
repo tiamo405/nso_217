@@ -22,7 +22,7 @@ from hoatdong import NSOActivityClient
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_INPUT = ROOT_DIR / "clone.csv"
 DEFAULT_OUTPUT = ROOT_DIR / "account-class-kiem.csv"
-DEFAULT_HOST = "Nsm1.ninjasm.net"
+DEFAULT_HOST = "180.93.114.122"
 DEFAULT_PORT = 14444
 DEFAULT_DELAY = 2.0
 

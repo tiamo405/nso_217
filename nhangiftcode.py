@@ -41,7 +41,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV = ROOT_DIR / "account-hoatdong.csv"
 DEFAULT_ITEMS_FILE = ROOT_DIR / "delllllllllll.txt"
 DEFAULT_OPEN_ITEMS_FILE = ROOT_DIR / "item_open.txt"
-DEFAULT_HOST = "Nsm4.ninjasm.net"
+DEFAULT_HOST = "180.93.114.122"
 DEFAULT_PORT = 14444
 # Chờ ngắn giữa phiên giftcode và phiên hành trang. Nếu server báo đăng nhập
 # quá nhanh thì tăng lại lên 5-11 giây.
@@ -58,7 +58,7 @@ ACCOUNT_RETRY_ATTEMPTS = 3
 ACCOUNT_RETRY_DELAY = 5.0
 MENU_TIMEOUT = 20.0
 THREAD_START_DELAY = 2.0
-GIFT_CODE = "trungthu"
+GIFT_CODE = "tanthu"
 FAILED_ACCOUNTS_FILE = ROOT_DIR / "nhangiftcode-failed.csv"
 DEFAULT_LOG_DIR = ROOT_DIR / "log" / "nhangiftcode"
 
@@ -656,7 +656,7 @@ def build_parser():
     )
     parser.add_argument("csv_file", nargs="?", type=Path, default=DEFAULT_CSV)
     parser.add_argument(
-        "--max-accounts", type=int, default=0,
+        "--max-accounts", type=int, default=1,
         help="Chỉ chạy N tài khoản đầu tiên; 0 là không giới hạn",
     )
     parser.add_argument(
