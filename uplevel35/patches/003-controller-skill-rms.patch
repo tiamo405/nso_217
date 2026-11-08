@@ -1,0 +1,35 @@
+--- a/Controller.java
++++ b/Controller.java
+@@ -3544,11 +3544,9 @@
+                         var1.reader().reset();
+                         byte[] var59 = new byte[var1.reader().available()];
+                         var1.reader().readFully(var59);
+-                        if (Char.getMyChar().gameBA()) {
+-                            RMS.gameAA("skill", var59);
+-                        } else {
+-                            RMS.gameAA("skillnhanban", var59);
+-                        }
++                        // Packet skill có thể đến trước khi isHuman đồng bộ: lưu cả hai khóa.
++                        RMS.gameAA("skill", var59);
++                        RMS.gameAA("skillnhanban", var59);
+ 
+                         byte[] var61 = new byte[]{GameScr.vcSkill};
+                         RMS.gameAA("skillVersion", var61);
+@@ -4221,10 +4219,14 @@
+ 
+                     Char.getMyChar().statusMe = 4;
+                     GameScr.isViewClanInvite = RMS.gameAC(Char.getMyChar().cName + "vci") >= 1;
+-                    if (Char.getMyChar().gameBA()) {
+-                        gameAB(new DataInputStream(new ByteArrayInputStream(RMS.gameAA("skill"))));
++                    String skillRmsKey = Char.getMyChar().gameBA() ? "skill" : "skillnhanban";
++                    byte[] skillRmsData = RMS.gameAA(skillRmsKey);
++                    if (skillRmsData != null && skillRmsData.length > 0) {
++                        gameAB(new DataInputStream(new ByteArrayInputStream(skillRmsData)));
+                     } else {
+-                        gameAB(new DataInputStream(new ByteArrayInputStream(RMS.gameAA("skillnhanban"))));
++                        System.out.println("UPLEVEL35 WARN: thiếu RMS " + skillRmsKey + ", yêu cầu tải lại skill");
++                        GameScr.vcSkill = -1;
++                        Service.gI().updateSkill();
+                     }
+ 
+                     Service.gI().loadRMS("KSkill");

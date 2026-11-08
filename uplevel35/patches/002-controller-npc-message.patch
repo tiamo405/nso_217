@@ -1,0 +1,10 @@
+--- a/Controller.java
++++ b/Controller.java
+@@ -1530,6 +1530,7 @@
+                         if ((var78 = (Npc) GameScr.vNpc.elementAt(var77)).template.npcTemplateId == var76 && var78.equals(Char.getMyChar().npcFocus)) {
+                             final String utf13;
+                             ChatPopup.gameAA(utf13 = fieldAB.reader().readUTF(), var78);
++                            Uplevel35.onNpcMessage(var78.template.npcTemplateId, utf13);
+                             if (var78.template.npcTemplateId == 0) {
+                                 if (Code.fieldAB instanceof AutoEnterCave) {
+                                     System.out.println("AUTO NVHN HANG NPC0: [" + utf13 + "]");

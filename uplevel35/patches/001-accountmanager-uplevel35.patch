@@ -1,0 +1,42 @@
+--- a/AccountAutoManager.java
++++ b/AccountAutoManager.java
+@@ -107,7 +107,8 @@
+         }
+         String username = line.substring(0, comma).trim();
+         String password = line.substring(comma + 1).trim();
+-        if (username.equalsIgnoreCase("username") && password.equalsIgnoreCase("password")) {
++        if ((username.equalsIgnoreCase("username") || username.equalsIgnoreCase("account"))
++                && password.equalsIgnoreCase("password")) {
+             return;
+         }
+         if (username.length() > 0 && password.length() > 0) {
+@@ -265,14 +266,21 @@
+         disconnectRetryCount = 0;
+         waitingForGame = false;
+         BotMetrics.event("game_ready", me.nClass == null ? "" : String.valueOf(me.nClass.classId), me.clevel);
+-        if (me.clevel < 30) {
+-            skipCurrentCharacter("nhân vật " + me.cName + " level=" + me.clevel + " < 30, bỏ qua");
+-            return;
+-        }
+-        System.out.println("AUTO NVHN: chuẩn bị nhân vật " + me.cName);
+-        AutoPrepareNvhn prepare = new AutoPrepareNvhn();
+-        prepare.fieldAD();
+-        Code.fieldAA((Auto) prepare);
++        if (!Uplevel35.shouldRun(me)) {
++            skipCurrentCharacter("UPLEVEL35: nhân vật " + me.cName + " level=" + me.clevel
++                    + " ngoài khoảng " + Uplevel35.MIN_LEVEL + ".." + (Uplevel35.TARGET_LEVEL - 1) + ", bỏ qua");
++            return;
++        }
++        System.out.println("UPLEVEL35: bắt đầu nhân vật " + me.cName + " level=" + me.clevel);
++        Code.fieldAA((Auto) new As35());
++    }
++
++    /** As35 báo xong nhân vật (đủ level hoặc gặp nhiệm vụ chưa hỗ trợ). */
++    public static synchronized void onUplevel35Finished(String reason) {
++        if (!enabled || switching) {
++            return;
++        }
++        skipCurrentCharacter(reason);
+     }
+ 
+     /** Reconnects the current account when an established socket is closed before/during play. */
