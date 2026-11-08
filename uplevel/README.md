@@ -18,7 +18,7 @@ Account build nằm trong `uplevel/build/`; log đơn nằm trong `uplevel/run/`
 ./uplevel/scripts/stop.sh
 ```
 
-Mặc định dùng `account-as20.csv` và server Nsm1. Đổi CSV bằng biến
+Mặc định dùng `account-as20.csv` và server `180.93.114.122:14444`. Đổi CSV bằng biến
 `UPLEVEL_ACCOUNT_CSV`. Dùng `UPLEVEL_FOREGROUND=1` để chạy trực tiếp và xem log
 trên file `uplevel/run/as20.log`.
 
@@ -44,3 +44,17 @@ Mỗi worker nhận một phần account, dùng `home` và log riêng:
 Log nằm tại `uplevel/workers/worker-01/stdout.log` và
 `uplevel/workers/worker-01/java-errors.log`. `run.sh` xóa log cũ khi start;
 dùng `UPLEVEL_LOG_APPEND=1` để giữ chế độ append.
+
+## Chọn server
+
+Chỉ có một server game: `180.93.114.122:14444`. Script truyền `-Dnso.server`
+(đọc biến `UPLEVEL_SERVER`, mặc định `180.93.114.122:14444`). Có thể ghi đè bằng
+`host:port` bất kỳ; giá trị tên server cũ (`tk`, `ninjamobile`...) bị bỏ qua.
+
+```bash
+UPLEVEL_SERVER=180.93.114.122:14444 ./uplevel/scripts/start-workers.sh --mode 1
+```
+
+Server mặc định nằm trong `src/UpdateServer.java` (hằng `m`, chuỗi Base64 dạng
+`tên:ip:port:login`) và `server_config.py` (web dashboard).
+

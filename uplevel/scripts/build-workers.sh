@@ -51,24 +51,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-BASE_SIZE=$((TOTAL / WORKER_COUNT))
-EXTRA=$((TOTAL % WORKER_COUNT))
-OFFSET=0
+# Chia xen ke (round-robin): acc thu i vao worker ((i-1) % N) + 1.
+# VD 12 acc / 6 worker: worker-01 = 1,7; worker-02 = 2,8; ...
+# 14 acc / 6 worker: worker-01 = 1,7,13; worker-02 = 2,8,14; con lai 2 acc.
 for ((index = 1; index <= WORKER_COUNT; index++)); do
-    worker_name=$(printf 'worker-%02d' "$index")
-    worker_dir="$STAGING_DIR/$worker_name"
+    worker_dir="$STAGING_DIR/$(printf 'worker-%02d' "$index")"
     mkdir -p "$worker_dir/home"
-
-    count=$BASE_SIZE
-    if (( index <= EXTRA )); then
-        count=$((count + 1))
-    fi
     printf '%s\n' "$HEADER" >"$worker_dir/account.csv"
-    for ((row = 0; row < count; row++)); do
-        printf '%s\n' "${ACCOUNTS[OFFSET + row]}" >>"$worker_dir/account.csv"
-    done
-    OFFSET=$((OFFSET + count))
-    echo "Da tao $worker_name: $count tai khoan"
+done
+for ((row = 0; row < TOTAL; row++)); do
+    worker_dir="$STAGING_DIR/$(printf 'worker-%02d' $((row % WORKER_COUNT + 1)))"
+    printf '%s\n' "${ACCOUNTS[row]}" >>"$worker_dir/account.csv"
+done
+for ((index = 1; index <= WORKER_COUNT; index++)); do
+    count=$(( (TOTAL - index) / WORKER_COUNT + 1 ))
+    echo "Da tao $(printf 'worker-%02d' "$index"): $count tai khoan"
 done
 
 if [[ -d "$WORKERS_DIR" ]]; then

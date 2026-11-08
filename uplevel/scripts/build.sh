@@ -63,6 +63,13 @@ UPLEVELPY
 
 sed -i 's#"".getClass().getResourceAsStream("/map/" + var1)#TileMap.class.getResourceAsStream("/map/" + var1)#g' "$WORK_SRC_DIR/TileMap.java"
 sed -i 's#"".getClass().getResourceAsStream("/map/" + mapID)#TileMap.class.getResourceAsStream("/map/" + mapID)#g' "$WORK_SRC_DIR/TileMap.java"
+# Server chặn vào map 48 khi đang ở nhiệm vụ 17 (đã thấy bot kẹt ở cửa 47->48 và 32->48),
+# nên BFS tìm đường chỉ dùng map 48 từ nhiệm vụ 18 trở đi.
+if ! grep -q 'if ((var4 == 10 || var4 == 32 || var4 == 48) && var5 < 17) {' "$WORK_SRC_DIR/TileMap.java"; then
+  echo "Không tìm thấy điều kiện map 48 trong TileMap.java để patch" >&2
+  exit 1
+fi
+sed -i 's/if ((var4 == 10 || var4 == 32 || var4 == 48) \&\& var5 < 17) {/if (((var4 == 10 || var4 == 32 || var4 == 48) \&\& var5 < 17) || (var4 == 48 \&\& var5 < 18)) {/' "$WORK_SRC_DIR/TileMap.java"
 sed -i 's#"".getClass().getResourceAsStream(var0)#RMS.class.getResourceAsStream(var0)#g' "$WORK_SRC_DIR/RMS.java"
 sed -i 's#"".getClass().getResourceAsStream(var0)#Res.class.getResourceAsStream(var0)#g' "$WORK_SRC_DIR/Res.java"
 sed -i 's/Service.gI().requestForgetPass(var23.cName);/Service.gI().addFriend(var23.cName);/' "$WORK_SRC_DIR/As20.java"
@@ -246,12 +253,53 @@ replacement = '''   private static boolean uplevelGiftStarted;
    private static boolean uplevelGiftSlotFreed;
    private static boolean uplevelGiftSlotFreePending;
    private static final int[] uplevelGiftItems = new int[]{215, 229};
+   // Túi vải 215/229: mỗi túi +6 ô hành trang (30 -> 36 -> 42). Đủ ô thì coi như đã dùng, không mua lại.
+   private static final int UplevelGiftBagBaseSize = 30;
+   private static final int UplevelGiftBagStep = 6;
    private static int uplevelGiftItemStage;
    private static boolean uplevelGiftShopRequested;
    private static int uplevelGiftPurchaseTarget = -1;
    private static int uplevelGiftUseSlot = -1;
    private static int uplevelGiftUseQuantity;
    private static long uplevelGiftItemLastAction;
+   // Pet Ứng Long: dùng sau 215/229 nếu có sẵn trong hành trang, không mua.
+   private static final int UplevelGiftPetItem = 851;
+   private static boolean uplevelGiftPetDone;
+   private static boolean uplevelGiftPetSent;
+   private static long uplevelGiftPetSentAt;
+
+   static boolean uplevelGiftItemsPending() {
+      return uplevelGiftItemStage < uplevelGiftItems.length + 2 || !uplevelGiftPetDone;
+   }
+
+   private static boolean uplevelPrepareGiftPet(Char me) {
+      if (uplevelGiftPetDone) return false;
+      Item pet = uplevelGiftBagItem(me, UplevelGiftPetItem);
+      if (!uplevelGiftPetSent) {
+         if (pet == null) {
+            uplevelGiftPetDone = true;
+            System.out.println("UPLEVEL GIFT pet missing item=" + UplevelGiftPetItem + "; skip");
+            return false;
+         }
+         uplevelGiftPetSent = true;
+         uplevelGiftPetSentAt = System.currentTimeMillis();
+         Service.gI().useItem(pet.indexUI);
+         System.out.println("UPLEVEL GIFT use pet item=" + UplevelGiftPetItem + " bagIndex=" + pet.indexUI);
+         return true;
+      }
+      if (pet == null) {
+         uplevelGiftPetDone = true;
+         System.out.println("UPLEVEL GIFT use pet done item=" + UplevelGiftPetItem);
+         return false;
+      }
+      if (System.currentTimeMillis() - uplevelGiftPetSentAt > 10000L) {
+         uplevelGiftPetDone = true;
+         System.out.println("UPLEVEL GIFT use pet timeout item=" + UplevelGiftPetItem
+                 + " still in bag quantity=" + pet.quantity + "; bỏ qua");
+         return false;
+      }
+      return true;
+   }
    private static final int[] uplevelGiftBoxItems = new int[]{383, 242, 523};
    private static boolean uplevelGiftBoxRequested;
    private static boolean uplevelGiftBoxReady;
@@ -446,9 +494,18 @@ replacement = '''   private static boolean uplevelGiftStarted;
 
    private boolean uplevelPrepareGiftItems(Char me) {
       if (this.uplevelPrepareGiftBox(me)) return true;
-      if (uplevelGiftItemStage >= uplevelGiftItems.length + 2) return false;
-      if (TileMap.mapID != 72) {
-         this.fieldAA(72, -2, -1, -1);
+      if (uplevelGiftItemStage >= uplevelGiftItems.length + 2) return uplevelPrepareGiftPet(me);
+
+      int bagSize = me.arrItemBag == null ? 0 : me.arrItemBag.length;
+      int bagIndex = uplevelGiftItemStage / 2;
+      int bagNeed = UplevelGiftBagBaseSize + (bagIndex + 1) * UplevelGiftBagStep;
+      if (uplevelGiftUseSlot < 0 && bagIndex < uplevelGiftItems.length && bagSize >= bagNeed) {
+         System.out.println("UPLEVEL GIFT skip item=" + uplevelGiftItems[bagIndex]
+                 + " bagSize=" + bagSize + " >= " + bagNeed + " (đã dùng túi vải)");
+         uplevelGiftItemStage = (bagIndex + 1) * 2;
+         uplevelGiftShopRequested = false;
+         uplevelGiftPurchaseTarget = -1;
+         uplevelGiftItemLastAction = System.currentTimeMillis();
          return true;
       }
 
@@ -458,6 +515,11 @@ replacement = '''   private static boolean uplevelGiftStarted;
             uplevelGiftItemStage++;
             uplevelGiftPurchaseTarget = -1;
             uplevelGiftItemLastAction = System.currentTimeMillis();
+            return true;
+         }
+         // Chỉ về map 72 khi phải mua; item có sẵn trong hành trang thì dùng tại chỗ.
+         if (TileMap.mapID != 72) {
+            this.fieldAA(72, -2, -1, -1);
             return true;
          }
          if (!uplevelGiftShopRequested) {
@@ -510,7 +572,8 @@ replacement = '''   private static boolean uplevelGiftStarted;
          return true;
       }
       if (System.currentTimeMillis() - uplevelGiftItemLastAction > 10000L) {
-         System.out.println("UPLEVEL GIFT use timeout item=" + target);
+         System.out.println("UPLEVEL GIFT use timeout item=" + target
+                 + " still in bag quantity=" + item.quantity + "; coi như đã dùng từ trước, bỏ qua");
          uplevelGiftItemUseDone(uplevelGiftUseSlot);
       }
       return true;
@@ -1412,6 +1475,59 @@ loop = """            if (!Boolean.getBoolean("nso.uplevel.no.split")) {
 task = task[:loop_start] + loop + task[loop_end:]
 source = source[:task_start] + task + source[task_end:]
 path.write_text(source)
+UPLEVELPY
+# Tách pha lê: server không trả đủ 2 phản hồi thì uplevelCrystalSplitPending kẹt true mãi
+# và nhiệm vụ 12/13 return im lặng vô hạn. Thêm timeout 8s cho cờ này.
+python3 - "$WORK_SRC_DIR/As20.java" <<'UPLEVELPY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+start_old = "uplevelCrystalSplitPending = true; uplevelCrystalSplitSlot = item.indexUI;"
+start_new = "uplevelCrystalSplitPending = true; uplevelCrystalSplitSentAt = System.currentTimeMillis(); uplevelCrystalSplitSlot = item.indexUI;"
+anchor = "public class As20 extends As10 {\n"
+busy = """   private static long uplevelCrystalSplitSentAt;
+   static boolean uplevelCrystalSplitBusy() {
+      if (!uplevelCrystalSplitPending) return false;
+      if (System.currentTimeMillis() - uplevelCrystalSplitSentAt < 8000L) return true;
+      System.out.println("UPLEVEL CRYSTAL split timeout slot=" + uplevelCrystalSplitSlot
+            + " quantity=" + uplevelCrystalSplitQuantity + "; clear pending");
+      uplevelCrystalSplitDone();
+      return false;
+   }
+"""
+uses = [
+    ("&& !uplevelCrystalSplitPending && split != null", "&& !uplevelCrystalSplitBusy() && split != null"),
+    ("if (!uplevelCrystalSplitPending) {\n                           uplevelCrystalSplitStart(var21);",
+     "if (!uplevelCrystalSplitBusy()) {\n                           uplevelCrystalSplitStart(var21);"),
+]
+for old, new in [(start_old, start_new), (anchor, anchor + busy)] + uses:
+    if source.count(old) != 1:
+        raise SystemExit("expected crystal split pattern: " + old[:60])
+    source = source.replace(old, new, 1)
+path.write_text(source)
+UPLEVELPY
+# Sinh As20.uplevelResetAccountState(): đưa mọi biến static uplevel* về giá trị khởi tạo,
+# gọi khi đổi sang tài khoản/nhân vật khác trong cùng JVM (AccountAutoManager.onGameReady).
+python3 - "$WORK_SRC_DIR/As20.java" <<'UPLEVELPY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+fields = re.findall(r"\bprivate static (boolean|int|long|Item) (uplevel\w+)(?:\s*=\s*([^;]+))?;", source)
+defaults = {"boolean": "false", "int": "0", "long": "0L", "Item": "null"}
+if not fields:
+    raise SystemExit("expected As20 static uplevel fields")
+body = "".join("      %s = %s;\n" % (name, (init or defaults[kind]).strip()) for kind, name, init in fields)
+method = "   static void uplevelResetAccountState() {\n" + body + "   }\n"
+anchor = "public class As20 extends As10 {\n"
+if source.count(anchor) != 1:
+    raise SystemExit("expected As20 class declaration")
+path.write_text(source.replace(anchor, anchor + method, 1))
+print("As20 reset per account: %d static fields" % len(fields))
 UPLEVELPY
 find "$WORK_SRC_DIR" -name '*.java' | sort >"$SOURCES_FILE"
 javac -encoding UTF-8 -source 8 -target 8 -Xlint:none -d "$CLASSES_DIR" @"$SOURCES_FILE"

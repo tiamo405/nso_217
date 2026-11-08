@@ -341,6 +341,12 @@ public class As10 extends Auto {
         Char var1 = Char.getMyChar();
         if (this.fieldAA(var1)) {
             GameScr.fieldAC("Xong!");
+            if (this instanceof As20) {
+                System.out.println("UPLEVEL DONE name=" + var1.cName + " level=" + var1.clevel
+                        + " task=" + var1.ctaskId);
+                AccountAutoManager.onAs20Finished();
+                return;
+            }
             Code.fieldAG();
         } else {
             byte var2 = GameScr.gameBE();

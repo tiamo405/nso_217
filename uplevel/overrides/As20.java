@@ -1,6 +1,15 @@
 public class As20 extends As10 {
    private static final int UplevelNoelMap = 72;
    private static final int UplevelGooshoNpc = 30;
+   // Nấm linh chi: x2 kinh nghiệm trong 5 giờ, mua ở Goosho -> Cửa hàng (nút đầu tiên, shop 14).
+   private static final int UplevelMushroomItemId = 248;
+   private static final int UplevelMushroomPrice = 10;
+   private static final int UplevelMushroomShop = 14;
+   private static final long UplevelMushroomDuration = 5L * 60L * 60L * 1000L;
+   private static final long UplevelMushroomRetryDelay = 10L * 60L * 1000L;
+   // Effect id của nấm: 22 (type 18, 18000s) — đo trên acctest2 ngày 2026-11-07.
+   // Vẫn tự học lại nếu đặt -1; không reset theo acc.
+   private static int learnedMushroomEffectId = 22;
    private static final int UplevelNoelHatMaleId = 351;
    private static final int UplevelNoelHatFemaleId = 352;
    private static final int UplevelTeacherHpId = 14;
@@ -15,6 +24,14 @@ public class As20 extends As10 {
    private static final int UplevelTask17ToneMap = 22;
    private static final int UplevelTask17FishingVillageMap = 32;
    private static final int UplevelTask17NaoNpc = 16;
+   private static final int UplevelTask17LevelTarget = 25;
+   private static final int UplevelTask17LevelMap = 33;
+   private static final int UplevelTask17JaianNpc = 17;
+   private static final int UplevelTask17PotionNpc = 3;
+   private static final int UplevelTask17PotionShop = 7;
+   private static final int UplevelTask17PotionStock = 20;
+   private static final int UplevelTask17FollowDistance = 90;
+   private static final int UplevelTask17FightRadius = 100;
    private int fieldAV;
    private boolean uplevelTask13WeaponEquipped;
    private int uplevelTask14PendingItem = -1;
@@ -49,6 +66,30 @@ public class As20 extends As10 {
    private long uplevelTask17EntryLogAt;
    private long uplevelTask17RequestSentAt;
    private long uplevelTask17NpcLogAt;
+   private boolean uplevelTask17PotionReady;
+   private boolean uplevelTask17ShopRequested;
+   private long uplevelTask17ShopActionAt;
+   private int uplevelTask17BuyType = -1;
+   private int uplevelTask17BuyBefore;
+   private boolean uplevelTask17ReindeerDone;
+   private int uplevelTask17ReindeerAttempts;
+   private long uplevelTask17ReindeerSentAt;
+   private boolean uplevelTask17Talked;
+   private long uplevelTask17TalkAt;
+   private int uplevelTask17TalkAttempts;
+   private boolean uplevelTask17EscortSeen;
+   private long uplevelTask17EscortLostAt;
+   private long uplevelTask17EscortLogAt;
+   private long uplevelTask17AttackAt;
+   private long uplevelTask17PotionUseAt;
+   private long uplevelTask17Phase2LogAt;
+   private long uplevelMushroomUseSentAt;
+   private int uplevelMushroomUseAttempts;
+   private int uplevelMushroomQuantityBefore;
+   private int[] uplevelMushroomEffectsBefore;
+   private long uplevelMushroomConfirmedAt;
+   private long uplevelMushroomRetryAt;
+   private long uplevelMushroomLogAt;
    private static  int[] fieldAW;
    private static  int[] fieldAX;
    private static  int[] fieldAY;
@@ -82,8 +123,11 @@ public class As20 extends As10 {
       this.fieldAV = var1;
    }
 
+   // Hoàn thành khi đã trả nhiệm vụ 17 (hộ tống Jaian) cho Bà Rei: server chuyển sang nhiệm vụ 18.
+   private static final int UplevelDoneTaskId = 18;
+
    public boolean fieldAA(Char var1) {
-      return var1.ctaskId != 16 && var1.ctaskId != 17 && var1.clevel >= 20;
+      return var1.ctaskId >= UplevelDoneTaskId;
    }
 
    private void logUplevelTask16(Char me) {
@@ -132,7 +176,442 @@ public class As20 extends As10 {
          }
       }
       log.append(" progress=").append(count);
+      if (me.taskMaint.names != null) {
+         log.append(" name=\"").append(String.join(" ", me.taskMaint.names)).append('"');
+      }
+      if (me.taskMaint.details != null) {
+         log.append(" detail=\"").append(String.join(" ", me.taskMaint.details)).append('"');
+      }
       System.out.println(log.toString());
+   }
+
+   /**
+    * Map 33 nằm cạnh Làng chài (32). Đi thẳng bằng tìm đường tự động sẽ chọn
+    * tuyến 47 -> 48 mà server chặn ở nhiệm vụ 17, nên đi theo tuyến đã dùng
+    * khi nhận nhiệm vụ: trường -> Tone (22) -> Làng chài (32) -> 33.
+    */
+   private void routeUplevelTask17LevelMap(Char me) {
+      int schoolMap = this.getUplevelSchoolMap(me);
+      int next;
+      if (TileMap.mapID == UplevelTask17FishingVillageMap) {
+         next = UplevelTask17LevelMap;
+      } else if (TileMap.mapID == UplevelTask17ToneMap) {
+         next = UplevelTask17FishingVillageMap;
+      } else if (TileMap.mapID == schoolMap) {
+         next = UplevelTask17ToneMap;
+      } else {
+         next = schoolMap;
+      }
+      long now = System.currentTimeMillis();
+      if (now - this.uplevelTask17WaitingLogAt >= 5000L) {
+         this.uplevelTask17WaitingLogAt = now;
+         System.out.println("UPLEVEL TASK17 route level map=" + TileMap.mapID + " -> " + next
+               + " target=" + UplevelTask17LevelMap + " level=" + me.clevel
+               + "/" + UplevelTask17LevelTarget);
+      }
+      this.fieldAA(next, -2, -1, -1);
+   }
+
+   // ===== Nhiệm vụ 17 bước 1: hộ tống Jaian (NPC 17, map 33) =====
+
+   private static String lower(String v) {
+      return v == null ? "" : v.toLowerCase();
+   }
+
+   private static String describeUplevelNpc(Npc npc) {
+      return (npc.template == null ? -1 : npc.template.npcTemplateId) + ":"
+            + (npc.template == null ? "?" : npc.template.name) + "/" + npc.cName
+            + "@" + npc.cx + "," + npc.cy;
+   }
+
+   private static String snapshotUplevelMap() {
+      StringBuilder sb = new StringBuilder("npcs=[");
+      for (int i = 0; i < GameScr.vNpc.size(); i++) {
+         Npc npc = (Npc)GameScr.vNpc.elementAt(i);
+         if (npc == null) continue;
+         if (i > 0) sb.append(", ");
+         sb.append(describeUplevelNpc(npc));
+      }
+      sb.append("] chars=[");
+      for (int i = 0; i < GameScr.vCharInMap.size(); i++) {
+         Char c = (Char)GameScr.vCharInMap.elementAt(i);
+         if (c == null) continue;
+         if (i > 0) sb.append(", ");
+         sb.append(c.cName).append("@").append(c.cx).append(",").append(c.cy);
+      }
+      return sb.append("]").toString();
+   }
+
+   /**
+    * Jaian hộ tống là nhân vật (vCharInMap) tên "Jaian" do server sinh ra sau khi nói
+    * chuyện với NPC 17; NPC 17 gốc vẫn đứng nguyên. Ưu tiên bản có tên chứa tên mình.
+    */
+   private static Char findUplevelEscort(Char me) {
+      Char fallback = null;
+      String myName = lower(me.cName);
+      for (int i = 0; i < GameScr.vCharInMap.size(); i++) {
+         Char c = (Char)GameScr.vCharInMap.elementAt(i);
+         if (c == null || c == me) continue;
+         String name = lower(c.cName);
+         if (!name.contains("jaian")) continue;
+         if (myName.length() > 0 && name.contains(myName)) return c;
+         if (fallback == null) fallback = c;
+      }
+      return fallback;
+   }
+
+   private static Item bestUplevelPotion(Item[] items, int type, int maxLevel) {
+      Item best = null;
+      for (int i = 0; items != null && i < items.length; i++) {
+         Item item = items[i];
+         if (item == null || item.template == null || item.template.type != type
+               || item.template.level > maxLevel) continue;
+         if (best == null || item.template.level > best.template.level) best = item;
+      }
+      return best;
+   }
+
+   private static int countUplevelPotion(Char me, int type) {
+      int total = 0;
+      for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
+         Item item = me.arrItemBag[i];
+         if (item != null && item.template != null && item.template.type == type
+               && item.template.level <= me.clevel) total += item.quantity;
+      }
+      return total;
+   }
+
+   /** Mua đủ bình HP (type 16) ở NPC 3, shop 7 (không dùng bình MP). */
+   private boolean ensureUplevelTask17Potions(Char me) {
+      if (this.uplevelTask17PotionReady) return true;
+      long now = System.currentTimeMillis();
+      int hp = countUplevelPotion(me, 16);
+
+      if (this.uplevelTask17BuyType >= 0) {
+         int current = hp;
+         if (current > this.uplevelTask17BuyBefore) {
+            System.out.println("UPLEVEL TASK17 potion bought type=" + this.uplevelTask17BuyType
+                  + " count=" + this.uplevelTask17BuyBefore + "->" + current + " yen=" + me.yen);
+            this.uplevelTask17BuyType = -1;
+         } else if (now - this.uplevelTask17ShopActionAt < 8000L) {
+            return false;
+         } else {
+            System.out.println("UPLEVEL TASK17 potion buy timeout type=" + this.uplevelTask17BuyType
+                  + " count=" + current + " yen=" + me.yen + "; bỏ qua mua thêm");
+            this.uplevelTask17BuyType = -1;
+            this.uplevelTask17PotionReady = true;
+            return true;
+         }
+      }
+
+      if (hp >= UplevelTask17PotionStock) {
+         System.out.println("UPLEVEL TASK17 potion ready hp=" + hp);
+         this.uplevelTask17PotionReady = true;
+         return true;
+      }
+
+      if (!TileMap.isLang(TileMap.mapID) && !TileMap.isTruong(TileMap.mapID)) {
+         if (now - this.uplevelTask17WaitingLogAt >= 5000L) {
+            this.uplevelTask17WaitingLogAt = now;
+            System.out.println("UPLEVEL TASK17 potion route map=" + TileMap.mapID + " -> "
+                  + UplevelTask17FishingVillageMap + " hp=" + hp);
+         }
+         this.fieldAA(UplevelTask17FishingVillageMap, -2, -1, -1);
+         return false;
+      }
+
+      Npc seller = GameScr.fieldAI(UplevelTask17PotionNpc);
+      if (seller == null) {
+         if (now - this.uplevelTask17NpcLogAt >= 5000L) {
+            this.uplevelTask17NpcLogAt = now;
+            System.out.println("UPLEVEL TASK17 potion npc missing npc=" + UplevelTask17PotionNpc
+                  + " map=" + TileMap.mapID + " " + snapshotUplevelMap());
+         }
+         return false;
+      }
+      if (Math.abs(seller.cx - me.cx) > 22 || Math.abs(seller.cy - me.cy) > 22) {
+         Char.fieldAC(seller.cx, seller.cy);
+         return false;
+      }
+
+      if (!this.uplevelTask17ShopRequested) {
+         GameScr.arrItemStackLock = null;
+         GameScr.fieldAB(UplevelTask17PotionNpc, 0, 0);
+         Service.gI().requestItem(UplevelTask17PotionShop);
+         this.uplevelTask17ShopRequested = true;
+         this.uplevelTask17ShopActionAt = now;
+         System.out.println("UPLEVEL TASK17 potion shop open npc=" + UplevelTask17PotionNpc
+               + " shop=" + UplevelTask17PotionShop + " map=" + TileMap.mapID);
+         return false;
+      }
+      if (GameScr.arrItemStackLock == null) {
+         if (now - this.uplevelTask17ShopActionAt >= 8000L) {
+            System.out.println("UPLEVEL TASK17 potion shop timeout; thử lại");
+            this.uplevelTask17ShopRequested = false;
+         }
+         return false;
+      }
+
+      int type = 16;
+      Item offer = bestUplevelPotion(GameScr.arrItemStackLock, type, me.clevel);
+      if (offer == null) {
+         StringBuilder shop = new StringBuilder();
+         for (int i = 0; i < GameScr.arrItemStackLock.length; i++) {
+            Item it = GameScr.arrItemStackLock[i];
+            if (it == null || it.template == null) continue;
+            shop.append(' ').append(it.template.id).append(':').append(it.template.name)
+                  .append("/t").append(it.template.type).append("/lv").append(it.template.level);
+         }
+         System.out.println("UPLEVEL TASK17 potion not found type=" + type + " shop=" + shop
+               + "; bỏ qua mua thêm");
+         this.uplevelTask17PotionReady = true;
+         return true;
+      }
+      int current = hp;
+      int quantity = UplevelTask17PotionStock - current;
+      this.uplevelTask17BuyType = type;
+      this.uplevelTask17BuyBefore = current;
+      this.uplevelTask17ShopActionAt = now;
+      Service.gI().buyItem(offer.typeUI, offer.indexUI, quantity);
+      System.out.println("UPLEVEL TASK17 potion buy type=" + type + " item=" + offer.template.id
+            + ":" + offer.template.name + " lv=" + offer.template.level
+            + " quantity=" + quantity + " shopIndex=" + offer.indexUI + " yen=" + me.yen);
+      return false;
+   }
+
+   /** Dùng item Tuần lộc (tăng HP/MP) một lần trước khi hộ tống. */
+   private boolean ensureUplevelTask17Reindeer(Char me) {
+      if (this.uplevelTask17ReindeerDone) return true;
+      Item reindeer = null;
+      for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
+         Item item = me.arrItemBag[i];
+         if (item != null && item.template != null
+               && lower(item.template.name).contains("tuần lộc")) {
+            reindeer = item;
+            break;
+         }
+      }
+      long now = System.currentTimeMillis();
+      if (reindeer == null) {
+         System.out.println("UPLEVEL TASK17 reindeer "
+               + (this.uplevelTask17ReindeerAttempts > 0 ? "used" : "not in bag")
+               + " hp=" + me.cHP + "/" + me.cMaxHP + " mp=" + me.cMP + "/" + me.cMaxMP);
+         this.uplevelTask17ReindeerDone = true;
+         return true;
+      }
+      if (this.uplevelTask17ReindeerAttempts > 0 && now - this.uplevelTask17ReindeerSentAt < 3000L) {
+         return false;
+      }
+      if (this.uplevelTask17ReindeerAttempts >= 3) {
+         System.out.println("UPLEVEL TASK17 reindeer still in bag after 3 uses id="
+               + reindeer.template.id + " quantity=" + reindeer.quantity + "; tiếp tục nhiệm vụ");
+         this.uplevelTask17ReindeerDone = true;
+         return true;
+      }
+      ++this.uplevelTask17ReindeerAttempts;
+      this.uplevelTask17ReindeerSentAt = now;
+      Service.gI().useItem(reindeer.indexUI);
+      System.out.println("UPLEVEL TASK17 reindeer use id=" + reindeer.template.id + ":"
+            + reindeer.template.name + " bagIndex=" + reindeer.indexUI
+            + " quantity=" + reindeer.quantity + " hp=" + me.cHP + "/" + me.cMaxHP
+            + " mp=" + me.cMP + "/" + me.cMaxMP);
+      return false;
+   }
+
+   private boolean useUplevelTask17Potions(Char me) {
+      if (me.cHP <= 0) return false;
+      long now = System.currentTimeMillis();
+      if (now - this.uplevelTask17PotionUseAt < 1000L) return false;
+      Item potion = null;
+      String kind = null;
+      if ((long)me.cHP * 100L < (long)me.cMaxHP * 80L) {
+         potion = bestUplevelPotion(me.arrItemBag, 16, me.clevel);
+         kind = "HP";
+      }
+      if (potion == null) return false;
+      this.uplevelTask17PotionUseAt = now;
+      Service.gI().useItem(potion.indexUI);
+      System.out.println("UPLEVEL TASK17 potion use " + kind + " id=" + potion.template.id
+            + " hp=" + me.cHP + "/" + me.cMaxHP + " mp=" + me.cMP + "/" + me.cMaxMP
+            + " left=" + (potion.quantity - 1));
+      return true;
+   }
+
+   private void doUplevelTask17Escort(Char me) {
+      long now = System.currentTimeMillis();
+      Char escort = TileMap.mapID == UplevelTask17LevelMap ? findUplevelEscort(me) : null;
+
+      if (escort != null) {
+         if (!this.uplevelTask17EscortSeen) {
+            System.out.println("UPLEVEL TASK17 escort start name=" + escort.cName
+                  + " pos=" + escort.cx + "," + escort.cy);
+         }
+         this.uplevelTask17EscortSeen = true;
+         this.uplevelTask17EscortLostAt = 0L;
+         this.followUplevelTask17Escort(me, escort, now);
+         return;
+      }
+
+      if (this.uplevelTask17EscortSeen) {
+         // Jaian biến mất khỏi map: chờ server chuyển bước (index 1 -> 2).
+         if (this.uplevelTask17EscortLostAt == 0L) {
+            this.uplevelTask17EscortLostAt = now;
+            System.out.println("UPLEVEL TASK17 escort gone map=" + TileMap.mapID
+                  + " pos=" + me.cx + "," + me.cy + " progress=" + me.taskMaint.count
+                  + " index=" + me.taskMaint.index
+                  + " " + snapshotUplevelMap());
+         }
+         if (now - this.uplevelTask17EscortLostAt < 30000L) {
+            this.useUplevelTask17Potions(me);
+            return;
+         }
+         System.out.println("UPLEVEL TASK17 escort gone but task still index=1; "
+               + "coi như thất bại, nhận lại hộ tống");
+         this.uplevelTask17EscortSeen = false;
+         this.uplevelTask17Talked = false;
+         this.uplevelTask17TalkAttempts = 0;
+         this.uplevelTask17EscortLostAt = 0L;
+         return;
+      }
+
+      // Chuẩn bị: bình HP/MP rồi dùng Tuần lộc.
+      if (!this.ensureUplevelTask17Potions(me)) return;
+      if (!this.ensureUplevelTask17Reindeer(me)) return;
+
+      if (TileMap.mapID != UplevelTask17LevelMap) {
+         this.uplevelTask17Talked = false;
+         this.routeUplevelTask17LevelMap(me);
+         return;
+      }
+
+      Npc jaian = GameScr.fieldAI(UplevelTask17JaianNpc);
+      if (jaian == null) {
+         if (now - this.uplevelTask17NpcLogAt >= 5000L) {
+            this.uplevelTask17NpcLogAt = now;
+            System.out.println("UPLEVEL TASK17 jaian missing npc=" + UplevelTask17JaianNpc
+                  + " map=" + TileMap.mapID + " " + snapshotUplevelMap());
+         }
+         return;
+      }
+      if (Math.abs(jaian.cx - me.cx) > 22 || Math.abs(jaian.cy - me.cy) > 22) {
+         Char.fieldAC(jaian.cx, jaian.cy);
+         return;
+      }
+      if (this.uplevelTask17Talked && now - this.uplevelTask17TalkAt < 6000L) {
+         return;
+      }
+      if (this.uplevelTask17Talked) {
+         this.uplevelTask17Talked = false;
+         System.out.println("UPLEVEL TASK17 talk no escort after 6s attempt="
+               + this.uplevelTask17TalkAttempts + " " + snapshotUplevelMap());
+      }
+      // Hồi HP trước khi nhận hộ tống.
+      if ((long)me.cHP * 100L < (long)me.cMaxHP * 80L) {
+         this.useUplevelTask17Potions(me);
+         if (now - this.uplevelTask17WaitingLogAt >= 5000L) {
+            this.uplevelTask17WaitingLogAt = now;
+            System.out.println("UPLEVEL TASK17 wait hp before talk hp=" + me.cHP + "/" + me.cMaxHP);
+         }
+         return;
+      }
+      if (this.uplevelTask17TalkAttempts >= 3) {
+         if (now - this.uplevelTask17NpcLogAt >= 10000L) {
+            this.uplevelTask17NpcLogAt = now;
+            System.out.println("UPLEVEL TASK17 talk failed 3 times; dừng chờ kiểm tra menu="
+                  + (jaian.template == null || jaian.template.menu == null ? "null"
+                  : java.util.Arrays.deepToString(jaian.template.menu)));
+         }
+         return;
+      }
+      ++this.uplevelTask17TalkAttempts;
+      this.uplevelTask17Talked = true;
+      this.uplevelTask17TalkAt = now;
+      System.out.println("UPLEVEL TASK17 talk npc=" + UplevelTask17JaianNpc + " attempt="
+            + this.uplevelTask17TalkAttempts + " npc=" + describeUplevelNpc(jaian) + " menu="
+            + (jaian.template == null || jaian.template.menu == null ? "null"
+            : java.util.Arrays.deepToString(jaian.template.menu))
+            + " hp=" + me.cHP + "/" + me.cMaxHP);
+      GameScr.fieldAB(UplevelTask17JaianNpc, 0, 0);
+      Service.gI().getTask(UplevelTask17JaianNpc, 0, -1);
+   }
+
+   private void followUplevelTask17Escort(Char me, Char escort, long now) {
+      int dist = Res.gameAA(me.cx, me.cy, escort.cx, escort.cy);
+      if (now - this.uplevelTask17EscortLogAt >= 3000L) {
+         this.uplevelTask17EscortLogAt = now;
+         System.out.println("UPLEVEL TASK17 escort follow me=" + me.cx + "," + me.cy
+               + " jaian=" + escort.cx + "," + escort.cy + " dist=" + dist
+               + " jaianHp=" + escort.cHP + "/" + escort.cMaxHP
+               + " hp=" + me.cHP + "/" + me.cMaxHP + " mp=" + me.cMP + "/" + me.cMaxMP
+               + " hpPotion=" + countUplevelPotion(me, 16)
+               + " target=" + (me.mobFocus == null ? "none" : me.mobFocus.mobId + "@" + me.mobFocus.x
+               + "," + me.mobFocus.y + " hp=" + me.mobFocus.hp + "/" + me.mobFocus.maxHp)
+               + " mobsNear=" + this.countUplevelMobsNear(escort));
+      }
+      this.useUplevelTask17Potions(me);
+
+      // Ưu tiên giữ khoảng cách: xa hơn ngưỡng thì chạy về phía Jaian, không đánh quái.
+      if (dist > UplevelTask17FollowDistance) {
+         Char.fieldAC(escort.cx, escort.cy);
+         return;
+      }
+
+      // Đánh quái quanh Jaian (ưu tiên con gần Jaian nhất), không rời Jaian quá bán kính.
+      Mob target = null;
+      int best = -1;
+      for (int i = 0; i < GameScr.vMob.size(); i++) {
+         Mob mob = (Mob)GameScr.vMob.elementAt(i);
+         if (mob == null || mob.status == 0 || mob.status == 1 || mob.hp <= 0) continue;
+         int d = Res.gameAA(mob.x, mob.y, escort.cx, escort.cy);
+         if (d > UplevelTask17FightRadius) continue;
+         if (best == -1 || d < best) {
+            best = d;
+            target = mob;
+         }
+      }
+      if (target == null) return;
+      Skill skill = me.myskill;
+      if (skill == null || skill.template == null) {
+         if (now - this.uplevelTask17AttackAt >= 5000L) {
+            this.uplevelTask17AttackAt = now;
+            System.out.println("UPLEVEL TASK17 escort no attack skill selected");
+         }
+         return;
+      }
+      me.mobFocus = target;
+      int rangeX = skill.dx > 0 ? skill.dx : 40;
+      int rangeY = skill.dy > 0 ? skill.dy : 30;
+      if (Math.abs(target.x - me.cx) > rangeX || Math.abs(target.y - me.cy) > rangeY) {
+         Char.fieldAC(target.x, target.y);
+         return;
+      }
+      if (now - skill.lastTimeUseThisSkill < (long)skill.coolDown) return;
+      skill.lastTimeUseThisSkill = now;
+      this.uplevelTask17AttackAt = now;
+      MyVector mobs = new MyVector();
+      mobs.addElement(target);
+      int maxFight = skill.maxFight > 0 ? skill.maxFight : 1;
+      for (int i = 0; i < GameScr.vMob.size() && mobs.size() < maxFight; i++) {
+         Mob mob = (Mob)GameScr.vMob.elementAt(i);
+         if (mob == null || mob == target || mob.status == 0 || mob.status == 1 || mob.hp <= 0) continue;
+         if (Math.abs(mob.x - me.cx) <= rangeX && Math.abs(mob.y - me.cy) <= rangeY) {
+            mobs.addElement(mob);
+         }
+      }
+      Service.gI().selectSkill(skill.template.id);
+      Service.gI().sendPlayerAttack(mobs, new MyVector(), 1);
+   }
+
+   private int countUplevelMobsNear(Char escort) {
+      int count = 0;
+      for (int i = 0; i < GameScr.vMob.size(); i++) {
+         Mob mob = (Mob)GameScr.vMob.elementAt(i);
+         if (mob != null && mob.status != 0 && mob.status != 1 && mob.hp > 0
+               && Res.gameAA(mob.x, mob.y, escort.cx, escort.cy) <= UplevelTask17FightRadius) {
+            ++count;
+         }
+      }
+      return count;
    }
 
    private boolean receiveUplevelTask17(Char me, int targetNpc) {
@@ -189,6 +668,167 @@ public class As20 extends As10 {
       LockGame.fieldAO();
       System.out.println("UPLEVEL TASK17 receive npc=" + npcId
             + " map=" + UplevelTask17FishingVillageMap);
+      return false;
+   }
+
+   private int[] uplevelEffectIds(Char me) {
+      int size = me.vEff == null ? 0 : me.vEff.size();
+      int[] ids = new int[size];
+      for (int i = 0; i < size; i++) {
+         Effect effect = (Effect)me.vEff.elementAt(i);
+         ids[i] = effect == null || effect.template == null ? -1 : effect.template.id;
+      }
+      return ids;
+   }
+
+   private String uplevelEffectsLog(Char me) {
+      StringBuilder out = new StringBuilder("[");
+      int nowSec = (int)(System.currentTimeMillis() / 1000L);
+      for (int i = 0; me.vEff != null && i < me.vEff.size(); i++) {
+         Effect effect = (Effect)me.vEff.elementAt(i);
+         if (effect == null || effect.template == null) continue;
+         if (out.length() > 1) out.append(',');
+         out.append(effect.template.id).append("/t").append(effect.template.type)
+               .append("/left").append(effect.timeLenght - (nowSec - effect.timeStart)).append('s');
+      }
+      return out.append(']').toString();
+   }
+
+   private Effect findUplevelMushroomEffect(Char me) {
+      if (learnedMushroomEffectId < 0 || me.vEff == null) return null;
+      for (int i = 0; i < me.vEff.size(); i++) {
+         Effect effect = (Effect)me.vEff.elementAt(i);
+         if (effect != null && effect.template != null && effect.template.id == learnedMushroomEffectId) {
+            return effect;
+         }
+      }
+      return null;
+   }
+
+   private boolean isUplevelMushroomActive(Char me) {
+      if (learnedMushroomEffectId >= 0) {
+         return this.findUplevelMushroomEffect(me) != null;
+      }
+      return this.uplevelMushroomConfirmedAt > 0L
+            && System.currentTimeMillis() - this.uplevelMushroomConfirmedAt < UplevelMushroomDuration;
+   }
+
+   private int countUplevelItem(Item[] items, int templateId) {
+      int count = 0;
+      for (int i = 0; items != null && i < items.length; i++) {
+         Item item = items[i];
+         if (item != null && item.template != null && item.template.id == templateId) {
+            count += item.quantity;
+         }
+      }
+      return count;
+   }
+
+   /** Giữ hiệu ứng x2 kinh nghiệm của Nấm linh chi; hết hiệu ứng thì mua (10 lượng) và dùng lại. */
+   private boolean ensureUplevelMushroom(Char me) {
+      long now = System.currentTimeMillis();
+      if (this.uplevelMushroomUseSentAt > 0L) {
+         int[] before = this.uplevelMushroomEffectsBefore == null ? new int[0] : this.uplevelMushroomEffectsBefore;
+         int[] after = this.uplevelEffectIds(me);
+         int added = -1;
+         for (int i = 0; i < after.length && added < 0; i++) {
+            boolean seen = false;
+            for (int j = 0; j < before.length; j++) {
+               if (before[j] == after[i]) seen = true;
+            }
+            if (!seen && after[i] >= 0) added = after[i];
+         }
+         int quantity = this.countUplevelItem(me.arrItemBag, UplevelMushroomItemId);
+         if (added >= 0 || quantity < this.uplevelMushroomQuantityBefore
+               || this.findUplevelMushroomEffect(me) != null) {
+            if (added >= 0 && learnedMushroomEffectId < 0) {
+               learnedMushroomEffectId = added;
+               System.out.println("UPLEVEL MUSHROOM effect learned id=" + added);
+            }
+            System.out.println("UPLEVEL MUSHROOM use confirmed luong=" + me.luong
+                  + " newEffect=" + added + " effects=" + this.uplevelEffectsLog(me));
+            this.uplevelMushroomUseSentAt = 0L;
+            this.uplevelMushroomUseAttempts = 0;
+            this.uplevelMushroomConfirmedAt = now;
+            return true;
+         }
+         if (now - this.uplevelMushroomUseSentAt < 8000L) {
+            return false;
+         }
+         this.uplevelMushroomUseSentAt = 0L;
+         System.out.println("UPLEVEL MUSHROOM use timeout attempt=" + this.uplevelMushroomUseAttempts
+               + " effects=" + this.uplevelEffectsLog(me));
+         if (this.uplevelMushroomUseAttempts >= 3) {
+            this.uplevelMushroomUseAttempts = 0;
+            this.uplevelMushroomRetryAt = now + UplevelMushroomRetryDelay;
+            System.out.println("UPLEVEL MUSHROOM use failed; retry after 10 minutes");
+            return true;
+         }
+      }
+
+      if (this.isUplevelMushroomActive(me)) {
+         return true;
+      }
+      if (now < this.uplevelMushroomRetryAt) {
+         return true;
+      }
+
+      Item mushroom = this.findUplevelItem(me.arrItemBag, UplevelMushroomItemId);
+      if (mushroom == null) {
+         if (me.luong < UplevelMushroomPrice) {
+            System.out.println("UPLEVEL MUSHROOM not enough luong=" + me.luong
+                  + " need=" + UplevelMushroomPrice + "; retry after 10 minutes");
+            this.uplevelMushroomRetryAt = now + UplevelMushroomRetryDelay;
+            return true;
+         }
+         // Map hiện tại có Goosho thì mua tại chỗ, không có mới về map 72.
+         if (GameScr.fieldAI(UplevelGooshoNpc) == null && TileMap.mapID != UplevelNoelMap) {
+            if (now - this.uplevelMushroomLogAt >= 5000L) {
+               this.uplevelMushroomLogAt = now;
+               System.out.println("UPLEVEL MUSHROOM route map=" + TileMap.mapID + " -> " + UplevelNoelMap);
+            }
+            this.fieldAA(UplevelNoelMap, -2, -1, -1);
+            return false;
+         }
+         GameScr.arrItemStore = null;
+         GameScr.fieldAB(UplevelGooshoNpc, 0, 0);
+         Service.gI().requestItem(UplevelMushroomShop);
+         long deadline = System.currentTimeMillis() + 5000L;
+         while (GameScr.arrItemStore == null && System.currentTimeMillis() < deadline) {
+            Auto.fieldAA(100L);
+         }
+         Item offer = this.findUplevelItem(GameScr.arrItemStore, UplevelMushroomItemId);
+         if (offer == null) {
+            System.out.println("UPLEVEL MUSHROOM not found in Goosho shop=" + UplevelMushroomShop
+                  + " storeLoaded=" + (GameScr.arrItemStore != null) + "; retry after 10 minutes");
+            this.uplevelMushroomRetryAt = now + UplevelMushroomRetryDelay;
+            return true;
+         }
+         int price = offer.buyGold > 0 ? offer.buyGold : UplevelMushroomPrice;
+         if (me.luong < price) {
+            System.out.println("UPLEVEL MUSHROOM not enough luong=" + me.luong
+                  + " price=" + price + "; retry after 10 minutes");
+            this.uplevelMushroomRetryAt = now + UplevelMushroomRetryDelay;
+            return true;
+         }
+         System.out.println("UPLEVEL MUSHROOM buy id=" + UplevelMushroomItemId + " shopIndex=" + offer.indexUI
+               + " price=" + price + " luong=" + me.luong);
+         Service.gI().buyItem(offer.typeUI, offer.indexUI, 1);
+         mushroom = this.waitForUplevelBagItem(me, UplevelMushroomItemId, 5000L);
+         if (mushroom == null) {
+            System.out.println("UPLEVEL MUSHROOM purchase not in bag luong=" + me.luong + "; retry after 1 minute");
+            this.uplevelMushroomRetryAt = now + 60000L;
+            return true;
+         }
+      }
+
+      this.uplevelMushroomEffectsBefore = this.uplevelEffectIds(me);
+      this.uplevelMushroomQuantityBefore = this.countUplevelItem(me.arrItemBag, UplevelMushroomItemId);
+      this.uplevelMushroomUseSentAt = now;
+      ++this.uplevelMushroomUseAttempts;
+      System.out.println("UPLEVEL MUSHROOM use id=" + UplevelMushroomItemId + " bagIndex=" + mushroom.indexUI
+            + " quantity=" + mushroom.quantity + " effects=" + this.uplevelEffectsLog(me));
+      Service.gI().useItem(mushroom.indexUI);
       return false;
    }
 
@@ -655,7 +1295,9 @@ public class As20 extends As10 {
             this.uplevelTask17EntryLogAt = now;
             System.out.println("UPLEVEL TASK17 enter task=" + (var1.taskMaint == null
                   ? "null" : String.valueOf(var1.taskMaint.index))
-                  + " map=" + TileMap.mapID + " hp=" + var1.cHP);
+                  + " map=" + TileMap.mapID + " hp=" + var1.cHP
+                  + " pos=" + var1.cx + "," + var1.cy
+                  + " neighbors=" + java.util.Arrays.toString(TileMap.fieldBZ[TileMap.mapID]));
          }
       }
       int autoItemLevel = this.getUplevelFoodLevel(var1);
@@ -669,8 +1311,15 @@ public class As20 extends As10 {
          this.receiveUplevelTask17(var1, var3);
          return;
       }
+      // Đang hộ tống Jaian: không để bước mua thức ăn/mũ Noel/quà kéo nhân vật rời map.
+      if (var1.ctaskId == 17 && var1.taskMaint != null && var1.taskMaint.index == 1
+            && var1.cHP > 0 && (this.uplevelTask17EscortSeen
+            || (TileMap.mapID == UplevelTask17LevelMap && findUplevelEscort(var1) != null))) {
+         this.doUplevelTask17Escort(var1);
+         return;
+      }
       if (var1.cHP > 0 && (!uplevelGiftDone || (var1.ctaskId >= 9
-            && (!uplevelGiftBoxReady || uplevelGiftItemStage < uplevelGiftItems.length + 2)))) {
+            && (!uplevelGiftBoxReady || uplevelGiftItemsPending())))) {
          if (var1.ctaskId >= 6) {
             this.uplevelPrepareGift(var1);
             return;
@@ -711,6 +1360,9 @@ public class As20 extends As10 {
       }
       if (var1.ctaskId < 6) {
          super.fieldAA(var1, var2, var3);
+         return;
+      }
+      if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelMushroom(var1)) {
          return;
       }
       if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelNoelHat(var1)) {
@@ -1284,6 +1936,28 @@ public class As20 extends As10 {
                }
             }
             this.logUplevelTask17(var1);
+            if (var1.taskMaint != null && var1.taskMaint.index == 0
+                  && var1.clevel < UplevelTask17LevelTarget) {
+               if (TileMap.mapID == UplevelTask17LevelMap) {
+                  this.fieldAC(-1);
+                  this.fieldAB(-1, 1);
+                  return;
+               }
+               this.routeUplevelTask17LevelMap(var1);
+               return;
+            }
+            if (var1.taskMaint != null && var1.taskMaint.index == 1) {
+               this.doUplevelTask17Escort(var1);
+               return;
+            }
+            if (var1.taskMaint != null && var1.taskMaint.index >= 2) {
+               long now = System.currentTimeMillis();
+               if (now - this.uplevelTask17Phase2LogAt >= 10000L) {
+                  this.uplevelTask17Phase2LogAt = now;
+                  System.out.println("UPLEVEL TASK17 phase=" + var1.taskMaint.index
+                        + " chưa có logic; chờ hướng dẫn map=" + TileMap.mapID);
+               }
+            }
             return;
          }
 

@@ -31,6 +31,7 @@ public final class AccountAutoManager implements Runnable {
     private static volatile int progressMonitorGeneration;
     private static volatile String lastProgressSnapshot = "";
     private static volatile long lastProgressLog;
+    private static String lastAs20StateKey;
 
     private AccountAutoManager() {
     }
@@ -275,6 +276,15 @@ public final class AccountAutoManager implements Runnable {
         System.out.println("AUTO AS20: mode=" + mode + " requestedClass=kiếm actualClass="
                 + (me.nClass == null ? "unknown" : me.nClass.name + "#" + me.nClass.classId)
                 + " level=" + me.clevel);
+        String stateKey = getCurrentUsername() + "/" + me.cName;
+        if (!stateKey.equals(lastAs20StateKey)) {
+            // Trạng thái static của As20 (giftcode, pet, rương, shop...) phải làm lại cho từng acc;
+            // reconnect cùng acc thì giữ nguyên để không lặp lại bước đang dở.
+            As20.uplevelResetAccountState();
+            System.out.println("AUTO AS20: reset state for " + stateKey
+                    + (lastAs20StateKey == null ? "" : " (previous " + lastAs20StateKey + ")"));
+            lastAs20StateKey = stateKey;
+        }
         startProgressMonitor(me);
         Code.fieldAA((Auto) new As20(mode));
     }
@@ -789,6 +799,19 @@ public final class AccountAutoManager implements Runnable {
         AutoEnterCave cave = new AutoEnterCave();
         cave.fieldAD();
         Code.fieldAA((Auto) cave);
+    }
+
+    /** As20 đã xong nhiệm vụ Jaian (đã báo cáo Bà Rei): chuyển nhân vật/tài khoản tiếp theo. */
+    public static synchronized void onAs20Finished() {
+        if (!enabled || switching) {
+            Code.fieldAG();
+            return;
+        }
+        Char me = Char.getMyChar();
+        BotMetrics.event("uplevel_done", me == null ? "" : String.valueOf(me.ctaskId),
+                me == null ? 0 : me.clevel);
+        BotMetrics.finish("completed", "uplevel finished task 17");
+        skipCurrentCharacter("uplevel hoàn thành nhiệm vụ Jaian, chuyển nhân vật/tài khoản tiếp theo");
     }
 
     public static synchronized void onCaveEntered() {
