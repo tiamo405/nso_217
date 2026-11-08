@@ -1,0 +1,28 @@
+diff --git a/AutoPrepareNvhn.java b/AutoPrepareNvhn.java
+--- a/AutoPrepareNvhn.java
++++ b/AutoPrepareNvhn.java
+@@ -308,14 +308,22 @@
+         if (template == null) {
+             return false;
+         }
++        return this.findBodyItem(template.id) != null;
++    }
++
++    private Item findBodyItem(int templateId) {
+         Item[] body = Char.getMyChar().arrItemBody;
+-        if (body != null && template.type >= 0 && template.type < body.length
+-                && body[template.type] != null
+-                && body[template.type].template.id == template.id) {
+-            return true;
++        if (body == null) {
++            return null;
+         }
+-        return template.part >= 0 && Char.getMyChar().ID_MAT_NA == template.part;
++        for (int i = 0; i < body.length; ++i) {
++            Item item = body[i];
++            if (item != null && item.template != null && item.template.id == templateId) {
++                return item;
++            }
++        }
++        return null;
+     }
