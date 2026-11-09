@@ -14,6 +14,8 @@ START_DELAY=${UPLEVEL_START_DELAY:-3}
 AS20_MODE=${UPLEVEL_MODE:-0}
 SERVER_NAME=${UPLEVEL_SERVER:-180.93.114.122:14444}
 JAVA_OPTS=${JAVA_OPTS:-}
+# true: mỗi nhân vật một JVM (worker-loop.sh), tránh static của nhân vật trước dính sang nhân vật sau.
+PROCESS_PER_CHARACTER=${UPLEVEL_PROCESS_PER_CHARACTER:-true}
 
 if [[ "$AS20_MODE" == 0 ]]; then
     AS20_MODE=1
@@ -105,6 +107,7 @@ is_worker_pid() {
 for worker_dir in "${worker_dirs[@]}"; do
     worker_name=$(basename -- "$worker_dir")
     pid_file="$worker_dir/bot.pid"
+    loop_pid_file="$worker_dir/loop.pid"
     if [[ -f "$worker_dir/home/worker.done" ]]; then
         echo "$worker_name da hoan tat"
         completed=$((completed + 1))
@@ -119,6 +122,15 @@ for worker_dir in "${worker_dirs[@]}"; do
         fi
         rm -f -- "$pid_file"
     fi
+    if [[ -f "$loop_pid_file" ]]; then
+        pid=$(<"$loop_pid_file")
+        if is_worker_pid "$pid" "$worker_dir"; then
+            echo "$worker_name dang chay (loop PID $pid)"
+            running=$((running + 1))
+            continue
+        fi
+        rm -f -- "$loop_pid_file"
+    fi
 
     mkdir -p "$worker_dir/home"
     if [[ "${UPLEVEL_LOG_APPEND:-0}" != 1 ]]; then
@@ -127,7 +139,8 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
     printf '\n===== START UPLEVEL %s mode=%s =====\n' "$(date '+%F %T')" "$AS20_MODE" >>"$worker_dir/stdout.log"
     printf '\n===== START UPLEVEL %s mode=%s =====\n' "$(date '+%F %T')" "$AS20_MODE" >>"$worker_dir/java-errors.log"
-    nohup "$JAVA_BIN" "-Xms$JAVA_XMS" "-Xmx$JAVA_XMX" \
+    nohup "$SCRIPT_DIR/worker-loop.sh" "$worker_dir" \
+        "$JAVA_BIN" "-Xms$JAVA_XMS" "-Xmx$JAVA_XMX" \
         "${JAVA_OPTS_ARRAY[@]}" \
         -Dnso.server="$SERVER_NAME" \
         -Dnso.as20.mode="$AS20_MODE" \
@@ -140,20 +153,21 @@ for worker_dir in "${worker_dirs[@]}"; do
         -Dnso.uplevel.no.split="${UPLEVEL_NO_SPLIT:-false}" \
         -Dnso.uplevel.allow.stacks="${UPLEVEL_ALLOW_STACKS:-false}" \
         -Dnso.uplevel.upgrade.safe="${UPLEVEL_UPGRADE_SAFE:-false}" \
+        -Dnso.process.per.character="$PROCESS_PER_CHARACTER" \
         -Duser.home="$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \
         OptimizedMain \
         >>"$worker_dir/stdout.log" 2>>"$worker_dir/java-errors.log" &
 
     pid=$!
-    printf '%s\n' "$pid" >"$pid_file"
-    sleep 0.3
+    printf '%s\n' "$pid" >"$loop_pid_file"
+    sleep 0.5
     if is_worker_pid "$pid" "$worker_dir"; then
-        echo "Da chay $worker_name (PID $pid)"
+        echo "Da chay $worker_name (loop PID $pid, java PID $(cat "$pid_file" 2>/dev/null || echo ?))"
         started=$((started + 1))
     else
         echo "$worker_name khoi dong loi; xem $worker_dir/java-errors.log" >&2
-        rm -f -- "$pid_file"
+        rm -f -- "$loop_pid_file" "$pid_file"
     fi
     (( START_DELAY == 0 )) || sleep "$START_DELAY"
 done

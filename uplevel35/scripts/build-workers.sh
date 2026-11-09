@@ -14,7 +14,7 @@ fi
 
 select_workers
 for dir in "${WORKER_DIRS[@]}"; do
-    if pid=$(worker_pid "$dir"); then
+    if pid=$(loop_pid "$dir") || pid=$(worker_pid "$dir"); then
         echo "$(basename -- "$dir") đang chạy (PID $pid); hãy stop trước khi build lại." >&2
         exit 1
     fi

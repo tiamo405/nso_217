@@ -13,6 +13,8 @@ START_DELAY=${UPLEVEL35_START_DELAY:-3}
 SERVER_NAME=${UPLEVEL35_SERVER:-180.93.114.122:14444}
 DEBUG=${UPLEVEL35_DEBUG:-false}
 JAVA_OPTS=${JAVA_OPTS:-}
+# true: mỗi nhân vật một JVM (worker-loop.sh), tránh static của nhân vật trước dính sang nhân vật sau.
+PROCESS_PER_CHARACTER=${UPLEVEL35_PROCESS_PER_CHARACTER:-true}
 
 args=()
 while (( $# > 0 )); do
@@ -39,12 +41,12 @@ for worker_dir in "${WORKER_DIRS[@]}"; do
         completed=$((completed + 1))
         continue
     fi
-    if pid=$(worker_pid "$worker_dir"); then
+    if pid=$(loop_pid "$worker_dir") || pid=$(worker_pid "$worker_dir"); then
         echo "$name đang chạy (PID $pid)"
         running=$((running + 1))
         continue
     fi
-    rm -f -- "$worker_dir/bot.pid"
+    rm -f -- "$worker_dir/bot.pid" "$worker_dir/loop.pid"
     mkdir -p "$worker_dir/home"
     if [[ "${UPLEVEL35_LOG_APPEND:-0}" != 1 ]]; then
         : >"$worker_dir/stdout.log"
@@ -53,7 +55,8 @@ for worker_dir in "${WORKER_DIRS[@]}"; do
     banner="===== START UPLEVEL35 $(date '+%F %T') ====="
     printf '\n%s\n' "$banner" >>"$worker_dir/stdout.log"
     printf '\n%s\n' "$banner" >>"$worker_dir/java-errors.log"
-    nohup "$JAVA_BIN" "-Xms$JAVA_XMS" "-Xmx$JAVA_XMX" \
+    nohup "$SCRIPT_DIR/worker-loop.sh" "$worker_dir" \
+        "$JAVA_BIN" "-Xms$JAVA_XMS" "-Xmx$JAVA_XMX" \
         ${JAVA_OPTS_ARRAY[@]+"${JAVA_OPTS_ARRAY[@]}"} \
         -Dnso.runtime=uplevel35 \
         -Dnso.server="$SERVER_NAME" \
@@ -62,19 +65,20 @@ for worker_dir in "${WORKER_DIRS[@]}"; do
         -Dnso.uplevel35.min="${UPLEVEL35_MIN:-25}" \
         -Dnso.uplevel35.target="${UPLEVEL35_TARGET:-35}" \
         -Dnso.uplevel35.debug="$DEBUG" \
+        -Dnso.process.per.character="$PROCESS_PER_CHARACTER" \
         -Duser.home="$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \
         OptimizedMain \
         >>"$worker_dir/stdout.log" 2>>"$worker_dir/java-errors.log" &
     pid=$!
-    printf '%s\n' "$pid" >"$worker_dir/bot.pid"
-    sleep 0.3
+    printf '%s\n' "$pid" >"$worker_dir/loop.pid"
+    sleep 0.5
     if is_worker_pid "$pid" "$worker_dir"; then
-        echo "Đã chạy $name (PID $pid)"
+        echo "Đã chạy $name (loop PID $pid, java PID $(cat "$worker_dir/bot.pid" 2>/dev/null || echo ?))"
         started=$((started + 1))
     else
         echo "$name khởi động lỗi; xem $worker_dir/java-errors.log" >&2
-        rm -f -- "$worker_dir/bot.pid"
+        rm -f -- "$worker_dir/bot.pid" "$worker_dir/loop.pid"
     fi
     (( START_DELAY == 0 )) || sleep "$START_DELAY"
 done

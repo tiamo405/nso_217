@@ -99,3 +99,17 @@ Patch chỉ nên đụng file mà `optimized-runtime/overrides` **không** ghi �
 (`check-patches.sh` cảnh báo nếu có). Logic mới đặt trong `uplevel35/src/`.
 `UPLEVEL35_KEEP_STAGING=1 ./uplevel35/scripts/build.sh` giữ lại `build/src` đã ghép
 để xem code sau khi patch.
+
+## Mỗi nhân vật một tiến trình (JVM)
+
+Client giữ trạng thái game trong biến `static` (`Char.myChar`, `Auto.fieldAL`, `GameScr.*`...), nên chạy
+nhiều nhân vật trong một JVM làm nhân vật sau kế thừa trạng thái nhân vật trước (đã gặp: nhân vật lv2
+dùng skill của Ninja kiếm lv25 nên đánh bù nhìn không ăn). Vì vậy `start-workers.sh` chạy
+`scripts/worker-loop.sh`, vòng lặp này chạy java với `-Dnso.process.per.character=true`:
+
+- Xong một nhân vật, `AccountAutoManager` ghi tiến độ vào `workers/worker-XX/home/uplevel-progress.properties`
+  (tài khoản, nhân vật, thứ tự danh sách nhân vật) rồi thoát mã 3; vòng lặp chạy JVM mới, JVM mới đọc tiến độ và làm tiếp.
+- Hết tài khoản: ghi `home/worker.done`, xoá file tiến độ, thoát mã 0 → vòng lặp dừng.
+- PID: `loop.pid` = worker-loop.sh, `bot.pid` = java hiện tại. `stop-workers.sh` dừng loop trước rồi tới java.
+- Tắt chế độ này: `UPLEVEL35_PROCESS_PER_CHARACTER=false` (chạy lại kiểu cũ, mọi nhân vật trong một JVM).
+- Chạy lại từ đầu: xoá `home/uplevel-progress.properties` (hoặc build-workers lại).

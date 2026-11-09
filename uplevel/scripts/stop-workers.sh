@@ -27,24 +27,29 @@ else
 fi
 
 stopped=0
-for worker_dir in "${worker_dirs[@]}"; do
-    pid_file="$worker_dir/bot.pid"
-    [[ -f "$pid_file" ]] || continue
-    pid=$(<"$pid_file")
-    if ! is_worker_pid "$pid" "$worker_dir"; then
-        rm -f -- "$pid_file"
-        continue
-    fi
-    echo "Dung $(basename -- "$worker_dir") (PID $pid)"
+stop_pid() {
+    local pid=$1
     kill -TERM "$pid" 2>/dev/null || true
     for _ in {1..20}; do
-        kill -0 "$pid" 2>/dev/null || break
+        kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.2
     done
-    if kill -0 "$pid" 2>/dev/null; then
-        kill -KILL "$pid" 2>/dev/null || true
-    fi
-    rm -f -- "$pid_file"
-    stopped=$((stopped + 1))
+    kill -KILL "$pid" 2>/dev/null || true
+}
+
+for worker_dir in "${worker_dirs[@]}"; do
+    found=0
+    # Dừng worker-loop.sh trước để nó không chạy JVM mới, sau đó dừng java còn sót.
+    for pid_file in "$worker_dir/loop.pid" "$worker_dir/bot.pid"; do
+        [[ -f "$pid_file" ]] || continue
+        pid=$(<"$pid_file")
+        if is_worker_pid "$pid" "$worker_dir"; then
+            echo "Dung $(basename -- "$worker_dir") ($(basename -- "$pid_file" .pid) PID $pid)"
+            stop_pid "$pid"
+            found=1
+        fi
+        rm -f -- "$pid_file"
+    done
+    (( found == 0 )) || stopped=$((stopped + 1))
 done
 echo "Da dung $stopped worker."

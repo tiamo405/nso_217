@@ -26,7 +26,7 @@ if [[ -d "$WORKERS_DIR" ]]; then
             echo "Worker PID $pid van dang chay; hay stop truoc khi build lai." >&2
             exit 1
         fi
-    done < <(find "$WORKERS_DIR" -mindepth 2 -maxdepth 2 -name bot.pid -type f 2>/dev/null || true)
+    done < <(find "$WORKERS_DIR" -mindepth 2 -maxdepth 2 \( -name bot.pid -o -name loop.pid \) -type f 2>/dev/null || true)
 fi
 
 if [[ "$BUILD_UPLEVEL" != 0 ]]; then

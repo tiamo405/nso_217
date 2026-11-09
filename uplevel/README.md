@@ -58,3 +58,17 @@ UPLEVEL_SERVER=180.93.114.122:14444 ./uplevel/scripts/start-workers.sh --mode 1
 Server mặc định nằm trong `src/UpdateServer.java` (hằng `m`, chuỗi Base64 dạng
 `tên:ip:port:login`) và `server_config.py` (web dashboard).
 
+
+## Mỗi nhân vật một tiến trình (JVM)
+
+Client giữ trạng thái game trong biến `static` (`Char.myChar`, `Auto.fieldAL`, `GameScr.*`...), nên chạy
+nhiều nhân vật trong một JVM làm nhân vật sau kế thừa trạng thái nhân vật trước (đã gặp: nhân vật lv2
+dùng skill của Ninja kiếm lv25 nên đánh bù nhìn không ăn). Vì vậy `start-workers.sh` chạy
+`scripts/worker-loop.sh`, vòng lặp này chạy java với `-Dnso.process.per.character=true`:
+
+- Xong một nhân vật, `AccountAutoManager` ghi tiến độ vào `workers/worker-XX/home/uplevel-progress.properties`
+  (tài khoản, nhân vật, thứ tự danh sách nhân vật) rồi thoát mã 3; vòng lặp chạy JVM mới, JVM mới đọc tiến độ và làm tiếp.
+- Hết tài khoản: ghi `home/worker.done`, xoá file tiến độ, thoát mã 0 → vòng lặp dừng.
+- PID: `loop.pid` = worker-loop.sh, `bot.pid` = java hiện tại. `stop-workers.sh` dừng loop trước rồi tới java.
+- Tắt chế độ này: `UPLEVEL_PROCESS_PER_CHARACTER=false` (chạy lại kiểu cũ, mọi nhân vật trong một JVM).
+- Chạy lại từ đầu: xoá `home/uplevel-progress.properties` (hoặc build-workers lại).

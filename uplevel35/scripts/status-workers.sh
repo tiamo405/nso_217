@@ -13,6 +13,8 @@ for dir in "${WORKER_DIRS[@]}"; do
     elif pid=$(worker_pid "$dir"); then
         rss=$(awk '/VmRSS/ {printf "%dMB", $2/1024}' "/proc/$pid/status" 2>/dev/null || echo "?")
         status="RUN pid=$pid rss=$rss"
+    elif pid=$(loop_pid "$dir"); then
+        status="RUN loop=$pid (đổi JVM)"
     else
         status="STOP"
     fi

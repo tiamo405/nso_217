@@ -48,3 +48,12 @@ worker_pid() {
     is_worker_pid "$pid" "$worker_dir" || return 1
     printf '%s' "$pid"
 }
+
+# PID của worker-loop.sh (chạy lại JVM cho từng nhân vật); cmdline của nó chứa luôn tham số java.
+loop_pid() {
+    local worker_dir=$1 pid
+    [[ -f "$worker_dir/loop.pid" ]] || return 1
+    pid=$(<"$worker_dir/loop.pid")
+    is_worker_pid "$pid" "$worker_dir" || return 1
+    printf '%s' "$pid"
+}

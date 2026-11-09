@@ -20,6 +20,12 @@ public final class AccountAutoManager implements Runnable {
     private static String[] characterNames;
     private static boolean enabled;
     private static boolean started;
+    /** -Dnso.process.per.character=true: mỗi nhân vật chạy trong một JVM riêng (scripts/worker-loop.sh). */
+    private static final boolean PROCESS_PER_CHARACTER = Boolean.getBoolean("nso.process.per.character");
+    /** Mã thoát báo worker-loop.sh chạy tiến trình mới cho nhân vật/tài khoản tiếp theo. */
+    private static final int HANDOFF_EXIT_CODE = 3;
+    private static final String PROGRESS_FILE = "uplevel-progress.properties";
+    private static boolean playedInThisProcess;
     private static boolean switching;
     private static boolean waitingForGame;
     private static volatile boolean waitingForCharacters;
@@ -51,6 +57,7 @@ public final class AccountAutoManager implements Runnable {
         accountIndex = 0;
         characterIndex = 0;
         characterNames = null;
+        restoreProgress();
         switching = true;
         reconnecting = false;
         disconnectRetryCount = 0;
@@ -268,6 +275,7 @@ public final class AccountAutoManager implements Runnable {
         reconnecting = false;
         disconnectRetryCount = 0;
         waitingForGame = false;
+        playedInThisProcess = true;
         BotMetrics.event("game_ready", me.nClass == null ? "" : String.valueOf(me.nClass.classId), me.clevel);
         int mode = Integer.getInteger("nso.as20.mode", 0);
         if (mode < 1 || mode > 6) {
@@ -285,8 +293,43 @@ public final class AccountAutoManager implements Runnable {
                     + (lastAs20StateKey == null ? "" : " (previous " + lastAs20StateKey + ")"));
             lastAs20StateKey = stateKey;
         }
+        ensureOwnSkill(me);
         startProgressMonitor(me);
         Code.fieldAA((Auto) new As20(mode));
+    }
+
+    /**
+     * Char.myChar được giữ nguyên giữa các tài khoản trong cùng JVM (AccountAutoManager chặn
+     * Controller.fieldAD -> GameCanvas.gameAN nên Char.gameAE() không chạy), và gói -127 chỉ gán
+     * myskill khi đang null. Vì vậy nhân vật mới kế thừa skill của nhân vật trước (vd Ninja kiếm lv25)
+     * -> As20 gửi selectSkill/attack bằng skill không sở hữu, server bỏ qua và bot đứng yên.
+     */
+    private static void ensureOwnSkill(Char me) {
+        Skill current = me.myskill;
+        Skill fallback = null;
+        for (int i = 0; me.vSkill != null && i < me.vSkill.size(); i++) {
+            Skill s = (Skill) me.vSkill.elementAt(i);
+            if (s == null || s.template == null) {
+                continue;
+            }
+            if (current != null && current.template != null && s.template.id == current.template.id) {
+                me.myskill = s;
+                return;
+            }
+            boolean usable = s.template.maxPoint == 0 || s.point > 0;
+            if (usable && (fallback == null || (fallback.template.type != 1 && s.template.type == 1))) {
+                fallback = s;
+            }
+        }
+        me.myskill = fallback;
+        Auto.fieldAL = fallback;
+        if (fallback != null) {
+            Service.gI().selectSkill(fallback.template.id);
+        }
+        System.out.println("AUTO AS20: skill cũ "
+                + (current == null || current.template == null ? "none" : current.template.name + "#" + current.template.id)
+                + " không thuộc nhân vật " + me.cName + ", chọn "
+                + (fallback == null ? "none" : fallback.template.name + "#" + fallback.template.id));
     }
 
     private static void startProgressMonitor(final Char monitored) {
@@ -849,6 +892,9 @@ public final class AccountAutoManager implements Runnable {
             characterIndex++;
         }
         if (characterNames != null && characterIndex < characterNames.length) {
+            if (handoffToNextProcess()) {
+                return;
+            }
             loginCurrentAccount();
         } else {
             nextAccount();
@@ -871,7 +917,132 @@ public final class AccountAutoManager implements Runnable {
         characterNames = null;
         connectRetryCount = 0;
         switching = true;
+        if (handoffToNextProcess()) {
+            return;
+        }
         loginCurrentAccount();
+    }
+
+    /**
+     * Static của client (Char.myChar, Auto.fieldAL, GameScr.*, Code.*...) sống suốt JVM, nên chạy
+     * nhiều nhân vật trong một JVM làm nhân vật sau kế thừa trạng thái nhân vật trước. Ở chế độ
+     * PROCESS_PER_CHARACTER, sau khi một nhân vật đã vào game, ta ghi tiến độ rồi thoát với mã 3;
+     * worker-loop.sh chạy JVM mới và restoreProgress() tiếp tục đúng vị trí.
+     */
+    private static boolean handoffToNextProcess() {
+        if (!PROCESS_PER_CHARACTER || !playedInThisProcess || accountIndex >= usernames.size()) {
+            return false;
+        }
+        if (!saveProgress()) {
+            System.out.println("AUTO NVHN: không ghi được tiến độ, tiếp tục trong tiến trình hiện tại.");
+            return false;
+        }
+        System.out.println("AUTO NVHN: chuyển sang tiến trình mới cho tài khoản "
+                + usernames.elementAt(accountIndex) + " (" + (accountIndex + 1) + "/" + usernames.size()
+                + ") nhân vật #" + (characterIndex + 1));
+        enabled = false;
+        try {
+            Session_ME.gI().gameAC();
+        } catch (Exception ignored) {
+        }
+        sleep(500L);
+        System.exit(HANDOFF_EXIT_CODE);
+        return true;
+    }
+
+    private static File progressFile() {
+        String userHome = System.getProperty("user.home");
+        return userHome == null || userHome.length() == 0 ? null : new File(userHome, PROGRESS_FILE);
+    }
+
+    private static boolean saveProgress() {
+        File file = progressFile();
+        if (file == null) {
+            return false;
+        }
+        java.util.Properties p = new java.util.Properties();
+        p.setProperty("account", (String) usernames.elementAt(accountIndex));
+        p.setProperty("accountIndex", String.valueOf(accountIndex));
+        p.setProperty("characterIndex", String.valueOf(characterIndex));
+        int count = characterNames == null ? 0 : characterNames.length;
+        p.setProperty("characterCount", String.valueOf(count));
+        for (int i = 0; i < count; i++) {
+            p.setProperty("character." + i, characterNames[i] == null ? "" : characterNames[i]);
+        }
+        File tmp = new File(file.getPath() + ".tmp");
+        FileOutputStream output = null;
+        try {
+            output = new FileOutputStream(tmp);
+            p.store(output, "uplevel progress");
+            output.getFD().sync();
+            output.close();
+            output = null;
+            return tmp.renameTo(file) || (file.delete() && tmp.renameTo(file));
+        } catch (Exception ex) {
+            System.out.println("AUTO NVHN: lỗi ghi tiến độ: " + ex.toString());
+            return false;
+        } finally {
+            try {
+                if (output != null) {
+                    output.close();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static void restoreProgress() {
+        if (!PROCESS_PER_CHARACTER) {
+            return;
+        }
+        File file = progressFile();
+        if (file == null || !file.isFile()) {
+            return;
+        }
+        java.util.Properties p = new java.util.Properties();
+        java.io.FileInputStream input = null;
+        try {
+            input = new java.io.FileInputStream(file);
+            p.load(input);
+            int savedAccount = Integer.parseInt(p.getProperty("accountIndex", "-1"));
+            String savedUser = p.getProperty("account", "");
+            if (savedAccount < 0 || savedAccount >= usernames.size()
+                    || !savedUser.equals(usernames.elementAt(savedAccount))) {
+                System.out.println("AUTO NVHN: file tiến độ không khớp account.csv, chạy lại từ đầu.");
+                return;
+            }
+            int count = Integer.parseInt(p.getProperty("characterCount", "0"));
+            accountIndex = savedAccount;
+            characterIndex = Math.max(0, Integer.parseInt(p.getProperty("characterIndex", "0")));
+            characterNames = null;
+            if (count > 0) {
+                characterNames = new String[count];
+                for (int i = 0; i < count; i++) {
+                    characterNames[i] = p.getProperty("character." + i, "");
+                }
+            }
+            System.out.println("AUTO NVHN: tiếp tục từ tiến trình trước: tài khoản " + savedUser
+                    + " (" + (accountIndex + 1) + "/" + usernames.size() + ") nhân vật #" + (characterIndex + 1));
+        } catch (Exception ex) {
+            System.out.println("AUTO NVHN: lỗi đọc tiến độ, chạy lại từ đầu: " + ex.toString());
+            accountIndex = 0;
+            characterIndex = 0;
+            characterNames = null;
+        } finally {
+            try {
+                if (input != null) {
+                    input.close();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private static void deleteProgress() {
+        File file = progressFile();
+        if (file != null && file.isFile() && !file.delete()) {
+            System.out.println("AUTO NVHN: không xoá được " + file);
+        }
     }
 
     private static void finishAll() {
@@ -881,6 +1052,7 @@ public final class AccountAutoManager implements Runnable {
         reconnecting = false;
         System.out.println("AUTO NVHN: đã xử lý hết toàn bộ tài khoản và nhân vật, dừng worker.");
         markWorkerCompleted();
+        deleteProgress();
         Session_ME.gI().gameAC();
         sleep(500L);
         if (GameMidlet.instance != null) {
