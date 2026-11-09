@@ -23,3 +23,4 @@ Ninja-School-Mobile-4.1.1/
 python-worker/dist_py/
 optimized-runtime/run/*
 proxy-tk.txt
+gen_acc.py
