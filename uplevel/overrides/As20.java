@@ -34,6 +34,12 @@ public class As20 extends As10 {
    private static final int UplevelTask17FightRadius = 100;
    private int fieldAV;
    private boolean uplevelTask13WeaponEquipped;
+   // Nhiệm vụ 12 (nâng cấp trang bị): dùng Lệnh bài hoàn thành (nhận từ giftcode) để xong ngay.
+   private static final int UplevelTask12TokenId = 663;
+   private static final long UplevelTask12TokenWaitMs = 15000L;
+   private boolean uplevelTask12TokenUsed;
+   private boolean uplevelTask12TokenFallbackLogged;
+   private long uplevelTask12TokenSentAt;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
    private boolean uplevelTeacherHpBuyPending;
@@ -994,6 +1000,37 @@ public class As20 extends As10 {
       return item;
    }
 
+   // true: đang xử lý bằng lệnh bài, bỏ qua logic nâng cấp. false: không có lệnh bài/hết chờ -> nâng cấp như cũ.
+   private boolean useUplevelTask12Token(Char me) {
+      long now = System.currentTimeMillis();
+      if (this.uplevelTask12TokenUsed) {
+         if (now - this.uplevelTask12TokenSentAt < UplevelTask12TokenWaitMs) {
+            return true;
+         }
+         if (!this.uplevelTask12TokenFallbackLogged) {
+            this.uplevelTask12TokenFallbackLogged = true;
+            System.out.println("UPLEVEL TASK12 token no effect after " + UplevelTask12TokenWaitMs
+                  + "ms index=" + me.taskMaint.index + "; fallback upgrade");
+         }
+         return false;
+      }
+      Item token = this.findUplevelItem(me.arrItemBag, UplevelTask12TokenId);
+      if (token == null) {
+         if (!this.uplevelTask12TokenFallbackLogged) {
+            this.uplevelTask12TokenFallbackLogged = true;
+            System.out.println("UPLEVEL TASK12 token id=" + UplevelTask12TokenId
+                  + " not in bag; fallback upgrade");
+         }
+         return false;
+      }
+      Service.gI().useItem(token.indexUI);
+      this.uplevelTask12TokenUsed = true;
+      this.uplevelTask12TokenSentAt = now;
+      System.out.println("UPLEVEL TASK12 use token slot=" + token.indexUI + " id=" + token.template.id
+            + " quantity=" + token.quantity + " index=" + me.taskMaint.index);
+      return true;
+   }
+
    private Item findUplevelItem(Item[] items, int templateId) {
       if (items == null) {
          return null;
@@ -1539,6 +1576,9 @@ public class As20 extends As10 {
             }
             break;
          case 12:
+            if (this.useUplevelTask12Token(var1)) {
+               return;
+            }
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 3) {
                   this.fieldAC(-1);
