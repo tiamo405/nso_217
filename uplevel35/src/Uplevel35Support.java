@@ -207,6 +207,10 @@ final class Uplevel35Support {
                 return true;
             }
             if (GameScr.fieldAI(GOOSHO_NPC) == null && TileMap.mapID != OKAZA_MAP) {
+                if (!this.bot.canTravelForSupplies()) {
+                    Uplevel35.logEvery("mushroom-hold", 60000L, "MUSHROOM hết nhưng đang ở map ẩn " + TileMap.mapID + ", mua sau");
+                    return true;
+                }
                 Uplevel35.logEvery("mushroom-route", 5000L, "MUSHROOM đi map " + TileMap.mapID + " -> " + OKAZA_MAP);
                 this.bot.goMap(OKAZA_MAP);
                 return false;
@@ -302,6 +306,9 @@ final class Uplevel35Support {
         }
         if (hat == null) {
             if (TileMap.mapID != OKAZA_MAP) {
+                if (!this.bot.canTravelForSupplies()) {
+                    return true;
+                }
                 Uplevel35.logEvery("noel-route", 5000L, "NOEL đi map " + TileMap.mapID + " -> " + OKAZA_MAP);
                 this.bot.goMap(OKAZA_MAP);
                 return false;
@@ -426,6 +433,11 @@ final class Uplevel35Support {
 
         int school = schoolMap(me);
         if (TileMap.mapID != school) {
+            if (!this.bot.canTravelForSupplies()) {
+                Uplevel35.logEvery("food-hold", 60000L, "FOOD hết thức ăn level=" + level
+                        + " nhưng đang ở map ẩn " + TileMap.mapID + ", mua sau khi ra");
+                return true;
+            }
             Uplevel35.logEvery("food-route", 5000L, "FOOD về trường map " + TileMap.mapID + " -> " + school);
             this.bot.goMap(school);
             return false;

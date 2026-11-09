@@ -124,6 +124,12 @@ public class As35 extends Auto {
         handler.tick(this, me, task);
     }
 
+    /** Được rời map hiện tại để đi mua đồ buff không (false khi đang ở map ẩn của nhiệm vụ). */
+    boolean canTravelForSupplies() {
+        Uplevel35Task handler = findTask(Char.getMyChar().ctaskId);
+        return handler == null || handler.canLeaveMap(TileMap.mapID);
+    }
+
     private static Uplevel35Task findTask(int taskId) {
         for (int i = 0; i < TASKS.length; i++) {
             if (TASKS[i].taskId() == taskId) {

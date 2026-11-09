@@ -20,6 +20,14 @@ abstract class Uplevel35Task {
      */
     abstract void tick(As35 bot, Char me, Task task);
 
+    /**
+     * Có được rời map hiện tại để đi mua thức ăn / Nấm / Mũ Noel không. Map ẩn (vào bằng NPC
+     * hoặc chìa khóa) không có trong đồ thị đường đi: rời đi sẽ kẹt -> đăng nhập lại -> mất tiến độ.
+     */
+    boolean canLeaveMap(int mapId) {
+        return true;
+    }
+
     /** Reset trạng thái nội bộ khi nhận nhiệm vụ mới / đăng nhập lại. */
     void reset() {
     }

@@ -22,7 +22,7 @@ final class TaskMatsurugi35 extends Uplevel35Task {
     static final int NPC_MATSURUGI = 23;
     /** Ghi đè id chìa khóa / map ẩn / vật phẩm nếu tự học sai. */
     static final int KEY_ID = Integer.getInteger("nso.uplevel35.m35.key", -1).intValue();
-    static final int HIDDEN_MAP = Integer.getInteger("nso.uplevel35.m35.hidden", -1).intValue();
+    static final int HIDDEN_MAP = Integer.getInteger("nso.uplevel35.m35.hidden", 78).intValue();
     static final int LOOT_ID = Integer.getInteger("nso.uplevel35.m35.loot", -1).intValue();
     /** Chìa khóa thu thập ở nhiệm vụ 22 / chìa khóa may mắn: không phải chìa mở cửa. */
     private static final int KEY_COLLECT_ID = 230;
@@ -39,6 +39,10 @@ final class TaskMatsurugi35 extends Uplevel35Task {
     private int keyUses;
     private long npcTalkAt;
     private boolean bagLogged;
+
+    boolean canLeaveMap(int mapId) {
+        return mapId != this.hiddenMap;
+    }
 
     int taskId() {
         return TASK_ID;

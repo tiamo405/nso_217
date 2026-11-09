@@ -23,6 +23,10 @@ final class TaskBaRei29 extends Uplevel35Task implements As35.NpcMessageListener
     private int talks;
     private int lastMap = -1;
 
+    boolean canLeaveMap(int mapId) {
+        return mapId != this.hiddenMap;
+    }
+
     int taskId() {
         return TASK_ID;
     }
