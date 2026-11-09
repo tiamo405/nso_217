@@ -44,6 +44,7 @@ public class As35 extends Auto {
 
     public As35() {
         super.fieldAD();
+        UplevelStatus.start("UPLEVEL35", "uplevel35");
     }
 
     public String toString() {

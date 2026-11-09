@@ -72,3 +72,7 @@ dùng skill của Ninja kiếm lv25 nên đánh bù nhìn không ăn). Vì vậy
 - PID: `loop.pid` = worker-loop.sh, `bot.pid` = java hiện tại. `stop-workers.sh` dừng loop trước rồi tới java.
 - Tắt chế độ này: `UPLEVEL_PROCESS_PER_CHARACTER=false` (chạy lại kiểu cũ, mọi nhân vật trong một JVM).
 - Chạy lại từ đầu: xoá `home/uplevel-progress.properties` (hoặc build-workers lại).
+
+## Web monitor
+
+Xem trạng thái mọi worker (lv, exp, hành trang, lượng/xu/yên, CPU, heartbeat): `./uplevel_monitor/run.sh` → http://127.0.0.1:8090. Chi tiết: `uplevel_monitor/README.md`.

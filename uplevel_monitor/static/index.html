@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uplevel Monitor</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0a0e14; --panel: #111823; --panel-2: #172130; --line: #253247;
+  --text: #edf4ff; --muted: #8fa1b8; --accent: #57d7a2; --danger: #ff6b78; --warning: #f1bd57; --info: #6cb6ff;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at top right, #142337 0, var(--bg) 38%); color: var(--text); min-height: 100vh; }
+.shell { width: min(1800px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 48px; }
+.topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+h1 { margin: 0; letter-spacing: -.03em; font-size: 1.6rem; }
+.eyebrow { color: var(--accent); font-size: .72rem; letter-spacing: .14em; font-weight: 800; margin: 0 0 .3rem; }
+.muted { color: var(--muted); }
+.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button, select, input { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: .45rem .75rem; }
+button { cursor: pointer; font-weight: 600; }
+button.active { background: var(--accent); color: #07130f; border-color: var(--accent); }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.card span { color: var(--muted); font-size: .8rem; display: block; }
+.card strong { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: .86rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; position: sticky; top: 0; background: var(--panel); cursor: pointer; user-select: none; }
+td.num, th.num { text-align: right; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel-2); }
+tbody tr.selected { background: #1a2b40; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+.s-running { background: #133a30; color: var(--accent); }
+.s-switching { background: #1b2d45; color: var(--info); }
+.s-done { background: #2a2540; color: #b9a8ff; }
+.s-stopped { background: #34171d; color: #ffabb2; }
+.rt { color: var(--muted); font-size: .75rem; }
+.ok { color: var(--accent); } .warn { color: var(--warning); } .bad { color: var(--danger); font-weight: 700; }
+.bar { width: 110px; height: 6px; background: #0b111b; border-radius: 4px; overflow: hidden; margin-top: 3px; }
+.bar > i { display: block; height: 100%; background: var(--accent); }
+.sub { color: var(--muted); font-size: .74rem; }
+.empty { padding: 30px; text-align: center; color: var(--muted); }
+.log-panel { margin-top: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+.log-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+pre { margin: 0; max-height: 460px; overflow: auto; background: #070b11; border-radius: 8px; padding: 10px; font-size: .78rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all; }
+.legend { margin-top: 8px; font-size: .78rem; }
+@media (max-width: 640px) { .shell { width: calc(100% - 32px); } h1 { font-size: 1.3rem; } }
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">NSO UPLEVEL · CHỈ XEM</p>
+      <h1>Uplevel Monitor</h1>
+    </div>
+    <div class="controls">
+      <button data-rt="all" class="active">Tất cả</button>
+      <button data-rt="uplevel">uplevel</button>
+      <button data-rt="uplevel35">uplevel35</button>
+      <label class="muted">Cảnh báo sau
+        <select id="stale-sec">
+          <option value="60">1 phút</option>
+          <option value="120" selected>2 phút</option>
+          <option value="300">5 phút</option>
+          <option value="600">10 phút</option>
+        </select>
+      </label>
+      <span id="refresh-info" class="muted"></span>
+    </div>
+  </header>
+
+  <section class="summary" id="summary"></section>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="worker">Worker</th>
+          <th data-sort="state">Trạng thái</th>
+          <th data-sort="account">Account</th>
+          <th data-sort="name">Ingame</th>
+          <th data-sort="level" class="num">Lv</th>
+          <th data-sort="exp_pct">Exp / cần lên cấp</th>
+          <th data-sort="bag_free" class="num">Ô trống</th>
+          <th data-sort="luong" class="num">Lượng</th>
+          <th data-sort="xu" class="num">Xu</th>
+          <th data-sort="yen" class="num">Yên</th>
+          <th data-sort="map">Map · Task</th>
+          <th data-sort="cpu" class="num">CPU</th>
+          <th data-sort="rss_mb" class="num">RAM</th>
+          <th data-sort="log_mtime">Log cuối</th>
+          <th data-sort="updated_at">Heartbeat</th>
+          <th data-sort="progress_at">Tiến triển</th>
+        </tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="16" class="empty">Đang tải…</td></tr></tbody>
+    </table>
+  </div>
+  <p class="legend muted">
+    <b>Log cuối</b>: lần cuối stdout.log được ghi ·
+    <b>Heartbeat</b>: lần cuối bot ghi status.properties (5 giây/lần; trễ = JVM treo hoặc đã chết) ·
+    <b>Tiến triển</b>: lần cuối exp/level/nhiệm vụ/map thay đổi (trễ = bot sống nhưng đứng yên).
+    CPU tính theo % của một core. Bấm một dòng để xem log.
+  </p>
+
+  <section class="log-panel" id="log-panel" hidden>
+    <div class="log-head">
+      <strong id="log-title"></strong>
+      <div class="controls">
+        <select id="log-kind"><option value="stdout">stdout.log</option><option value="error">java-errors.log</option></select>
+        <input id="log-filter" placeholder="Lọc (vd STATUS)" size="16">
+        <label class="muted"><input type="checkbox" id="log-follow" checked> Tự cuộn</label>
+        <button id="log-close">Đóng</button>
+      </div>
+    </div>
+    <pre id="log-body"></pre>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let runtimeFilter = localGet("rt") || "all";
+let sortKey = "worker", sortDir = 1;
+let selected = null;
+let lastData = null;
+
+function localGet(k) { try { return localStorage.getItem("uplevel-monitor." + k); } catch { return null; } }
+function localSet(k, v) { try { localStorage.setItem("uplevel-monitor." + k, v); } catch {} }
+
+const fmt = new Intl.NumberFormat("vi-VN");
+const num = (v) => (v === null || v === undefined || v < 0) ? "—" : fmt.format(v);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+
+function ago(ts, now) {
+  if (!ts) return {text: "—", age: null};
+  const s = Math.max(0, Math.round(now - ts));
+  let text;
+  if (s < 60) text = s + " giây";
+  else if (s < 3600) text = Math.floor(s / 60) + " phút " + (s % 60) + "s";
+  else text = Math.floor(s / 3600) + " giờ " + Math.floor(s % 3600 / 60) + "p";
+  return {text: text + " trước", age: s};
+}
+function clock(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString("vi-VN", {hour12: false}) + " " + d.toLocaleDateString("vi-VN", {day: "2-digit", month: "2-digit"});
+}
+function ageCell(ts, now, live, staleSec) {
+  const a = ago(ts, now);
+  let cls = "muted";
+  if (a.age !== null && live) cls = a.age > staleSec ? "bad" : a.age > staleSec / 2 ? "warn" : "ok";
+  return `<span class="${cls}">${a.text}</span><div class="sub">${clock(ts)}</div>`;
+}
+
+const STATE_LABEL = {running: "Đang chạy", switching: "Đổi JVM", done: "Xong", stopped: "Dừng"};
+
+function render() {
+  if (!lastData) return;
+  const now = lastData.now;
+  const staleSec = Number($("stale-sec").value);
+  let rows = lastData.workers.filter((w) => runtimeFilter === "all" || w.runtime === runtimeFilter);
+  rows.forEach((w) => {
+    w.exp_pct = w.exp_need > 0 && w.exp >= 0 ? w.exp / w.exp_need : -1;
+    const live = w.state === "running";
+    w.hb_bad = live && (!w.updated_at || now - w.updated_at > staleSec);
+    w.progress_bad = live && w.progress_at && now - w.progress_at > staleSec;
+    w.log_bad = live && (!w.log_mtime || now - w.log_mtime > staleSec);
+  });
+  rows.sort((a, b) => {
+    const x = sortKey === "worker" ? a.runtime + a.worker : a[sortKey];
+    const y = sortKey === "worker" ? b.runtime + b.worker : b[sortKey];
+    if (x === y) return 0;
+    if (x === null || x === undefined) return 1;
+    if (y === null || y === undefined) return -1;
+    return (x > y ? 1 : -1) * sortDir;
+  });
+
+  const all = lastData.workers.filter((w) => runtimeFilter === "all" || w.runtime === runtimeFilter);
+  const count = (st) => all.filter((w) => w.state === st).length;
+  const cpuSum = all.reduce((s, w) => s + (w.cpu || 0), 0);
+  const ramSum = all.reduce((s, w) => s + (w.rss_mb || 0), 0);
+  const stalled = all.filter((w) => w.hb_bad || w.log_bad || w.progress_bad).length;
+  $("summary").innerHTML = [
+    ["Đang chạy", count("running") + count("switching")],
+    ["Dừng", count("stopped")],
+    ["Xong", count("done")],
+    ["Nghi bị ngắt / đứng", stalled],
+    ["Tổng CPU", cpuSum.toFixed(0) + "%"],
+    ["Tổng RAM", fmt.format(Math.round(ramSum)) + " MB"],
+  ].map(([k, v]) => `<div class="card"><span>${k}</span><strong class="${k.startsWith("Nghi") && v > 0 ? "bad" : ""}">${v}</strong></div>`).join("");
+
+  if (!rows.length) {
+    $("rows").innerHTML = `<tr><td colspan="16" class="empty">Chưa có worker nào trong uplevel/workers hoặc uplevel35/workers.</td></tr>`;
+    return;
+  }
+  $("rows").innerHTML = rows.map((w) => {
+    const key = w.runtime + "/" + w.worker;
+    const live = w.state === "running";
+    const pct = w.exp_pct >= 0 ? Math.min(100, w.exp_pct * 100) : 0;
+    const exp = w.exp_need > 0
+      ? `${num(w.exp)} / ${num(w.exp_need)} <span class="sub">(${pct.toFixed(1)}%)</span><div class="bar"><i style="width:${pct}%"></i></div>`
+      : num(w.exp);
+    const bag = w.bag_total > 0
+      ? `<span class="${w.bag_free <= 2 ? "bad" : w.bag_free <= 5 ? "warn" : ""}">${w.bag_free}</span><span class="sub">/${w.bag_total}</span>` : "—";
+    const acc = esc(w.account) + (w.account_total ? `<div class="sub">${w.account_index ?? "?"}/${w.account_total}</div>` : "");
+    const phase = live && w.phase === "login" ? `<div class="sub">đang đăng nhập</div>` : "";
+    const src = w.source === "log" ? `<div class="sub warn" title="Build cũ chưa có status.properties; đọc dòng STATE trong log">từ log</div>` : "";
+    return `<tr data-key="${esc(key)}" class="${selected === key ? "selected" : ""}">
+      <td>${esc(w.worker)}<div class="rt">${esc(w.runtime)}</div></td>
+      <td><span class="pill s-${w.state}">${STATE_LABEL[w.state] || w.state}</span>${phase}${src}</td>
+      <td>${acc}</td>
+      <td>${esc(w.name)}<div class="sub">HP ${esc(w.hp)}</div></td>
+      <td class="num">${w.level ?? "—"}</td>
+      <td>${exp}</td>
+      <td class="num">${bag}</td>
+      <td class="num">${num(w.luong)}</td>
+      <td class="num">${num(w.xu)}</td>
+      <td class="num">${num(w.yen)}</td>
+      <td>${esc(w.map)}${w.map_name && w.map_name !== "-" ? ` <span class="sub">${esc(w.map_name)}</span>` : ""}<div class="sub">task ${esc(w.task)}</div></td>
+      <td class="num">${w.cpu === null ? "—" : w.cpu.toFixed(1) + "%"}</td>
+      <td class="num">${w.rss_mb === null ? "—" : Math.round(w.rss_mb) + " MB"}</td>
+      <td>${ageCell(w.log_mtime, now, live, staleSec)}</td>
+      <td>${ageCell(w.updated_at, now, live, staleSec)}</td>
+      <td>${ageCell(w.progress_at, now, live, staleSec)}</td>
+    </tr>`;
+  }).join("");
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/workers", {cache: "no-store"});
+    lastData = await res.json();
+    $("refresh-info").textContent = "Cập nhật " + new Date().toLocaleTimeString("vi-VN", {hour12: false});
+    render();
+  } catch (e) {
+    $("refresh-info").innerHTML = `<span class="bad">Mất kết nối monitor</span>`;
+  }
+}
+
+async function loadLog() {
+  if (!selected) return;
+  const [runtime, worker] = selected.split("/");
+  const kind = $("log-kind").value;
+  try {
+    const res = await fetch(`/api/log?runtime=${runtime}&worker=${worker}&kind=${kind}&lines=400`, {cache: "no-store"});
+    const data = await res.json();
+    const f = $("log-filter").value.trim().toLowerCase();
+    let text = data.content || "";
+    if (f) text = text.split("\n").filter((l) => l.toLowerCase().includes(f)).join("\n");
+    const pre = $("log-body");
+    pre.textContent = text || "(trống)";
+    if ($("log-follow").checked) pre.scrollTop = pre.scrollHeight;
+  } catch {}
+}
+
+document.querySelectorAll("[data-rt]").forEach((b) => {
+  b.classList.toggle("active", b.dataset.rt === runtimeFilter);
+  b.onclick = () => {
+    runtimeFilter = b.dataset.rt; localSet("rt", runtimeFilter);
+    document.querySelectorAll("[data-rt]").forEach((x) => x.classList.toggle("active", x === b));
+    render();
+  };
+});
+document.querySelectorAll("th[data-sort]").forEach((th) => th.onclick = () => {
+  const k = th.dataset.sort;
+  sortDir = sortKey === k ? -sortDir : 1; sortKey = k; render();
+});
+$("rows").onclick = (e) => {
+  const tr = e.target.closest("tr[data-key]");
+  if (!tr) return;
+  selected = tr.dataset.key;
+  $("log-panel").hidden = false;
+  $("log-title").textContent = "Log " + selected;
+  render(); loadLog();
+};
+$("log-close").onclick = () => { selected = null; $("log-panel").hidden = true; render(); };
+$("log-kind").onchange = loadLog;
+$("log-filter").oninput = loadLog;
+$("stale-sec").onchange = render;
+
+refresh(); setInterval(refresh, 3000); setInterval(loadLog, 3000);
+</script>
+</body>
+</html>

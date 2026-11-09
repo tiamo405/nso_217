@@ -333,6 +333,7 @@ public final class AccountAutoManager implements Runnable {
     }
 
     private static void startProgressMonitor(final Char monitored) {
+        UplevelStatus.start("UPLEVEL", "uplevel");
         final int generation = ++progressMonitorGeneration;
         lastProgressSnapshot = "";
         lastProgressLog = 0L;
@@ -452,18 +453,14 @@ public final class AccountAutoManager implements Runnable {
                     .append('#').append(focus.templateId).append(" lv=").append(focus.level)
                     .append(" hp=").append(focus.hp).append('/').append(focus.maxHp);
         }
-        out.append(" alive=[");
-        int added = 0;
-        for (int i = 0; i < GameScr.vMob.size() && added < 6; i++) {
+        // Chỉ đếm quái còn sống; danh sách đầy đủ làm dòng log quá dài.
+        int alive = 0;
+        for (int i = 0; i < GameScr.vMob.size(); i++) {
             Mob mob = (Mob) GameScr.vMob.elementAt(i);
             if (mob == null || mob.hp <= 0 || mob.status == 0 || mob.status == 1) continue;
-            if (added++ > 0) out.append(',');
-            MobTemplate template = mob.getTemplate();
-            out.append(template == null ? "unknown" : logSafe(template.name))
-                    .append('#').append(mob.templateId).append(" lv=").append(mob.level)
-                    .append(" hp=").append(mob.hp).append('/').append(mob.maxHp);
+            alive++;
         }
-        return out.append(']').toString();
+        return out.append(" alive=").append(alive).append('/').append(GameScr.vMob.size()).toString();
     }
 
     private static String menuItems() {

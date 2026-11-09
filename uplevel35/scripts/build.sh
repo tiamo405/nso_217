@@ -73,6 +73,8 @@ while IFS= read -r -d '' java_file; do
     fi
     cp -- "$java_file" "$WORK_SRC_DIR/$name"
 done < <(find "$RUNTIME_DIR/src" -name '*.java' -print0)
+# Status cho web monitor: dùng chung một file với uplevel (chỉ đọc).
+cp -- "$REPO_DIR/uplevel/overrides/UplevelStatus.java" "$WORK_SRC_DIR/UplevelStatus.java"
 
 # JVM desktop cần lookup resource theo class (giống optimized-runtime/build-optimized.sh).
 sed -i 's#"".getClass().getResourceAsStream("/map/" + var1)#TileMap.class.getResourceAsStream("/map/" + var1)#g' "$WORK_SRC_DIR/TileMap.java"
