@@ -153,14 +153,17 @@ replacement = '''   private static int uplevelShopTarget = -1;
 
    private boolean uplevelPrepareShop(Char me, int target) {
       if (me.taskMaint.index != 2 && me.taskMaint.index != 3) return false;
+      return uplevelPrepareShop(me, target, me.taskMaint.index == 2 ? 19 : (me.cgender == 1 ? 28 : 29),
+              me.taskMaint.index == 2 ? 2 : 1, me.taskMaint.index == 2 ? 4 : 5);
+   }
+
+   // Mua 1 món target ở NPC npc (map 27), cửa hàng type. true = đang xử lý, false = đã có trong hành trang.
+   private boolean uplevelPrepareShop(Char me, int target, int type, int npc, int option) {
       if (Char.fieldAF(target) != null) {
          uplevelShopReset();
          return false;
       }
 
-      int type = me.taskMaint.index == 2 ? 19 : (me.cgender == 1 ? 28 : 29);
-      int npc = me.taskMaint.index == 2 ? 2 : 1;
-      int option = me.taskMaint.index == 2 ? 4 : 5;
       if (uplevelShopTarget != target || uplevelShopType != type) {
          uplevelShopReset();
          uplevelShopTarget = target;
@@ -624,6 +627,7 @@ replacement = '''   private static boolean uplevelGiftStarted;
    }
 
    static void uplevelGiftServerMessage(String message) {
+      uplevelTask12Message(message);
       if (uplevelGiftStarted && uplevelGiftCodeSent && uplevelGiftMessage(message)) {
          uplevelGiftMessageSeen = true;
          System.out.println("UPLEVEL GIFT server=[" + message + "]");
