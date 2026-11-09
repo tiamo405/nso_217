@@ -26,10 +26,14 @@ final class TaskMatsurugi35 extends Uplevel35Task {
     static final int LOOT_ID = Integer.getInteger("nso.uplevel35.m35.loot", -1).intValue();
     /** Chìa khóa thu thập ở nhiệm vụ 22 / chìa khóa may mắn: không phải chìa mở cửa. */
     private static final int KEY_COLLECT_ID = 230;
+    /** Vật phẩm nhiệm vụ 23 rơi ở map ẩn 78: "Địa đồ" id 232 (type 23), xác nhận từ log live. */
+    private static final int MAP_SCROLL_ID = 232;
     private static final int KEY_LUCKY_ID = 846;
 
     private int hiddenMap = HIDDEN_MAP;
     private int lootId = LOOT_ID;
+    private long pickAt;
+    private int pickTries;
     private int lastMap = -1;
     private long keyUsedAt;
     private int keyUses;
@@ -52,6 +56,8 @@ final class TaskMatsurugi35 extends Uplevel35Task {
         this.keyUses = 0;
         this.npcTalkAt = 0L;
         this.bagLogged = false;
+        this.pickAt = 0L;
+        this.pickTries = 0;
     }
 
     void tick(As35 bot, Char me, Task task) {
@@ -127,9 +133,52 @@ final class TaskMatsurugi35 extends Uplevel35Task {
                         + " type=" + loot.template.type + " @" + loot.x + "," + loot.y);
             }
         }
+        ItemMap onGround = findGroundItem(this.lootId);
+        if (onGround != null) {
+            pickLoot(bot, me, onGround);
+            return;
+        }
         Uplevel35.logEvery("m35-fight", 5000L, "M35 đánh map ẩn " + TileMap.mapID + " lootId=" + this.lootId
                 + " mobs=" + describeMobs() + " ground=" + describeGround());
         bot.pickAndFight(this.lootId, -1);
+    }
+
+    /**
+     * Auto.fieldAC chỉ nhặt đồ trong bán kính Code.fieldAM (150px) và chỉ thử một lần (đánh dấu fieldAK),
+     * nên địa đồ rơi xa hơn bị bỏ qua mãi (log 2026-11-09: bot 473,96 - địa đồ 220,96).
+     * Tự đi tới vật phẩm rồi gửi pickItem mỗi 1,5 giây cho tới khi nó biến khỏi mặt đất.
+     */
+    private void pickLoot(As35 bot, Char me, ItemMap item) {
+        long now = System.currentTimeMillis();
+        int dx = Math.abs(me.cx - item.xEnd);
+        int dy = Math.abs(me.cy - item.yEnd);
+        if (dx > 24 || dy > 24) {
+            Uplevel35.logEvery("m35-pick-walk", 5000L, "M35 PICK đi tới " + item.template.name + " @" + item.xEnd + ","
+                    + item.yEnd + " từ " + me.cx + "," + me.cy);
+            Char.fieldAC(item.xEnd, item.yEnd);
+            return;
+        }
+        if (now - this.pickAt < 1500L) {
+            return;
+        }
+        this.pickAt = now;
+        ++this.pickTries;
+        Uplevel35.log("M35 PICK nhặt " + item.template.name + " id=" + item.template.id + " itemMapID=" + item.itemMapID
+                + " lần=" + this.pickTries + " pos=" + me.cx + "," + me.cy);
+        Service.gI().pickItem(item.itemMapID);
+    }
+
+    private static ItemMap findGroundItem(int templateId) {
+        if (templateId < 0) {
+            return null;
+        }
+        for (int i = 0; i < GameScr.vItemMap.size(); i++) {
+            ItemMap item = (ItemMap) GameScr.vItemMap.elementAt(i);
+            if (item != null && item.template != null && item.template.id == templateId) {
+                return item;
+            }
+        }
+        return null;
     }
 
     /** Không còn chìa khóa (chết trong map ẩn) -> về Matsurugi xin chìa mới. */
@@ -185,7 +234,9 @@ final class TaskMatsurugi35 extends Uplevel35Task {
     private static ItemMap findLoot() {
         for (int i = 0; i < GameScr.vItemMap.size(); i++) {
             ItemMap item = (ItemMap) GameScr.vItemMap.elementAt(i);
-            if (item != null && item.template != null && item.template.type == 25) {
+            // Địa đồ (id 232) có type 23, không phải 25 -> trước đây không khớp, bot đứng chờ mãi (log 2026-11-09).
+            if (item != null && item.template != null
+                    && (item.template.id == MAP_SCROLL_ID || item.template.type == 25)) {
                 return item;
             }
         }
@@ -219,15 +270,19 @@ final class TaskMatsurugi35 extends Uplevel35Task {
     }
 
     private static String describeMobs() {
-        StringBuffer sb = new StringBuffer("[");
+        // Chỉ liệt kê quái còn sống (tối đa 6); quái chết chỉ đếm, tránh dòng log hàng KB.
+        StringBuffer sb = new StringBuffer();
+        int alive = 0;
         for (int i = 0; i < GameScr.vMob.size(); i++) {
             Mob mob = (Mob) GameScr.vMob.elementAt(i);
-            if (i > 0) {
-                sb.append(", ");
+            if (mob == null || mob.hp <= 0) {
+                continue;
             }
-            sb.append('#').append(mob.templateId).append(" hp=").append(mob.hp).append('/').append(mob.maxHp)
-                    .append(" boss=").append(mob.levelBoss);
+            if (alive++ < 6) {
+                sb.append(sb.length() == 0 ? "" : ", ").append('#').append(mob.templateId)
+                        .append(" hp=").append(mob.hp).append('/').append(mob.maxHp).append(" boss=").append(mob.levelBoss);
+            }
         }
-        return sb.append(']').toString();
+        return "alive=" + alive + "/" + GameScr.vMob.size() + " [" + sb + "]";
     }
 }
