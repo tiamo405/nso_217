@@ -466,16 +466,19 @@ public final class AccountAutoManager implements Runnable {
         }
         postDailyProcessing = true;
         BotMetrics.event("daily_finished", "", Code.fieldAD.didDailyWorkThisRun() ? 1 : 0);
-        if (!Code.fieldAD.didDailyWorkThisRun()) {
-            System.out.println("AUTO NVHN LAT HINH: nhân vật không làm nhiệm vụ nào trong lượt chạy này, bỏ qua lật thẻ");
-            startCaveEntry();
-            return;
-        }
-        System.out.println("AUTO NVHN: đã hết nhiệm vụ, bắt đầu lật thẻ trước khi đi hang.");
-        AutoFlipNvhn flip = new AutoFlipNvhn();
-        BotMetrics.event("flip_started", "", 0);
-        flip.fieldAD();
-        Code.fieldAA((Auto) flip);
+        // TẠM TẮT lật thẻ: đi hang luôn sau khi hết NVHN. Bỏ comment khối dưới để bật lại.
+        System.out.println("AUTO NVHN LAT HINH: tạm tắt lật thẻ, đi hang luôn");
+        startCaveEntry();
+        // if (!Code.fieldAD.didDailyWorkThisRun()) {
+        //     System.out.println("AUTO NVHN LAT HINH: nhân vật không làm nhiệm vụ nào trong lượt chạy này, bỏ qua lật thẻ");
+        //     startCaveEntry();
+        //     return;
+        // }
+        // System.out.println("AUTO NVHN: đã hết nhiệm vụ, bắt đầu lật thẻ trước khi đi hang.");
+        // AutoFlipNvhn flip = new AutoFlipNvhn();
+        // BotMetrics.event("flip_started", "", 0);
+        // flip.fieldAD();
+        // Code.fieldAA((Auto) flip);
     }
 
     public static synchronized void onPostDailyFlipFinished() {
