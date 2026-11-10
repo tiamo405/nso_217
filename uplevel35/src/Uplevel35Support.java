@@ -23,6 +23,8 @@ final class Uplevel35Support {
     private static final long RETRY_DELAY = 10L * 60L * 1000L;
 
     private final As35 bot;
+    /** Task đang tự uống bình HP (M35HpPotions trong map ẩn): tắt tự uống gốc của game. */
+    static volatile boolean suppressNativeHp;
 
     private long mushroomUseSentAt;
     private int mushroomUseAttempts;
@@ -150,10 +152,23 @@ final class Uplevel35Support {
         return out.append(']').toString();
     }
 
+    /**
+     * Hiệu ứng còn thời gian. Client headless không xóa hiệu ứng hết hạn khỏi me.vEff
+     * (log worker-23 ngày 2026-11-10: thức ăn "left-42190s", Nấm "left-25990s" vẫn nằm trong danh sách)
+     * -> trước đây bot tưởng còn no / còn Nấm nên không bao giờ ăn hay mua lại.
+     */
+    static boolean active(Effect effect) {
+        if (effect.timeLenght <= 0) {
+            return true; // hiệu ứng không thời hạn
+        }
+        int nowSec = (int) (System.currentTimeMillis() / 1000L);
+        return effect.timeLenght - (nowSec - effect.timeStart) > 0;
+    }
+
     private static boolean hasEffectId(Char me, int effectId) {
         for (int i = 0; me.vEff != null && i < me.vEff.size(); i++) {
             Effect effect = (Effect) me.vEff.elementAt(i);
-            if (effect != null && effect.template != null && effect.template.id == effectId) {
+            if (effect != null && effect.template != null && effect.template.id == effectId && active(effect)) {
                 return true;
             }
         }
@@ -163,7 +178,7 @@ final class Uplevel35Support {
     private static boolean hasEffectType(Char me, int type) {
         for (int i = 0; me.vEff != null && i < me.vEff.size(); i++) {
             Effect effect = (Effect) me.vEff.elementAt(i);
-            if (effect != null && effect.template != null && effect.template.type == type) {
+            if (effect != null && effect.template != null && effect.template.type == type && active(effect)) {
                 return true;
             }
         }
@@ -385,7 +400,7 @@ final class Uplevel35Support {
         Char.aHpValue = level;
         Char.aMpValue = level;
         Char.aFoodValue = level;
-        Char.isAHP = true;
+        Char.isAHP = !suppressNativeHp;
         Char.isAMP = true;
         Char.isAFood = true;
         if (this.foodLevel != level) {

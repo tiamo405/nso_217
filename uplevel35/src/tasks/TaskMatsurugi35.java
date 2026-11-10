@@ -39,6 +39,7 @@ final class TaskMatsurugi35 extends Uplevel35Task {
     private int keyUses;
     private long npcTalkAt;
     private boolean bagLogged;
+    private final M35HpPotions potions = new M35HpPotions();
 
     boolean canLeaveMap(int mapId) {
         return mapId != this.hiddenMap;
@@ -62,6 +63,7 @@ final class TaskMatsurugi35 extends Uplevel35Task {
         this.bagLogged = false;
         this.pickAt = 0L;
         this.pickTries = 0;
+        this.potions.reset();
     }
 
     void tick(As35 bot, Char me, Task task) {
@@ -90,6 +92,9 @@ final class TaskMatsurugi35 extends Uplevel35Task {
         if (map != this.lastMap) {
             Uplevel35.log("M35 vào map " + map + " (" + TileMap.mapName + ") từ " + this.lastMap
                     + " pos=" + me.cx + "," + me.cy + " mobs=" + describeMobs());
+            if (this.lastMap == this.hiddenMap && map != this.hiddenMap) {
+                this.potions.leaveHidden(me, me.cHP <= 0 || map == 1 ? "chết/về trường" : "ra map " + map);
+            }
             if (this.lastMap == DOOR_MAP && this.keyUsedAt > 0L && now - this.keyUsedAt < 30000L
                     && map != DOOR_MAP) {
                 this.hiddenMap = map;
@@ -99,13 +104,19 @@ final class TaskMatsurugi35 extends Uplevel35Task {
         }
 
         if (map == this.hiddenMap) {
+            this.potions.drink(me);
             this.fightHidden(bot, me);
             return;
         }
+        Uplevel35Support.suppressNativeHp = false;
 
         Item key = findKey(me);
         if (key == null) {
             this.askNewKey(bot, me, now);
+            return;
+        }
+        // Đủ bình HP lv30 trước khi vào map ẩn (thiếu thì ghé Làng chài mua, nằm trên đường tới map 35).
+        if (!this.potions.ensureStock(bot, me)) {
             return;
         }
         if (map != DOOR_MAP) {
@@ -122,7 +133,7 @@ final class TaskMatsurugi35 extends Uplevel35Task {
         }
         this.keyUsedAt = now;
         ++this.keyUses;
-        Uplevel35.log("M35 KEY dùng " + key.template.name + " id=" + key.template.id + " bagIndex="
+        Uplevel35.log("M35 KEY HPPOT kho=" + this.potions.count(me) + " dùng " + key.template.name + " id=" + key.template.id + " bagIndex="
                 + key.indexUI + " lần=" + this.keyUses + " pos=" + me.cx + "," + me.cy);
         Service.gI().useItem(key.indexUI);
     }
