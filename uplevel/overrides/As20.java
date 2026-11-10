@@ -50,6 +50,12 @@ public class As20 extends As10 {
    private long uplevelTask12HangLogAt;
    private int uplevelTask12Tries;
    private static long uplevelTask12MessageUntil;
+   // TEST: -Duplevel.testWeaponMax=N → sau khi đủ cấp 12, đập vũ khí phái lên +N bằng đá cấp 6 (kiểm tra
+   // nhánh đập thất bại / tách đá mới). 0 = tắt.
+   private static final int UplevelTestWeaponMax = Integer.getInteger("uplevel.testWeaponMax", 0);
+   // Món cần đập khi test: 1 = vũ khí, 2 = trang sức 174, 3 = y phục 124/125.
+   private static final int UplevelTestPhase = Integer.getInteger("uplevel.testPhase", 1);
+   private boolean uplevelTestWeaponDone;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
    private boolean uplevelTeacherHpBuyPending;
@@ -1124,6 +1130,56 @@ public class As20 extends As10 {
          this.uplevelTask12Hang(me, "không có đồ id=" + targetId + " trên người/hành trang");
          return;
       }
+      this.uplevelTask12Upgrade(me, item, phase, targetId);
+   }
+
+   // TEST đập vũ khí lên +UplevelTestWeaponMax. true = đang xử lý, bỏ qua logic nhiệm vụ tick này.
+   private boolean doUplevelTestWeapon(Char me) {
+      if (UplevelTestWeaponMax <= 0 || this.uplevelTestWeaponDone || me.clevel < UplevelTask12Level
+            || me.ctaskId <= 12) {
+         return false;
+      }
+      if (this.uplevelTask12Busy()) {
+         return true;
+      }
+      if (this.uplevelTask12UpgradeItem != null) {
+         this.uplevelTask12CheckUpgrade(me);
+         return true;
+      }
+      int targetId = uplevelTask12TargetId(me, UplevelTestPhase);
+      Item worn = uplevelTask12Body(me, targetId);
+      Item item = worn != null ? worn : Char.fieldAF(targetId);
+      if (this.countUplevelItem(me, UplevelTask12StoneId) <= 0) {
+         System.out.println("UPLEVEL TEST hết đá; dừng test id=" + targetId);
+         this.uplevelTestWeaponDone = true;
+         return false;
+      }
+      if (item == null) {
+         System.out.println("UPLEVEL TEST weapon id=" + targetId + " không tìm thấy; dừng test");
+         this.uplevelTestWeaponDone = true;
+         return false;
+      }
+      if (item.upgrade >= UplevelTestWeaponMax) {
+         if (worn == null) {
+            this.uplevelTask12Equip(me, targetId);
+            return true;
+         }
+         System.out.println("UPLEVEL TEST weapon id=" + targetId + " đạt +" + item.upgrade + "; xong test, đá còn="
+               + this.countUplevelItem(me, UplevelTask12StoneId));
+         this.uplevelTestWeaponDone = true;
+         return false;
+      }
+      if (worn != null) {
+         Service.gI().itemBodyToBag((int)worn.template.type);
+         this.uplevelTask12Act("TEST unequip id=" + targetId + " upgrade=" + worn.upgrade);
+         return true;
+      }
+      this.uplevelTask12Upgrade(me, item, 0, targetId);
+      return true;
+   }
+
+   // Gom/tách đá cấp 6 rồi gửi lệnh nâng item (đang nằm trong hành trang) lên 1 cấp.
+   private void uplevelTask12Upgrade(Char me, Item item, int phase, int targetId) {
       int need = item.isTypeWeapon() ? GameScr.upWeapon[item.upgrade]
             : (item.isTypeAdorn() ? GameScr.upAdorn[item.upgrade] : GameScr.upClothe[item.upgrade]);
       int stones = this.countUplevelItem(me, UplevelTask12StoneId);
@@ -1196,10 +1252,27 @@ public class As20 extends As10 {
       if (!answered && System.currentTimeMillis() - this.uplevelTask12ActionAt < UplevelTask12WaitMs) {
          return;
       }
+      Item[] usedStones = this.uplevelTask12UpgradeStones;
       GameScr.itemUpGrade = null;
       GameScr.arrItemUpGrade = null;
       this.uplevelTask12UpgradeItem = null;
       this.uplevelTask12UpgradeStones = null;
+      // Server luôn tiêu đá (thành công hay thất bại) nhưng bot đặt thẳng arrItemUpGrade mà không gỡ đá
+      // khỏi arrItemBag → đá "ma" còn lại, gửi lại thì server báo "Hãy chọn đá nâng cấp!" lặp vô hạn.
+      // Xoá đá đã gửi khỏi hành trang sau mỗi kết quả (sau 1 lần thất bại có thể còn 1 lượt bị từ chối,
+      // không tốn yên, lượt đó sẽ xoá nốt đá ma rồi bot tách đá mới).
+      if (answered && usedStones != null) {
+         for (int i = 0; i < usedStones.length; i++) {
+            Item stone = usedStones[i];
+            if (stone == null) {
+               continue;
+            }
+            if (me.arrItemBag != null && stone.indexUI >= 0 && stone.indexUI < me.arrItemBag.length
+                  && me.arrItemBag[stone.indexUI] == stone) {
+               me.arrItemBag[stone.indexUI] = null;
+            }
+         }
+      }
       if (!answered) {
          System.out.println("UPLEVEL TASK12 upgrade no response id=" + item.template.id + "; retry");
          return;
@@ -1594,6 +1667,9 @@ public class As20 extends As10 {
          return;
       }
       if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelFood(var1)) {
+         return;
+      }
+      if (var1.cHP > 0 && this.doUplevelTestWeapon(var1)) {
          return;
       }
       if (var1.ctaskId < 9) {
