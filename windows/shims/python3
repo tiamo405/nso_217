@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Shim "python3" cho build.sh khi chạy bằng Git Bash trên Windows (nso_win.py đặt thư mục này đầu PATH).
+# - Dùng python thật ở NSO_REAL_PYTHON (Windows thường không có lệnh python3).
+# - `python3 - file <<EOF` / `python3 script.py`: chạy qua py3_lf.py để đọc/ghi UTF-8 và giữ xuống dòng LF
+#   như Linux (Path.write_text mặc định ghi CRLF trên Windows).
+real=${NSO_REAL_PYTHON:-python}
+if command -v cygpath >/dev/null 2>&1; then
+    real=$(cygpath -u "$real")
+    shim_py=$(cygpath -m "$(dirname -- "${BASH_SOURCE[0]}")/py3_lf.py")
+else
+    shim_py="$(dirname -- "${BASH_SOURCE[0]}")/py3_lf.py"
+fi
+if [[ $# -gt 0 && ( "$1" == - || "$1" != -* ) ]]; then
+    exec "$real" -X utf8 "$shim_py" "$@"
+fi
+exec "$real" -X utf8 "$@"

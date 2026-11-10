@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Shim "javac" cho build.sh khi chạy bằng Git Bash trên Windows.
+# MSYS tự đổi đường dẫn /c/... trong tham số, nhưng KHÔNG đổi nội dung file @sources.txt
+# (do `find` sinh ra) -> javac.exe không đọc được. Shim đổi sang C:/... rồi gọi javac thật.
+real=${NSO_REAL_JAVAC:-javac}
+if ! command -v cygpath >/dev/null 2>&1; then
+    exec "$real" "$@"
+fi
+real=$(cygpath -u "$real")
+args=()
+tmp_files=()
+for arg in "$@"; do
+    if [[ "$arg" == @* && -f "${arg#@}" ]]; then
+        out=$(mktemp)
+        cygpath -m -f "${arg#@}" | sed 's/.*/"&"/' >"$out"
+        tmp_files+=("$out")
+        args+=("@$(cygpath -m "$out")")
+    else
+        args+=("$arg")
+    fi
+done
+"$real" "${args[@]}"
+rc=$?
+rm -f -- "${tmp_files[@]}"
+exit $rc

@@ -28,3 +28,5 @@ UPLEVEL35 STATUS ts=2026-11-09 11:22:18 acc=acctest4 name=testbon level=31 exp=2
 ```
 
 Biến môi trường: `UPLEVEL_WORKERS_DIR`, `UPLEVEL35_WORKERS_DIR` để trỏ thư mục worker khác.
+
+Windows: `uplevel_monitor\run.cmd` (CPU/RAM/PID đọc qua psutil hoặc Win32 API trong `winproc.py`), xem `windows/README.md`.

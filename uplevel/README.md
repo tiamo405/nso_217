@@ -76,3 +76,5 @@ dùng skill của Ninja kiếm lv25 nên đánh bù nhìn không ăn). Vì vậy
 ## Web monitor
 
 Xem trạng thái mọi worker (lv, exp, hành trang, lượng/xu/yên, CPU, heartbeat): `./uplevel_monitor/run.sh` → http://127.0.0.1:8090. Chi tiết: `uplevel_monitor/README.md`.
+
+Windows: dùng các file `.cmd` cùng tên trong `scripts/` (vd. `uplevel\scripts\start-workers.cmd --mode 1`), xem `windows/README.md`.

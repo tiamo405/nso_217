@@ -108,6 +108,10 @@ def rss_mb(pid: int) -> float | None:
     return None
 
 
+if os.name == "nt":  # Windows không có /proc: thay 3 hàm trên bằng bản dùng psutil / Win32 API.
+    from uplevel_monitor.winproc import cpu_percent, pid_from_file as _pid_from_file, rss_mb  # noqa: E402,F811
+
+
 # ---------------------------------------------------------------- file parsing
 
 def parse_properties(text: str | None) -> dict[str, str]:

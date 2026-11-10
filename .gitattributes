@@ -1,0 +1,9 @@
+# Giữ nguyên xuống dòng như trong repo khi checkout trên Windows (core.autocrlf=true sẽ đổi sang CRLF
+# làm bash không chạy được *.sh và patch uplevel35 không khớp src/*.java).
+*.sh        -text
+*.patch     -text
+*.java      -text
+*.py        -text
+windows/shims/*  -text
+# Script Windows cần CRLF.
+*.cmd       -text
