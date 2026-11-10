@@ -38,7 +38,7 @@ from nhanexp_and_doiyenquaxu import (
 
 
 ROOT_DIR = Path(__file__).resolve().parent
-DEFAULT_CSV = ROOT_DIR / "account-hoatdong.csv"
+DEFAULT_CSV = ROOT_DIR / "account-giftcode.csv"
 DEFAULT_ITEMS_FILE = ROOT_DIR / "delllllllllll.txt"
 DEFAULT_OPEN_ITEMS_FILE = ROOT_DIR / "item_open.txt"
 DEFAULT_HOST = "180.93.114.122"
@@ -656,11 +656,11 @@ def build_parser():
     )
     parser.add_argument("csv_file", nargs="?", type=Path, default=DEFAULT_CSV)
     parser.add_argument(
-        "--max-accounts", type=int, default=1,
+        "--max-accounts", type=int, default=0,
         help="Chỉ chạy N tài khoản đầu tiên; 0 là không giới hạn",
     )
     parser.add_argument(
-        "--luong", type=int, default=1,
+        "--luong", type=int, default=10,
         help="Số luồng xử lý song song; mặc định 1",
     )
     parser.add_argument(
