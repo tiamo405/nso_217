@@ -265,8 +265,8 @@ replacement = '''   private static boolean uplevelGiftStarted;
    private static int uplevelGiftUseSlot = -1;
    private static int uplevelGiftUseQuantity;
    private static long uplevelGiftItemLastAction;
-   // Pet Ứng Long: dùng sau 215/229 nếu có sẵn trong hành trang, không mua.
-   private static final int UplevelGiftPetItem = 851;
+   // Pet Yêu Tinh: dùng sau 215/229 nếu có sẵn trong hành trang, không mua.
+   private static final int UplevelGiftPetItem = 829;
    private static boolean uplevelGiftPetDone;
    private static boolean uplevelGiftPetSent;
    private static long uplevelGiftPetSentAt;
