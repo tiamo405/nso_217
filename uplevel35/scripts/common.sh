@@ -8,6 +8,10 @@ BUILD_DIR=$(realpath -m -- "${UPLEVEL35_BUILD_DIR:-"$RUNTIME_DIR/build"}")
 CLASSES_DIR="$BUILD_DIR/classes"
 WORKERS_DIR=${UPLEVEL35_WORKERS_DIR:-"$RUNTIME_DIR/workers"}
 SOURCE_CSV=${UPLEVEL35_ACCOUNT_CSV:-"$REPO_DIR/account-35.csv"}
+# Proxy dùng chung logic với uplevel: chia đều worker theo khối liên tiếp cho các proxy trong file;
+# file trống / không có thì chạy mạng của máy.
+PROXY_FILE=${UPLEVEL35_PROXY_FILE:-"$REPO_DIR/proxy-tk.txt"}
+PROXY_ASSIGN="$REPO_DIR/uplevel/scripts/proxy_assign.py"
 
 # worker_dir_for 3 -> .../workers/worker-03
 worker_dir_for() {

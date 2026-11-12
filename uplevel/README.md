@@ -73,6 +73,33 @@ dùng skill của Ninja kiếm lv25 nên đánh bù nhìn không ăn). Vì vậy
 - Tắt chế độ này: `UPLEVEL_PROCESS_PER_CHARACTER=false` (chạy lại kiểu cũ, mọi nhân vật trong một JVM).
 - Chạy lại từ đầu: xoá `home/uplevel-progress.properties` (hoặc build-workers lại).
 
+## Proxy (giới hạn số tài khoản online / IP)
+
+Server chỉ cho khoảng 100 tài khoản online cùng lúc trên một IP. Proxy SOCKS5 khai báo trong
+`proxy-tk.txt` (mỗi dòng `host:port:user:password`, dòng trống / `#` bị bỏ qua):
+
+- **File trống hoặc không có** → mọi worker chạy mạng của máy như cũ.
+- **Có P proxy** → worker được chia đều theo khối liên tiếp, mỗi proxy `W/P` worker
+  (phần dư cho các proxy đầu). VD `build-workers.sh 50` + 2 proxy: worker-01..25 = proxy 1,
+  worker-26..50 = proxy 2; 51 worker → 26 + 25.
+
+```bash
+python3 test_proxy_login.py          # test TẤT CẢ proxy (login thử acc đầu account-as20.csv), in dòng lỗi cần xoá
+# python3 test_proxy_login.py --no-login   # chỉ test kết nối, không login
+./uplevel/scripts/build-workers.sh 50  # in luôn bảng chia proxy
+./uplevel/scripts/start-workers.sh --mode 1             # probe proxy rồi chạy
+./uplevel/scripts/start-workers.sh --mode 1 --no-proxy  # ép chạy mạng máy dù file có proxy
+```
+
+- `build-workers` và `start-workers` gọi `scripts/proxy_assign.py`, ghi proxy vào `workers/worker-XX/.proxy`
+  (đã gitignore). `start-workers` probe (SOCKS5 CONNECT tới server game) các proxy được dùng; proxy lỗi → không start.
+- JVM nhận env `NSO_SOCKS5_PROXY` + `NSO_PROXY_REQUIRED=1` (`optimized-runtime/src/javax/microedition/io/Connector.java`
+  mở SOCKS5); proxy chết thì worker lỗi kết nối chứ không lén chạy bằng IP máy. Env giữ nguyên qua các lần đổi JVM
+  giữa các nhân vật. Dòng `network: ...` trong `stdout.log` cho biết worker đi đường nào.
+- Biến môi trường: `UPLEVEL_PROXY_FILE` (đổi file proxy), `UPLEVEL_PROXY=0` (= `--no-proxy`).
+- Sửa file proxy khi worker đang chạy: stop rồi start lại (worker đang chạy giữ proxy cũ).
+- Windows: cùng cách dùng, `uplevel\scripts\build-workers.cmd 50` rồi `uplevel\scripts\start-workers.cmd --mode 1`.
+
 ## Web monitor
 
 Xem trạng thái mọi worker (lv, exp, hành trang, lượng/xu/yên, CPU, heartbeat): `./uplevel_monitor/run.sh` → http://127.0.0.1:8090. Chi tiết: `uplevel_monitor/README.md`.

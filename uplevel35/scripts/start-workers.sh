@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Chạy worker uplevel35 (nền, nohup).
-#   ./uplevel35/scripts/start-workers.sh [--delay giây] [--debug] [số_worker...]
+#   ./uplevel35/scripts/start-workers.sh [--delay giây] [--debug] [--no-proxy] [số_worker...]
+# Proxy: có proxy trong proxy-tk.txt (UPLEVEL35_PROXY_FILE) thì worker chia đều theo khối liên tiếp;
+#        file trống thì chạy mạng máy; --no-proxy / UPLEVEL35_PROXY=0 để ép tắt.
 # Biến môi trường: UPLEVEL35_SERVER, UPLEVEL35_MIN, UPLEVEL35_TARGET, UPLEVEL35_LOG_APPEND=1,
 #                  JAVA_BIN, JAVA_XMS, JAVA_XMX, JAVA_OPTS (thêm -D tùy ý, vd. -Dnso.uplevel35.bottle.id=...).
 set -euo pipefail
@@ -15,6 +17,7 @@ DEBUG=${UPLEVEL35_DEBUG:-false}
 JAVA_OPTS=${JAVA_OPTS:-}
 # true: mỗi nhân vật một JVM (worker-loop.sh), tránh static của nhân vật trước dính sang nhân vật sau.
 PROCESS_PER_CHARACTER=${UPLEVEL35_PROCESS_PER_CHARACTER:-true}
+USE_PROXY=${UPLEVEL35_PROXY:-1}
 
 args=()
 while (( $# > 0 )); do
@@ -22,7 +25,9 @@ while (( $# > 0 )); do
         --delay) START_DELAY=$2; shift 2 ;;
         --delay=*) START_DELAY=${1#--delay=}; shift ;;
         --debug) DEBUG=true; shift ;;
-        -h|--help) echo "Usage: $(basename "$0") [--delay seconds] [--debug] [worker_number...]"; exit 0 ;;
+        --no-proxy) USE_PROXY=0; shift ;;
+        --proxy) USE_PROXY=1; shift ;;
+        -h|--help) echo "Usage: $(basename "$0") [--delay seconds] [--debug] [--no-proxy] [worker_number...]"; exit 0 ;;
         *) args+=("$1"); shift ;;
     esac
 done
@@ -31,6 +36,13 @@ done
 
 select_workers "${args[@]+"${args[@]}"}"
 (( ${#WORKER_DIRS[@]} > 0 )) || { echo "Chưa có worker; chạy build-workers.sh trước." >&2; exit 1; }
+
+if [[ "$USE_PROXY" == 1 ]]; then
+    python3 "$PROXY_ASSIGN" --workers-dir "$WORKERS_DIR" --proxy-file "$PROXY_FILE" \
+        --server "$SERVER_NAME" || exit 1
+else
+    python3 "$PROXY_ASSIGN" --workers-dir "$WORKERS_DIR" --proxy-file "$PROXY_FILE" --clear
+fi
 
 read -r -a JAVA_OPTS_ARRAY <<<"$JAVA_OPTS"
 started=0 running=0 completed=0
@@ -55,7 +67,16 @@ for worker_dir in "${WORKER_DIRS[@]}"; do
     banner="===== START UPLEVEL35 $(date '+%F %T') ====="
     printf '\n%s\n' "$banner" >>"$worker_dir/stdout.log"
     printf '\n%s\n' "$banner" >>"$worker_dir/java-errors.log"
-    nohup "$SCRIPT_DIR/worker-loop.sh" "$worker_dir" \
+    # NSO_SOCKS5_PROXY được Connector.java đọc; NSO_PROXY_REQUIRED=1 => không fallback IP máy.
+    proxy_env=(env -u NSO_SOCKS5_PROXY NSO_PROXY_REQUIRED=0)
+    proxy_label="IP máy"
+    if [[ -s "$worker_dir/.proxy" ]]; then
+        proxy_value=$(<"$worker_dir/.proxy")
+        proxy_env=(env NSO_PROXY_REQUIRED=1 "NSO_SOCKS5_PROXY=$proxy_value")
+        proxy_label="proxy ${proxy_value%%:*}"
+    fi
+    printf 'network: %s\n' "$proxy_label" >>"$worker_dir/stdout.log"
+    nohup "${proxy_env[@]}" "$SCRIPT_DIR/worker-loop.sh" "$worker_dir" \
         "$JAVA_BIN" "-Xms$JAVA_XMS" "-Xmx$JAVA_XMX" \
         ${JAVA_OPTS_ARRAY[@]+"${JAVA_OPTS_ARRAY[@]}"} \
         -Dnso.runtime=uplevel35 \
@@ -74,7 +95,7 @@ for worker_dir in "${WORKER_DIRS[@]}"; do
     printf '%s\n' "$pid" >"$worker_dir/loop.pid"
     sleep 0.5
     if is_worker_pid "$pid" "$worker_dir"; then
-        echo "Đã chạy $name (loop PID $pid, java PID $(cat "$worker_dir/bot.pid" 2>/dev/null || echo ?))"
+        echo "Đã chạy $name (loop PID $pid, java PID $(cat "$worker_dir/bot.pid" 2>/dev/null || echo ?), $proxy_label)"
         started=$((started + 1))
     else
         echo "$name khởi động lỗi; xem $worker_dir/java-errors.log" >&2

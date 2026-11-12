@@ -119,3 +119,15 @@ dùng skill của Ninja kiếm lv25 nên đánh bù nhìn không ăn). Vì vậy
 Xem trạng thái mọi worker (lv, exp, hành trang, lượng/xu/yên, CPU, heartbeat): `./uplevel_monitor/run.sh` → http://127.0.0.1:8090. Chi tiết: `uplevel_monitor/README.md`.
 
 Windows: dùng các file `.cmd` cùng tên trong `scripts/` (vd. `uplevel35\scripts\start-workers.cmd`), xem `windows/README.md`.
+
+## Proxy (giới hạn số tài khoản online / IP)
+
+Logic y hệt uplevel (dùng chung `uplevel/scripts/proxy_assign.py`, xem `uplevel/README.md`):
+
+- `proxy-tk.txt` trống / không có → mọi worker chạy mạng của máy.
+- Có P proxy → worker chia đều theo khối liên tiếp (VD 50 worker / 2 proxy: worker-01..25 = proxy 1, 26..50 = proxy 2).
+- Trước khi build: `python3 test_proxy_login.py` để test tất cả proxy và xoá dòng lỗi.
+- `build-workers.sh N` in bảng chia proxy; `start-workers.sh` probe proxy rồi chạy, proxy lỗi → không start.
+- `--no-proxy` / `UPLEVEL35_PROXY=0`: ép chạy mạng máy; `UPLEVEL35_PROXY_FILE`: đổi file proxy.
+- Dòng `network: ...` trong `workers/worker-XX/stdout.log` cho biết worker đi đường nào.
+- Windows: `uplevel35\scripts\build-workers.cmd 50` rồi `uplevel35\scripts\start-workers.cmd`.

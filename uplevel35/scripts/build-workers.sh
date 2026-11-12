@@ -60,3 +60,5 @@ else
 fi
 trap - EXIT
 echo "Hoàn tất: $TOTAL tài khoản / $WORKER_COUNT worker tại $WORKERS_DIR"
+# Chia đều proxy theo khối worker liên tiếp; start-workers sẽ probe lại trước khi chạy.
+python3 "$PROXY_ASSIGN" --workers-dir "$WORKERS_DIR" --proxy-file "$PROXY_FILE" --no-check || true

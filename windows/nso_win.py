@@ -26,6 +26,8 @@ WIN_DIR = Path(__file__).resolve().parent
 REPO_DIR = WIN_DIR.parent
 sys.path.insert(0, str(REPO_DIR))
 from uplevel_monitor import winproc  # noqa: E402
+sys.path.insert(0, str(REPO_DIR / "uplevel" / "scripts"))
+import proxy_assign  # noqa: E402  (uplevel/scripts/proxy_assign.py, dùng chung uplevel + uplevel35)
 
 IS_WINDOWS = os.name == "nt"
 HANDOFF_EXIT_CODE = 3
@@ -233,7 +235,17 @@ def cmd_build_workers(rt: Runtime, args: list[str]) -> int:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
     print(f"Hoàn tất: {total} tài khoản / {count} worker tại {rt.workers}")
+    # Chia đều proxy theo khối worker liên tiếp; start sẽ probe lại trước khi chạy.
+    try:
+        proxy_assign.assign(rt.workers, runtime_proxy_file(rt), check=False)
+    except proxy_assign.ProxyError as exc:
+        print(f"Proxy lỗi: {exc}", file=sys.stderr)
     return 0
+
+
+def runtime_proxy_file(rt: Runtime) -> Path:
+    """UPLEVEL_PROXY_FILE / UPLEVEL35_PROXY_FILE, mặc định proxy-tk.txt (dùng chung)."""
+    return Path(env(rt.prefix + "PROXY_FILE", str(REPO_DIR / "proxy-tk.txt")))
 
 
 # ---------------------------------------------------------------- start / loop
@@ -281,11 +293,12 @@ def java_command(rt: Runtime, worker_dir: Path, opts: dict[str, str]) -> list[st
 
 
 def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int, list[str]]:
-    usage = ("Usage: start [--mode 1..6] [--delay giây] [số_worker...]" if rt.name == "uplevel"
-             else "Usage: start [--delay giây] [--debug] [số_worker...]")
+    usage = ("Usage: start [--mode 1..6] [--delay giây] [--no-proxy] [số_worker...]" if rt.name == "uplevel"
+             else "Usage: start [--delay giây] [--debug] [--no-proxy] [số_worker...]")
     mode = env("UPLEVEL_MODE", "0")
     delay = env(rt.prefix + "START_DELAY", "3")
     debug = env("UPLEVEL35_DEBUG", "false")
+    proxy = env(rt.prefix + "PROXY", "1")
     workers: list[str] = []
     i = 0
     while i < len(args):
@@ -308,6 +321,8 @@ def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int,
             mode = a.split("=", 1)[1]
         elif a == "--debug" and rt.name == "uplevel35":
             debug = "true"
+        elif a in ("--proxy", "--no-proxy"):
+            proxy = "1" if a == "--proxy" else "0"
         else:
             num = a[len("worker-"):] if a.startswith("worker-") else a
             if not num.isdigit():
@@ -320,7 +335,7 @@ def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int,
         die("Mode phải nằm trong 1..6.")
     if not delay.isdigit():
         die("Delay phải là số nguyên không âm.")
-    return {"mode": mode, "debug": debug}, int(delay), workers
+    return {"mode": mode, "debug": debug, "proxy": proxy}, int(delay), workers
 
 
 def spawn_flags() -> dict:
@@ -342,6 +357,14 @@ def cmd_start(rt: Runtime, args: list[str]) -> int:
     else:
         (rt.dir / "run" / "errors").mkdir(parents=True, exist_ok=True)
     append = env(rt.prefix + "LOG_APPEND", "0") == "1"
+    try:
+        if opts["proxy"] == "1":
+            proxy_assign.assign(rt.workers, runtime_proxy_file(rt),
+                                env(rt.prefix + "SERVER", "180.93.114.122:14444"))
+        else:
+            proxy_assign.clear(rt.workers)
+    except proxy_assign.ProxyError as exc:
+        die(f"Proxy lỗi: {exc}")
     started = running = completed = 0
     for wd in dirs:
         name = wd.name
@@ -363,12 +386,24 @@ def cmd_start(rt: Runtime, args: list[str]) -> int:
         for log in ("stdout.log", "java-errors.log"):
             with open(wd / log, "ab" if append else "wb") as fh:
                 fh.write(banner)
+        # Connector.java đọc NSO_SOCKS5_PROXY; NSO_PROXY_REQUIRED=1 => không fallback IP máy.
+        run_env = os.environ.copy()
+        run_env.pop("NSO_SOCKS5_PROXY", None)
+        run_env["NSO_PROXY_REQUIRED"] = "0"
+        proxy_file = wd / ".proxy"
+        net = "IP máy"
+        if proxy_file.is_file() and proxy_file.read_text(encoding="utf-8").strip():
+            run_env["NSO_SOCKS5_PROXY"] = proxy_file.read_text(encoding="utf-8").strip()
+            run_env["NSO_PROXY_REQUIRED"] = "1"
+            net = "proxy " + run_env["NSO_SOCKS5_PROXY"].split(":", 1)[0]
+        with open(wd / "stdout.log", "ab") as fh:
+            fh.write(f"network: {net}\n".encode())
         out = open(wd / "stdout.log", "ab")
         err = open(wd / "java-errors.log", "ab")
         try:
             proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_loop", str(wd),
                                      *java_command(rt, wd, opts)],
-                                    stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                    env=run_env, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
                                     cwd=str(REPO_DIR), close_fds=True, **spawn_flags())
         finally:
             out.close()
@@ -377,7 +412,7 @@ def cmd_start(rt: Runtime, args: list[str]) -> int:
         time.sleep(0.5)
         if winproc.matches(proc.pid, rt.needles(wd)):
             bot = winproc.read_pid(wd / "bot.pid")
-            print(f"Đã chạy {name} (loop PID {proc.pid}, java PID {bot or '?'})")
+            print(f"Đã chạy {name} (loop PID {proc.pid}, java PID {bot or '?'}, {net})")
             started += 1
         else:
             print(f"{name} khởi động lỗi; xem {wd / 'java-errors.log'}", file=sys.stderr)

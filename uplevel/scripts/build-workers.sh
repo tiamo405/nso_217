@@ -79,3 +79,6 @@ fi
 trap - EXIT
 
 echo "Hoan tat: $TOTAL tai khoan / $WORKER_COUNT worker tai $WORKERS_DIR"
+# Chia đều proxy (proxy-tk.txt) theo khối worker liên tiếp; start-workers sẽ probe lại trước khi chạy.
+python3 "$SCRIPT_DIR/proxy_assign.py" --workers-dir "$WORKERS_DIR" \
+    --proxy-file "${UPLEVEL_PROXY_FILE:-"$REPO_DIR/proxy-tk.txt"}" --no-check || true
