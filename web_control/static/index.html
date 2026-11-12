@@ -3,175 +3,200 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NSO Headless Control</title>
-  <link rel="stylesheet" href="/static/style.css?v=5">
+  <title>NSO Worker Control</title>
+  <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body>
   <main class="shell">
-    <section id="dashboard">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">NSO OPTIMIZED RUNTIME</p>
-          <h1>Worker Control</h1>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">NSO OPTIMIZED RUNTIME</p>
+        <h1>Worker Control</h1>
+      </div>
+      <div class="top-meta">
+        <span id="phase-pill" class="pill">—</span>
+        <span class="muted small">Server <code id="server-endpoint">—</code></span>
+        <span id="last-refresh" class="muted small"></span>
+        <button id="refresh-button" class="btn ghost sm" title="Làm mới ngay">⟳</button>
+      </div>
+    </header>
+
+    <!-- ============ Tổng quan + điều khiển chính ============ -->
+    <section class="overview">
+      <article class="card" id="card-nvhn">
+        <div class="card-head">
+          <div><p class="eyebrow">NHIỆM VỤ HÀNG NGÀY</p><h2>NVHN</h2></div>
+          <span id="nvhn-state" class="pill">—</span>
         </div>
-        <div class="top-actions">
-          <span id="last-refresh" class="muted"></span>
-          <button id="refresh-button" class="secondary">Làm mới</button>
+        <div class="stats" id="nvhn-stats"></div>
+        <p id="nvhn-detail" class="muted small detail"></p>
+        <div class="actions">
+          <button id="btn-build-run" class="btn primary" title="Dừng NVHN, build lại runtime, chia worker từ account.csv rồi chạy">Build &amp; Run</button>
+          <button id="btn-build" class="btn" title="Build và chia worker, chưa chạy">Chỉ Build</button>
+          <button id="btn-nvhn-start" class="btn" title="Chạy tiếp tiến độ hiện có">▶ Start</button>
+          <button id="btn-nvhn-stop" class="btn danger" title="Chỉ dừng NVHN, không ảnh hưởng Tà Thú">■ Stop</button>
         </div>
-      </header>
+      </article>
 
-      <div id="notice" class="notice hidden"></div>
-
-      <section class="summary-grid">
-        <article class="summary-card"><span>Supervisor</span><strong id="supervisor-state">—</strong></article>
-        <article class="summary-card"><span>Running</span><strong id="running-count">0</strong></article>
-        <article class="summary-card"><span>Stopped</span><strong id="stopped-count">0</strong></article>
-        <article class="summary-card"><span>Paused</span><strong id="paused-count">0</strong></article>
-        <article class="summary-card"><span>Done</span><strong id="done-count">0</strong></article>
-        <article class="summary-card"><span>Accounts</span><strong id="account-count">0</strong></article>
-      </section>
-
-      <section class="control-grid">
-        <article class="panel">
-          <div class="panel-title">
-            <div><p class="eyebrow">RUNTIME</p><h2>Supervisor</h2></div>
-          </div>
-          <p id="supervisor-detail" class="muted">Đang tải trạng thái…</p>
-          <div class="field-group">
-            <label for="periodic-restart-hours">Restart worker định kỳ (giờ, 0 = tắt)</label>
-            <input id="periodic-restart-hours" type="number" min="0" max="168" step="1" value="3">
-            <p class="muted">Tính từ lần khởi động gần nhất của từng worker.</p>
-          </div>
-          <div class="field-group">
-            <label for="worker-start-delay-seconds">Giãn cách khởi động worker tiếp theo (giây)</label>
-            <input id="worker-start-delay-seconds" type="number" min="0" max="3600" step="1" value="30">
-            <p class="muted">Thời gian chờ giữa các worker khi Supervisor khởi động; 0 = chạy liên tiếp.</p>
-          </div>
-          <div class="field-group">
-            <label for="proxy-workers-per-proxy">Số worker dùng chung 1 proxy</label>
-            <input id="proxy-workers-per-proxy" type="number" min="0" max="500" step="1" value="6">
-            <p class="muted">0 = không dùng proxy. Đổi cấu hình cần Stop rồi Start.</p>
-          </div>
-          <button id="save-supervisor-settings" type="button" class="secondary">Lưu cấu hình Supervisor</button>
-          <div class="button-row">
-            <button id="start-supervisor" class="primary">Start supervisor</button>
-            <button id="stop-supervisor" class="danger">Stop tất cả</button>
-            <button id="stop-ta-thu-supervisor" class="danger" style="background:#5c1d24; border-color:#822a36;">Stop Tà Thú</button>
-          </div>
-        </article>
-
-        <article class="panel">
-          <div class="panel-title"><div><p class="eyebrow">ACCOUNT</p><h2>Thay account.csv</h2></div></div>
-          <p class="muted">File phải có header <code>username,password</code>.</p>
-          <form id="account-form">
-            <input id="account-file" type="file" accept=".csv,text/csv" required>
-            <button type="submit" class="secondary">Upload</button>
-          </form>
-        </article>
-
-        <article class="panel build-panel">
-          <div class="panel-title"><div><p class="eyebrow">DEPLOY</p><h2>Build / Run</h2></div></div>
-          <form id="build-form" class="build-form">
-            <div class="field-group">
-              <label>Server</label>
-              <p class="muted">Server game: <code id="server-endpoint">180.93.114.122:14444</code></p>
-            </div>
-            <div class="field-group">
-              <label for="worker-count">Số worker</label>
-              <input id="worker-count" type="number" min="1" max="500" value="10" required>
-            </div>
-            <div class="deploy-actions">
-              <button id="build-button" type="button" class="secondary">Chỉ Build</button>
-              <button id="run-button" type="button" class="primary">Run workers</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="panel schedule-panel">
-          <div class="panel-title">
-            <div><p class="eyebrow">TIMER & AUTO (GMT+7)</p><h2>Hẹn giờ & Tự động</h2></div>
-            <span id="schedule-status-badge" class="badge">Tắt</span>
-          </div>
-          <form id="schedule-form" class="schedule-form">
-            <label class="checkbox">
-              <input id="schedule-enabled" type="checkbox">
-              <span>Bật tự động Build & Run NVHN</span>
-            </label>
-
-            <label class="checkbox">
-              <input id="schedule-auto-ta-thu" type="checkbox" checked>
-              <span>Auto Tà Thú khi NVHN xong</span>
-            </label>
-
-            <div class="schedule-inputs">
-              <div class="field-group">
-                <label for="schedule-start-time">Giờ chạy đầu tiên (GMT+7)</label>
-                <input id="schedule-start-time" type="time" value="01:00">
-              </div>
-
-              <div class="field-group">
-                <label for="schedule-repeat-hours">Lặp lại sau (giờ)</label>
-                <input id="schedule-repeat-hours" type="number" min="1" max="72" value="6">
-              </div>
-
-              <div class="field-group">
-                <label for="schedule-worker-count">Số worker</label>
-                <input id="schedule-worker-count" type="number" min="1" max="500" value="10">
-              </div>
-
-              <div class="field-group">
-                <label for="schedule-worker-start-delay-seconds">Giãn cách worker (giây)</label>
-                <input id="schedule-worker-start-delay-seconds" type="number" min="0" max="3600" step="1" value="30">
-                <p class="muted">Áp dụng khi lịch tự động chạy NVHN/Tà Thú; 0 = chạy liên tiếp.</p>
-              </div>
-
-              <div class="field-group">
-                <label for="schedule-proxy-workers-per-proxy">Worker dùng chung 1 proxy</label>
-                <input id="schedule-proxy-workers-per-proxy" type="number" min="0" max="500" step="1" value="6">
-                <p class="muted">0 = không dùng proxy.</p>
-              </div>
-
-            </div>
-
-            <div class="schedule-info muted">
-              <div>Lịch chạy: đến giờ đầu tiên sẽ build lại toàn bộ worker, sau đó lặp theo số giờ đã đặt.</div>
-              <div>Lưu ý: nếu bật lịch này, đặt Restart worker định kỳ = 0 ở panel Supervisor.</div>
-              <div>Tiến trình: <strong id="schedule-current-phase">Nhiệm vụ hàng ngày</strong></div>
-              <div>Lần chạy kế tiếp: <strong id="schedule-next-run">—</strong></div>
-              <div>Lần chạy trước: <strong id="schedule-last-run">—</strong></div>
-            </div>
-
-            <button id="schedule-save-button" type="submit" class="secondary">Lưu cấu hình</button>
-          </form>
-        </article>
-      </section>
-
-      <section class="panel workers-panel">
-        <div class="panel-title">
-          <div><p class="eyebrow">LIVE STATUS</p><h2>Workers</h2></div>
-          <div class="tab-controls">
-            <button id="tab-nvhn" class="tab-btn active">⚔️ Nhiệm vụ hàng ngày</button>
-            <button id="tab-ta-thu" class="tab-btn">👹 Auto Tà Thú</button>
-          </div>
-          <span id="active-job" class="badge hidden"></span>
+      <article class="card" id="card-tathu">
+        <div class="card-head">
+          <div><p class="eyebrow">AUTO TÀ THÚ</p><h2>Tà Thú</h2></div>
+          <span id="tathu-state" class="pill">—</span>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Worker</th><th>State</th><th>Nhân vật</th><th>Lượt</th><th>PID</th><th>CPU</th><th>RAM</th><th>Elapsed</th><th>Accounts</th><th>Proxy</th><th>Log cuối</th><th>Actions</th></tr></thead>
-            <tbody id="workers-body"><tr><td colspan="12" class="empty">Đang tải…</td></tr></tbody>
-          </table>
+        <div class="stats" id="tathu-stats"></div>
+        <p id="tathu-detail" class="muted small detail"></p>
+        <div class="actions">
+          <button id="btn-tathu-start" class="btn primary">▶ Start Tà Thú</button>
+          <button id="btn-tathu-stop" class="btn danger">■ Stop Tà Thú</button>
         </div>
-      </section>
+      </article>
 
-      <section id="console-panel" class="panel console-panel hidden">
-        <div class="panel-title">
-          <div><p class="eyebrow">STREAM</p><h2 id="console-title">Output</h2></div>
-          <button id="close-console" class="ghost">Đóng</button>
+      <article class="card" id="card-system">
+        <div class="card-head">
+          <div><p class="eyebrow">HỆ THỐNG</p><h2>Account &amp; lịch</h2></div>
+          <span id="schedule-pill" class="pill">—</span>
         </div>
-        <pre id="console-output"></pre>
-      </section>
+        <div class="stats" id="system-stats"></div>
+        <form id="account-form" class="upload">
+          <input id="account-file" type="file" accept=".csv,text/csv" required aria-label="File account.csv">
+          <button type="submit" class="btn">Upload</button>
+        </form>
+        <p class="muted small">CSV có header <code>username,password</code>.</p>
+        <div class="actions">
+          <button id="btn-stop-all" class="btn danger wide" title="Dừng NVHN + Tà Thú và tắt tự khởi động">⏹ Stop tất cả</button>
+        </div>
+      </article>
+    </section>
+
+    <!-- ============ Cấu hình ============ -->
+    <details class="panel" id="settings-panel">
+      <summary>
+        <span><strong>Cấu hình</strong> <span class="muted small" id="settings-summary"></span></span>
+        <span id="settings-dirty" class="pill warn hidden">Chưa lưu</span>
+      </summary>
+      <form id="settings-form" class="settings">
+        <fieldset>
+          <legend>Worker</legend>
+          <label>Số worker <input id="cfg-worker-count" type="number" min="1" max="500" step="1"></label>
+          <label>Giãn cách khởi động (giây) <input id="cfg-delay" type="number" min="0" max="3600" step="1"></label>
+          <label class="check span2"><input id="cfg-use-proxy" type="checkbox"> Dùng proxy cho NVHN &amp; Tà Thú (proxy-tk.txt)</label>
+          <p class="muted small span2" id="proxy-info"></p>
+        </fieldset>
+        <fieldset>
+          <legend>Chạy lại từ đầu theo lịch (GMT+7)</legend>
+          <label class="check span2"><input id="cfg-schedule-enabled" type="checkbox"> Bật lịch Build &amp; Run lại NVHN</label>
+          <label>Lần đầu lúc <input id="cfg-start-time" type="time"></label>
+          <label>Sau đó lặp lại mỗi (giờ) <input id="cfg-repeat" type="number" min="1" max="72" step="1"></label>
+          <label class="check span2"><input id="cfg-auto-tathu" type="checkbox"> Auto Tà Thú khi NVHN xong</label>
+          <p class="muted small span2" id="schedule-info"></p>
+        </fieldset>
+        <div class="settings-foot">
+          <p class="muted small">Mỗi lần đến lịch: dừng Tà Thú, build lại từ đầu (chia lại worker, xoá tiến độ cũ) rồi chạy NVHN. Đổi số worker / proxy khi đang chạy cần Stop rồi Start để áp dụng.</p>
+          <button id="btn-save-settings" type="submit" class="btn primary">Lưu cấu hình</button>
+        </div>
+      </form>
+    </details>
+
+    <!-- ============ Bảng worker ============ -->
+    <section class="panel workers">
+      <div class="workers-head">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-runtime="nvhn" role="tab">⚔️ NVHN <span class="count" id="tab-count-nvhn">0</span></button>
+          <button class="tab" data-runtime="ta_thu" role="tab">👹 Tà Thú <span class="count" id="tab-count-ta_thu">0</span></button>
+        </div>
+        <div class="filters" id="state-filters">
+          <button class="chip active" data-state="ALL">Tất cả</button>
+          <button class="chip" data-state="RUNNING">Đang chạy</button>
+          <button class="chip" data-state="STOPPED">Dừng</button>
+          <button class="chip" data-state="PAUSED">Tạm dừng</button>
+          <button class="chip" data-state="DONE">Xong</button>
+          <button class="chip" data-state="PROBLEM">Có vấn đề</button>
+        </div>
+        <input id="worker-search" class="search" type="search" placeholder="Tìm worker / nhân vật…" aria-label="Tìm worker">
+      </div>
+      <div id="bulk-bar" class="bulk hidden">
+        <span id="bulk-count"></span>
+        <button class="btn sm" data-bulk="start">▶ Start</button>
+        <button class="btn sm" data-bulk="restart">⟳ Restart</button>
+        <button class="btn sm danger" data-bulk="stop">■ Stop</button>
+        <button class="btn sm ghost" data-bulk="clear">Bỏ chọn</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead id="workers-head"></thead>
+          <tbody id="workers-body"><tr><td class="empty">Đang tải…</td></tr></tbody>
+        </table>
+      </div>
     </section>
   </main>
-  <script src="/static/app.js?v=9" defer></script>
+
+  <!-- ============ Log drawer ============ -->
+  <aside id="log-drawer" class="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div class="drawer-tabs">
+        <button class="tab active" data-pane="log">Log worker</button>
+        <button class="tab" data-pane="build">Build <span id="build-badge" class="dot hidden"></span></button>
+      </div>
+      <button id="drawer-close" class="btn ghost sm" title="Đóng (Esc)">✕</button>
+    </div>
+
+    <div class="pane" id="pane-log">
+      <div class="log-controls">
+        <select id="log-worker" aria-label="Worker"></select>
+        <div class="seg" id="log-runtime">
+          <button data-value="nvhn">NVHN</button><button data-value="ta_thu">Tà Thú</button>
+        </div>
+        <div class="seg" id="log-kind">
+          <button data-value="stdout">Log</button><button data-value="error">Lỗi Java</button><button data-value="supervisor">Supervisor</button>
+        </div>
+      </div>
+      <div class="log-controls">
+        <div class="levels" id="log-levels">
+          <button class="chip lv-debug" data-level="debug">debug</button>
+          <button class="chip lv-info active" data-level="info">info</button>
+          <button class="chip lv-success active" data-level="success">ok</button>
+          <button class="chip lv-warn active" data-level="warn">warn</button>
+          <button class="chip lv-error active" data-level="error">error</button>
+        </div>
+        <input id="log-search" class="search" type="search" placeholder="Tìm trong log…" aria-label="Tìm trong log">
+      </div>
+      <div class="log-controls tools">
+        <label class="check small"><input id="log-wrap" type="checkbox" checked> Xuống dòng</label>
+        <label class="check small"><input id="log-follow" type="checkbox" checked> Tự cuộn</label>
+        <span id="log-conn" class="muted small"></span>
+        <span class="spacer"></span>
+        <button id="log-copy" class="btn ghost sm">Copy</button>
+        <a id="log-download" class="btn ghost sm" href="#" download>Tải file</a>
+        <button id="log-clear" class="btn ghost sm">Xoá màn hình</button>
+      </div>
+      <div id="log-info" class="log-info hidden"></div>
+      <div id="fight-card" class="fight hidden"></div>
+      <div class="log-wrap">
+        <div id="log-lines" class="log-lines wrap" role="log" aria-live="off"></div>
+        <button id="log-jump" class="jump hidden">↓ <span></span> dòng mới</button>
+      </div>
+    </div>
+
+    <div class="pane hidden" id="pane-build">
+      <p id="build-title" class="muted small">Chưa có build nào trong phiên này.</p>
+      <pre id="build-output" class="build-output"></pre>
+    </div>
+  </aside>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <h3 id="confirm-title"></h3>
+      <p id="confirm-text" class="muted"></p>
+      <label id="confirm-option" class="check hidden"><input type="checkbox"> <span></span></label>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn ghost">Huỷ</button>
+        <button value="ok" id="confirm-ok" class="btn danger">Xác nhận</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js?v=14" defer></script>
 </body>
 </html>

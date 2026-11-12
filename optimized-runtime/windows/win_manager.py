@@ -129,6 +129,28 @@ RE_CHAR_STATUS = re.compile(r"AUTO NVHN STATUS:.*?nv=([a-zA-Z0-9_]+)")
 RE_CHAR_CHOOSE = re.compile(r"AUTO NVHN: (?:chọn|chuẩn bị) nhân vật ([a-zA-Z0-9_]+)")
 RE_NVHN_PROGRESS = re.compile(r"nvhn=[0-9]+/20")
 RE_TASK_PROGRESS = re.compile(r"progress=[0-9]+/[0-9]+")
+# Prefix "HH:MM:SS " do -Dnso.log.timestamp=true ghi; watchdog so sánh nội dung không kèm giờ.
+RE_LOG_TIMESTAMP = re.compile(r"^\d{2}:\d{2}:\d{2} ")
+# Proxy: dùng chung proxy_support.py với Ubuntu (chia đều kiểu uplevel).
+PROXY_FILE = Path(os.environ.get("PROXY_TK_FILE", REPO_DIR / "proxy-tk.txt"))
+try:
+    PROXY_ENABLED = int(os.environ.get("NSO_PROXY_WORKERS_PER_PROXY", "6")) > 0
+except ValueError:
+    PROXY_ENABLED = True
+LOG_TIMESTAMP = os.environ.get("NSO_LOG_TIMESTAMP", "true")
+
+
+def _load_proxy_support():
+    import importlib.util
+
+    path = RUNTIME_DIR / "scripts" / "proxy_support.py"
+    spec = importlib.util.spec_from_file_location("nso_proxy_support", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 NPC25_BLOCK_MESSAGE = (
     "AUTO NVHN NPC25: [Hãy nhận nhiệm vụ mỗi ngày từ ta rồi mới sử dụng tính năng này.]"
 )
@@ -369,6 +391,7 @@ def repeated_status_reason(log_file: Path) -> Optional[str]:
     npc25_last_line: Optional[str] = None
 
     for line in _read_watchdog_log_tail(log_file):
+        line = RE_LOG_TIMESTAMP.sub("", line)
         if line.startswith("===== START "):
             last_key = None
             repeated = 0
@@ -722,6 +745,13 @@ def _cmd_start_inner(args: Any) -> int:
 
     java_bin = get_java_bin("java")
 
+    proxy_support = _load_proxy_support()
+    try:
+        proxy_support.prepare(WORKERS_DIR, PROXY_FILE, PROXY_ENABLED)
+    except proxy_support.ProxyError as exc:
+        sys.stderr.write(f"[!] Proxy preflight that bai: {exc}\n")
+        return 1
+
     for worker_dir in worker_dirs:
         if not worker_dir.is_dir():
             continue
@@ -799,6 +829,7 @@ def _cmd_start_inner(args: Any) -> int:
             "-Dnso.lazy.map=true",
             "-Dnso.event.sender=true",
             "-Dnso.nvhn.headless=true",
+            f"-Dnso.log.timestamp={LOG_TIMESTAMP}",
             f"-Duser.home={home_dir.as_posix()}",
             "-cp", classpath,
             "OptimizedMain",
@@ -809,10 +840,21 @@ def _cmd_start_inner(args: Any) -> int:
             creationflags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
 
         try:
+            worker_env = os.environ.copy()
+            worker_env.pop("NSO_SOCKS5_PROXY", None)
+            worker_env["NSO_PROXY_REQUIRED"] = "0"
+            worker_env.update(proxy_support.launch_env(worker_dir, PROXY_ENABLED))
+        except proxy_support.ProxyError as exc:
+            sys.stderr.write(f"[!] [{worker_name}] {exc}\n")
+            failed += 1
+            continue
+
+        try:
             with open(stdout_log, "a", encoding="utf-8") as f_out, open(err_log, "a", encoding="utf-8") as f_err:
                 p = subprocess.Popen(
                     cmd,
                     cwd=str(worker_dir),
+                    env=worker_env,
                     stdout=f_out,
                     stderr=f_err,
                     creationflags=creationflags,
@@ -972,6 +1014,13 @@ def _cmd_stop_inner(args: Any) -> int:
     return 0
 
 
+def _read_proxy(worker_dir: Path) -> Optional[str]:
+    try:
+        return (worker_dir / ".proxy").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 def get_workers_status_dict() -> Dict[str, Any]:
     """Trả về trạng thái toàn bộ workers dạng dict (JSON compatible) cho Web Dashboard."""
     worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
@@ -1058,6 +1107,7 @@ def get_workers_status_dict() -> Dict[str, Any]:
             "rss_mb": rss_mb,
             "elapsed": None,
             "accounts": acc_count,
+            "proxy": _read_proxy(worker_dir),
             "last_auto_log": last_auto_log,
             "last_log_at": last_log_at,
             "last_log_age_seconds": last_log_age_seconds,

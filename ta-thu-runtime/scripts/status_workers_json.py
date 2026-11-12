@@ -39,7 +39,7 @@ def classify_pid(pid_file: Path, worker_dir: Path) -> tuple[int | None, str | No
     except OSError:
         return None, "STALE_PID"
 
-    if "HeadlessMain" not in cmdline or "-Dnso.runtime=ta-thu" not in cmdline or str(worker_dir) not in cmdline:
+    if ("OptimizedMain" not in cmdline and "HeadlessMain" not in cmdline) or "-Dnso.runtime=ta-thu" not in cmdline or str(worker_dir) not in cmdline:
         return None, "ERROR"
     return pid, "RUNNING"
 
@@ -134,6 +134,7 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
         "rss_mb": rss_mb,
         "elapsed": elapsed,
         "accounts": count_accounts(worker_dir / "account.csv"),
+        "proxy": read_text(worker_dir / ".proxy") or None,
         "last_auto_log": last_matching_line(stdout_log, "AUTO TA THU"),
         "last_log_at": last_log_at,
         "last_log_age_seconds": last_log_age_seconds,

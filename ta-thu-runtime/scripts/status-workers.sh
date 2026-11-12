@@ -45,7 +45,7 @@ for worker_dir in "${worker_dirs[@]}"; do
         candidate=$(<"$pid_file")
         if [[ "$candidate" =~ ^[0-9]+$ ]] && kill -0 "$candidate" 2>/dev/null; then
             cmdline=$(tr '\0' ' ' <"/proc/$candidate/cmdline" 2>/dev/null || true)
-            if [[ "$cmdline" == *"HeadlessMain"* && "$cmdline" == *"-Dnso.runtime=ta-thu"* && "$cmdline" == *"$worker_dir"* ]]; then
+            if [[ ( "$cmdline" == *"OptimizedMain"* || "$cmdline" == *"HeadlessMain"* ) && "$cmdline" == *"-Dnso.runtime=ta-thu"* && "$cmdline" == *"$worker_dir"* ]]; then
                 pid=$candidate
                 state='RUNNING'
                 cpu=$(ps -o pcpu= -p "$pid" | tr -d ' ')

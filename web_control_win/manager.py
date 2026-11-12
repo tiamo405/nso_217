@@ -17,23 +17,27 @@ from typing import Any, Dict, Optional, Tuple
 
 from server_config import DEFAULT_SERVER, normalize_server
 
+from web_control.common import (  # noqa: F401  (re-export cho test/scheduler)
+    DEFAULT_PERIODIC_RESTART_HOURS,
+    DEFAULT_WORKER_START_DELAY_SECONDS,
+    EMPTY_TOTALS,
+    MAX_PERIODIC_RESTART_HOURS,
+    MAX_WORKER_START_DELAY_SECONDS,
+    ControlError,
+    ManagerCommon,
+)
+from web_control.logparse import SummaryCache
+
 from .config import Settings
 
 WORKER_RE = re.compile(r"^worker-([0-9]+)$")
-DEFAULT_PERIODIC_RESTART_HOURS = 3
-MAX_PERIODIC_RESTART_HOURS = 168
-DEFAULT_WORKER_START_DELAY_SECONDS = 30
-MAX_WORKER_START_DELAY_SECONDS = 3600
+LOG_KINDS = {"stdout": "stdout.log", "error": "java-errors.log"}
 
 
 def _creationflags_for_windows() -> int:
     if os.name == "nt":
         return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
     return 0
-
-
-class ControlError(RuntimeError):
-    pass
 
 
 def is_pid_running(pid: int) -> bool:
@@ -118,7 +122,7 @@ def supervisor_pid_is_valid(pid: int, manager_path: Path) -> bool:
     return expected in command and " supervise" in f" {command}"
 
 
-class WindowsHeadlessManager:
+class WindowsHeadlessManager(ManagerCommon):
     """Quản lý runtime và worker trên Windows thông qua win_manager.py và Windows APIs."""
 
     def __init__(self, settings: Settings):
@@ -127,6 +131,57 @@ class WindowsHeadlessManager:
         self._supervisor_process: Optional[subprocess.Popen[bytes]] = None
         self._ta_thu_supervisor_process: Optional[subprocess.Popen[bytes]] = None
         self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
+        self.log_summaries = SummaryCache()
+
+    @property
+    def web_runtime_dir(self) -> Path:
+        return self.settings.web_runtime_dir
+
+    @property
+    def ta_thu_workers_dir(self) -> Path:
+        return self.settings.ta_thu_workers_dir
+
+    def _command_env(self, server: Optional[str] = None,
+                     extra_env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        env = self.settings.command_env(server)
+        env["NSO_PROXY_WORKERS_PER_PROXY"] = str(self.proxy_workers_per_proxy())
+        if extra_env:
+            env.update(extra_env)
+        return env
+
+    async def _run_python(self, script: Path, args: Tuple[str, ...], *, timeout: Optional[int],
+                          env: Dict[str, str], label: str) -> Tuple[int, str]:
+        """Chạy manager Python, gom output qua file tạm (không giữ PIPE với tiến trình java con)."""
+        import tempfile
+
+        with tempfile.TemporaryFile() as output:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    sys.executable, str(script), *args,
+                    cwd=self.settings.repo_dir,
+                    env=env,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+            except OSError as exc:
+                raise ControlError(f"Không thực thi được {label}: {exc}") from exc
+            try:
+                await asyncio.wait_for(process.wait(), timeout=timeout or self.settings.command_timeout)
+            except asyncio.TimeoutError:
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+                await process.wait()
+                raise ControlError(f"Lệnh {label} {args[0] if args else ''} quá thời gian")
+            output.seek(0)
+            data = output.read()
+        return process.returncode or 0, data.decode("utf-8", errors="replace")
 
     @property
     def state_file(self) -> Path:
@@ -141,66 +196,27 @@ class WindowsHeadlessManager:
         return self.settings.workers_dir / "supervisor.pid"
 
     async def _run_win_manager(
-        self, *args: str, timeout: Optional[int] = None, server: Optional[str] = None
+        self, *args: str, timeout: Optional[int] = None, server: Optional[str] = None,
+        extra_env: Optional[Dict[str, str]] = None,
     ) -> Tuple[int, str]:
         """Thực thi lệnh win_manager.py bất đồng bộ."""
-        cmd = [sys.executable, str(self.settings.win_manager_py), *args]
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=self.settings.repo_dir,
-                env=self.settings.command_env(server),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except OSError as exc:
-            raise ControlError(f"Không thực thi được win_manager.py: {exc}") from exc
-
-        try:
-            stdout, _ = await asyncio.wait_for(
-                process.communicate(), timeout=timeout or self.settings.command_timeout
-            )
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise ControlError(f"Lệnh win_manager {args[0] if args else ''} quá thời gian")
-
-        return process.returncode or 0, stdout.decode("utf-8", errors="replace")
+        return await self._run_python(
+            self.settings.win_manager_py, args, timeout=timeout,
+            env=self._command_env(server, extra_env), label="win_manager.py",
+        )
 
     async def _run_ta_thu_manager(
-        self, *args: str, timeout: Optional[int] = None
+        self, *args: str, timeout: Optional[int] = None,
+        extra_env: Optional[Dict[str, str]] = None,
     ) -> Tuple[int, str]:
         """Run the native cross-platform Tà Thú controller."""
         manager_py = self.settings.ta_thu_manager_py
         if not manager_py.is_file():
             raise ControlError(f"Không tìm thấy Tà Thú manager: {manager_py}")
-        command = [sys.executable, str(manager_py), *args]
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                cwd=self.settings.repo_dir,
-                env=self.settings.command_env(self.selected_server()),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except OSError as exc:
-            raise ControlError(f"Không thực thi được Tà Thú manager: {exc}") from exc
-        try:
-            stdout, _ = await asyncio.wait_for(
-                process.communicate(), timeout=timeout or self.settings.command_timeout
-            )
-        except TimeoutError:
-            if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            else:
-                process.kill()
-            await process.wait()
-            raise ControlError("Lệnh Tà Thú manager quá thời gian")
-        return process.returncode or 0, stdout.decode("utf-8", errors="replace")
+        return await self._run_python(
+            manager_py, args, timeout=timeout,
+            env=self._command_env(self.selected_server(), extra_env), label="Tà Thú manager",
+        )
 
     def _read_pid(self, path: Path) -> Optional[int]:
         try:
@@ -253,59 +269,6 @@ class WindowsHeadlessManager:
         state.setdefault("server", self.selected_server())
         self._write_state(state)
 
-    def periodic_restart_hours(self) -> int:
-        """Configured per-worker periodic restart interval; zero disables it."""
-        raw = self._read_state().get(
-            "periodic_restart_hours", DEFAULT_PERIODIC_RESTART_HOURS
-        )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = DEFAULT_PERIODIC_RESTART_HOURS
-        return max(0, min(value, MAX_PERIODIC_RESTART_HOURS))
-
-    def set_periodic_restart_hours(self, hours: int) -> int:
-        """Persist the periodic restart interval in whole hours."""
-        try:
-            value = int(hours)
-        except (TypeError, ValueError) as exc:
-            raise ControlError("Số giờ restart định kỳ không hợp lệ") from exc
-        if value < 0 or value > MAX_PERIODIC_RESTART_HOURS:
-            raise ControlError(
-                f"Số giờ restart định kỳ phải từ 0 đến {MAX_PERIODIC_RESTART_HOURS}"
-            )
-        state = self._read_state()
-        state["periodic_restart_hours"] = value
-        self._write_state(state)
-        return value
-
-    def worker_start_delay_seconds(self) -> int:
-        """Configured delay between starting consecutive workers."""
-        raw = self._read_state().get(
-            "worker_start_delay_seconds", DEFAULT_WORKER_START_DELAY_SECONDS
-        )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = DEFAULT_WORKER_START_DELAY_SECONDS
-        return max(0, min(value, MAX_WORKER_START_DELAY_SECONDS))
-
-    def set_worker_start_delay_seconds(self, seconds: int) -> int:
-        """Persist the delay between consecutive worker starts."""
-        try:
-            value = int(seconds)
-        except (TypeError, ValueError) as exc:
-            raise ControlError("Giãn cách khởi động worker không hợp lệ") from exc
-        if value < 0 or value > MAX_WORKER_START_DELAY_SECONDS:
-            raise ControlError(
-                "Giãn cách khởi động worker phải từ "
-                f"0 đến {MAX_WORKER_START_DELAY_SECONDS} giây"
-            )
-        state = self._read_state()
-        state["worker_start_delay_seconds"] = value
-        self._write_state(state)
-        return value
-
     def supervisor_status(self) -> Dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and supervisor_pid_is_valid(pid, self.settings.win_manager_py)
@@ -318,6 +281,9 @@ class WindowsHeadlessManager:
             "server": self.selected_server(),
             "periodic_restart_hours": self.periodic_restart_hours(),
             "worker_start_delay_seconds": self.worker_start_delay_seconds(),
+            "proxy_workers_per_proxy": self.proxy_workers_per_proxy(),
+            "proxy_enabled": self.proxy_workers_per_proxy() > 0,
+            "proxy_count": self.proxy_count(),
             "log": str(self.supervisor_log),
         }
 
@@ -333,6 +299,7 @@ class WindowsHeadlessManager:
             raise ControlError("win_manager status trả về JSON không hợp lệ") from exc
 
         data["supervisor"] = self.supervisor_status()
+        self.enrich_workers(data.get("workers") or [])
         return data
 
     async def start_supervisor(
@@ -342,12 +309,15 @@ class WindowsHeadlessManager:
         server: Optional[str] = None,
         periodic_restart_hours: Optional[int] = None,
         worker_start_delay_seconds: Optional[int] = None,
+        proxy_workers_per_proxy: Optional[int] = None,
     ) -> Dict[str, Any]:
         async with self.control_lock:
             if periodic_restart_hours is not None:
                 self.set_periodic_restart_hours(periodic_restart_hours)
             if worker_start_delay_seconds is not None:
                 self.set_worker_start_delay_seconds(worker_start_delay_seconds)
+            if proxy_workers_per_proxy is not None:
+                self.set_proxy_workers_per_proxy(proxy_workers_per_proxy)
             current = self.supervisor_status()
             requested_server = (
                 self.selected_server() if server is None else self.set_server(server)
@@ -406,7 +376,7 @@ class WindowsHeadlessManager:
             "--delay", str(self.worker_start_delay_seconds()),
             "--interval", "20",
         ]
-        supervisor_env = self.settings.command_env(selected_server)
+        supervisor_env = self._command_env(selected_server)
         supervisor_env["PERIODIC_RESTART_SECONDS"] = str(
             self.periodic_restart_hours() * 60 * 60
         )
@@ -499,42 +469,51 @@ class WindowsHeadlessManager:
         }
 
     async def ta_thu_status(self) -> Dict[str, Any]:
-        if not self.settings.ta_thu_manager_py.is_file():
-            return {
-                "workers_dir": str(self.settings.ta_thu_workers_dir),
-                "workers": [],
-                "totals": {"running": 0, "stopped": 0, "paused": 0, "done": 0, "total": 0},
-                "supervisor": self.ta_thu_supervisor_status(),
-            }
-        code, output = await self._run_ta_thu_manager("status", "--json")
-        if code != 0:
-            raise ControlError(output.strip() or "Không đọc được trạng thái Tà Thú")
-        try:
-            data = json.loads(output)
-        except json.JSONDecodeError as exc:
-            raise ControlError("Tà Thú manager trả về JSON không hợp lệ") from exc
+        data: Dict[str, Any] = {
+            "workers_dir": str(self.settings.ta_thu_workers_dir),
+            "workers": [],
+            "totals": dict(EMPTY_TOTALS),
+        }
+        if self.settings.ta_thu_manager_py.is_file():
+            code, output = await self._run_ta_thu_manager("status", "--json")
+            if code == 0:
+                try:
+                    parsed = json.loads(output)
+                    if isinstance(parsed, dict):
+                        data.update(parsed)
+                except json.JSONDecodeError:
+                    pass
+        data["totals"] = {**EMPTY_TOTALS, **(data.get("totals") or {})}
+        self.enrich_workers(data.get("workers") or [])
         data["supervisor"] = self.ta_thu_supervisor_status()
         return data
 
     async def start_ta_thu(
         self,
         worker_count: int = 10,
+        server: Optional[str] = None,
         nvhn_workers_dir: Path | None = None,
+        rebuild_workers: bool = True,
     ) -> bool:
         async with self.control_lock:
             if self.ta_thu_supervisor_status()["running"]:
+                self.set_desired_ta_thu(True)
                 return True
+            if server is not None:
+                self.set_server(server)
             self.settings.ta_thu_root.mkdir(parents=True, exist_ok=True)
-            code, output = await self._run_ta_thu_manager(
-                "build-workers", str(worker_count), timeout=self.settings.build_timeout
-            )
-            self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
-            with self.ta_thu_supervisor_log.open("ab") as stream:
-                stream.write(output.encode("utf-8", errors="replace"))
-                if output and not output.endswith("\n"):
-                    stream.write(b"\n")
-            if code != 0:
-                return False
+            has_workers = any(p.is_dir() for p in self.settings.ta_thu_workers_dir.glob("worker-*"))
+            if rebuild_workers or not has_workers:
+                code, output = await self._run_ta_thu_manager(
+                    "build-workers", str(worker_count), timeout=self.settings.build_timeout
+                )
+                self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
+                with self.ta_thu_supervisor_log.open("ab") as stream:
+                    stream.write(output.encode("utf-8", errors="replace"))
+                    if output and not output.endswith("\n"):
+                        stream.write(b"\n")
+                if code != 0:
+                    return False
 
             pid_file = self.ta_thu_supervisor_pid_file
             if pid_file.exists() and not self.ta_thu_supervisor_status()["running"]:
@@ -547,7 +526,7 @@ class WindowsHeadlessManager:
                 "--delay", str(self.worker_start_delay_seconds()),
                 "--interval", "20",
             ]
-            environment = self.settings.command_env(self.selected_server())
+            environment = self._command_env(self.selected_server())
             if nvhn_workers_dir is not None:
                 environment["TA_THU_NVHN_WORKERS_DIR"] = str(nvhn_workers_dir)
             try:
@@ -569,13 +548,17 @@ class WindowsHeadlessManager:
             for _ in range(20):
                 await asyncio.sleep(0.2)
                 if self.ta_thu_supervisor_status()["running"]:
+                    self.set_desired_ta_thu(True)
                     return True
             if self._ta_thu_supervisor_process.poll() is None:
                 kill_pid(self._ta_thu_supervisor_process.pid)
             self._ta_thu_supervisor_process = None
             return False
 
-    async def stop_ta_thu(self) -> bool:
+    async def stop_ta_thu(self, *, remember: bool = True) -> bool:
+        if remember:
+            # Ghi trước để scheduler không tự khôi phục Tà Thú trong lúc dừng.
+            self.set_desired_ta_thu(False)
         async with self.control_lock:
             status = self.ta_thu_supervisor_status()
             pid = status["pid"]
@@ -601,18 +584,42 @@ class WindowsHeadlessManager:
                 return False
             return code == 0
 
-    def ta_thu_worker_number(self, worker_name: str) -> int:
+    def ta_thu_worker_number(self, worker_name: str, *, must_exist: bool = True) -> int:
         match = WORKER_RE.fullmatch(worker_name)
         if not match:
             raise ControlError("Tên Tà Thú worker không hợp lệ")
         number = int(match.group(1))
         worker_dir = (self.settings.ta_thu_workers_dir / f"worker-{number:02d}").resolve()
-        if worker_dir.parent != self.settings.ta_thu_workers_dir.resolve() or not worker_dir.is_dir():
+        if worker_dir.parent != self.settings.ta_thu_workers_dir.resolve() or (
+            must_exist and not worker_dir.is_dir()
+        ):
             raise ControlError("Không tìm thấy Tà Thú worker")
         return number
 
+    async def ta_thu_worker_action(self, worker_name: str, action: str) -> str:
+        """Start / Stop / Restart một worker Tà Thú (marker .paused giống NVHN)."""
+        if action not in ("start", "stop", "restart"):
+            raise ControlError("Thao tác không hợp lệ")
+        async with self.control_lock:
+            number = str(self.ta_thu_worker_number(worker_name))
+            marker = self.settings.ta_thu_workers_dir / f"worker-{int(number):02d}" / ".paused"
+            was_paused = marker.is_file()
+            if action == "stop":
+                marker.touch(exist_ok=True)
+                code, output = await self._run_ta_thu_manager("stop", number, timeout=30)
+            else:
+                marker.unlink(missing_ok=True)
+                code, output = await self._run_ta_thu_manager(
+                    action, "--delay", "0", number, timeout=45
+                )
+                if code != 0 and was_paused:
+                    marker.touch(exist_ok=True)
+            if code != 0:
+                raise ControlError(output.strip() or f"Tà Thú {action} {worker_name} thất bại")
+            return output.strip()
+
     def ta_thu_log_path(self, worker_name: str, kind: str) -> Path:
-        number = self.ta_thu_worker_number(worker_name)
+        number = self.ta_thu_worker_number(worker_name, must_exist=False)
         filename = {"stdout": "stdout.log", "error": "java-errors.log"}.get(kind)
         if filename is None:
             raise ControlError("Loại log không hợp lệ")
@@ -655,7 +662,7 @@ class WindowsHeadlessManager:
             was_paused = pause_marker.is_file()
             pause_marker.unlink(missing_ok=True)
             code, output = await self._run_win_manager(
-                "start", "--delay", "0", number, timeout=30, server=self.selected_server()
+                "start", "--delay", "0", number, timeout=45, server=self.selected_server()
             )
             if code != 0:
                 if was_paused:
@@ -669,7 +676,7 @@ class WindowsHeadlessManager:
             was_paused = pause_marker.is_file()
             pause_marker.unlink(missing_ok=True)
             code, output = await self._run_win_manager(
-                "restart", number, timeout=30, server=self.selected_server()
+                "restart", "--delay", "0", number, timeout=45, server=self.selected_server()
             )
             if code != 0:
                 if was_paused:
@@ -677,15 +684,19 @@ class WindowsHeadlessManager:
                 raise ControlError(output.strip() or "Restart worker thất bại")
             return output.strip()
 
-    def log_path(self, worker_name: str, kind: str) -> Path:
+    def log_path(self, worker_name: str, kind: str, runtime: str = "nvhn") -> Path:
+        if kind == "supervisor":
+            return self.ta_thu_supervisor_log if runtime == "ta_thu" else self.supervisor_log
+        if runtime == "ta_thu":
+            return self.ta_thu_log_path(worker_name, kind)
         number = self.worker_number(worker_name)
-        filename = {"stdout": "stdout.log", "error": "java-errors.log"}.get(kind)
+        filename = LOG_KINDS.get(kind)
         if filename is None:
             raise ControlError("Loại log không hợp lệ")
         return self.settings.workers_dir / f"worker-{int(number):02d}" / filename
 
-    def tail_log(self, worker_name: str, kind: str, lines: int = 200) -> str:
-        path = self.log_path(worker_name, kind)
+    def tail_log(self, worker_name: str, kind: str, lines: int = 200, runtime: str = "nvhn") -> str:
+        path = self.log_path(worker_name, kind, runtime=runtime)
         if not path.is_file():
             return ""
         with path.open("r", encoding="utf-8", errors="replace") as stream:

@@ -113,7 +113,8 @@ sys.exit(0)
             self.assertFalse(data["supervisor"]["running"])
             self.assertIn("ta_thu", data)
             self.assertEqual(data["schedule"]["current_phase"], "nvhn")
-            self.assertEqual(data["supervisor"]["periodic_restart_hours"], 3)
+            # Mặc định không restart định kỳ; chạy lại từ đầu do lịch đảm nhiệm.
+            self.assertEqual(data["supervisor"]["periodic_restart_hours"], 0)
             self.assertEqual(data["supervisor"]["worker_start_delay_seconds"], 30)
 
     async def test_supervisor_periodic_restart_settings(self) -> None:
@@ -167,7 +168,7 @@ sys.exit(0)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             valid_csv = "username,password\nuserA,passA\nuserB,passB\nuserC,passC\n"
             res = await client.post(
-                "/api/account",
+                "/api/accounts/upload",
                 content=valid_csv.encode("utf-8"),
                 headers={"Content-Type": "text/csv"},
             )
@@ -176,7 +177,7 @@ sys.exit(0)
 
             # Upload sai header
             bad_res = await client.post(
-                "/api/account",
+                "/api/accounts/upload",
                 content=b"user,pass\na,b\n",
                 headers={"Content-Type": "text/csv"},
             )
@@ -242,6 +243,7 @@ sys.exit(0)
             worker_count=scheduler.worker_count,
             start_after_build=True,
             server=scheduler.server,
+            proxy_workers_per_proxy=scheduler.proxy_workers_per_proxy,
         )
         last_run = datetime.fromisoformat(scheduler.last_run_at)
         next_run = datetime.fromisoformat(scheduler.next_run_at)
@@ -267,6 +269,7 @@ sys.exit(0)
             worker_count=scheduler.worker_count,
             start_after_build=True,
             server=scheduler.server,
+            proxy_workers_per_proxy=scheduler.proxy_workers_per_proxy,
         )
         self.assertEqual(scheduler.current_phase, "nvhn")
 
@@ -295,6 +298,7 @@ sys.exit(0)
 
         start_ta_thu.assert_awaited_once_with(
             worker_count=1,
+            server=manager.selected_server(),
             nvhn_workers_dir=manager.settings.workers_dir,
         )
         self.assertEqual(scheduler.current_phase, "ta_thu")
@@ -320,6 +324,7 @@ sys.exit(0)
 
         start_ta_thu.assert_awaited_once_with(
             worker_count=3,
+            server=manager.selected_server(),
             nvhn_workers_dir=manager.settings.workers_dir,
         )
         self.assertEqual(scheduler.current_phase, "ta_thu")

@@ -126,7 +126,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             static_dir = Path(__file__).resolve().parents[1] / "web_control" / "static"
             self.assertIn(
-                "NSO Headless Control",
+                "NSO Worker Control",
                 (static_dir / "index.html").read_text(encoding="utf-8"),
             )
             self.assertIn(
@@ -139,19 +139,21 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status_response.status_code, 200)
             self.assertEqual(status_response.json()["workers"][0]["name"], "worker-01")
             self.assertEqual(status_response.json()["workers"][0]["char_name"], "fmgmza")
-            self.assertEqual(status_response.json()["supervisor"]["periodic_restart_hours"], 3)
+            self.assertEqual(status_response.json()["supervisor"]["periodic_restart_hours"], 0)
             self.assertEqual(status_response.json()["supervisor"]["worker_start_delay_seconds"], 30)
             self.assertEqual(status_response.json()["supervisor"]["proxy_workers_per_proxy"], 6)
 
             # Check index.html table header and buttons
             index_html = (static_dir / "index.html").read_text(encoding="utf-8")
-            self.assertIn("<th>Nhân vật</th>", index_html)
-            self.assertIn('id="build-button"', index_html)
-            self.assertIn('id="run-button"', index_html)
-            self.assertIn('id="periodic-restart-hours"', index_html)
-            self.assertIn('id="worker-start-delay-seconds"', index_html)
-            self.assertIn('id="proxy-workers-per-proxy"', index_html)
-            self.assertIn('id="schedule-proxy-workers-per-proxy"', index_html)
+            app_js = (static_dir / "app.js").read_text(encoding="utf-8")
+            self.assertIn('"Nhân vật"', app_js)
+            for element_id in (
+                "btn-build-run", "btn-build", "btn-nvhn-start", "btn-nvhn-stop",
+                "btn-tathu-start", "btn-tathu-stop", "btn-stop-all",
+                "cfg-worker-count", "cfg-delay", "cfg-use-proxy", "log-info",
+                "log-drawer", "log-lines", "fight-card",
+            ):
+                self.assertIn(f'id="{element_id}"', index_html)
 
             invalid_csv = await client.post(
                 "/api/accounts/upload",
@@ -250,7 +252,7 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("--delay 30", (self.settings.workers_dir / "supervisor.args").read_text())
         self.assertEqual(
             (self.settings.workers_dir / "supervisor.periodic").read_text().strip(),
-            "10800",
+            "0",
         )
         stopped = await manager.stop_supervisor()
         self.assertFalse(stopped["running"])
@@ -604,6 +606,66 @@ class WebControlTest(unittest.IsolatedAsyncioTestCase):
             if process.poll() is None:
                 process.kill()
             process.wait(timeout=2)
+
+    async def test_stopped_ta_thu_is_not_restarted_by_scheduler(self) -> None:
+        app = create_app(self.settings)
+        manager = app.state.manager
+        scheduler = app.state.scheduler
+        manager._set_desired_supervisor(True)
+        manager.set_desired_ta_thu(True)
+        scheduler.current_phase = "ta_thu"
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            self.assertEqual((await client.post("/api/ta-thu/supervisor/stop")).status_code, 200)
+        self.assertFalse(manager.desired_ta_thu())
+        self.assertEqual(scheduler.current_phase, "ta_thu")
+        with patch.object(manager, "start_ta_thu", new_callable=AsyncMock) as start:
+            await scheduler._check_auto_ta_thu()
+        start.assert_not_awaited()
+
+    async def test_ta_thu_start_rejected_while_nvhn_running(self) -> None:
+        app = create_app(self.settings)
+        manager = app.state.manager
+        transport = ASGITransport(app=app)
+        with patch.object(manager, "supervisor_status", return_value={"running": True}):
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post("/api/ta-thu/supervisor/start", json={})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Stop NVHN", response.json()["detail"])
+
+    async def test_capture_does_not_wait_for_background_children(self) -> None:
+        script = self.settings.scripts_dir / "spawn-background.sh"
+        write_script(script, 'sleep 5 >/dev/null 2>&1 &\necho launched\n')
+        manager = HeadlessManager(self.settings)
+        started = asyncio.get_running_loop().time()
+        code, output = await manager._capture(str(script), timeout=4)
+        elapsed = asyncio.get_running_loop().time() - started
+        self.assertEqual(code, 0)
+        self.assertIn("launched", output)
+        self.assertLess(elapsed, 2)
+
+    async def test_structured_log_api(self) -> None:
+        log_file = self.settings.workers_dir / "worker-01" / "stdout.log"
+        log_file.write_text(
+            "\n===== START OPTIMIZED 2026-11-12 10:00:00 =====\n"
+            "10:00:01 AUTO NVHN: bắt đầu\n"
+            "10:00:02 AUTO NVHN HANG SERVER DYNAMIC MENU[0]: Binh khí\n"
+            "10:00:03 AUTO LOGIN: mất kết nối, đăng nhập lại\n",
+            encoding="utf-8",
+        )
+        transport = ASGITransport(app=create_app(self.settings))
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            data = (await client.get("/api/logs", params={"worker": "worker-01"})).json()
+            self.assertEqual([line["ts"] for line in data["lines"]], [None, "10:00:01", "10:00:02", "10:00:03"])
+            self.assertEqual(data["lines"][2]["level"], "debug")
+            warn = (await client.get("/api/logs", params={"worker": "worker-01", "level": "warn"})).json()
+            self.assertEqual([line["msg"] for line in warn["lines"] if line["kind"] != "session"],
+                             ["AUTO LOGIN: mất kết nối, đăng nhập lại"])
+            bad = await client.get("/api/logs", params={"worker": "../etc"})
+            self.assertEqual(bad.status_code, 400)
+            download = await client.get("/api/logs/download", params={"worker": "worker-01"})
+            self.assertEqual(download.status_code, 200)
+            self.assertIn("AUTO NVHN: bắt đầu", download.text)
 
     def test_invalid_worker_name_never_reaches_shell(self) -> None:
         manager = HeadlessManager(self.settings)

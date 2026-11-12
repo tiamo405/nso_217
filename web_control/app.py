@@ -5,7 +5,7 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -14,8 +14,18 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .jobs import BuildJobManager
-from .manager import ControlError, HeadlessManager
+from .logparse import (
+    level_at_least,
+    parse_line,
+    parse_lines,
+    read_new_lines,
+    read_tail_lines,
+)
+from .manager import RUNTIMES, ControlError, HeadlessManager
 from .scheduler import ScheduleManager
+
+Runtime = Literal["nvhn", "ta_thu"]
+LogKind = Literal["stdout", "error", "supervisor"]
 
 
 class BuildRequest(BaseModel):
@@ -35,9 +45,15 @@ class SupervisorRequest(BaseModel):
 
 
 class SupervisorSettingsRequest(BaseModel):
-    periodic_restart_hours: int = Field(default=3, ge=0, le=168)
+    periodic_restart_hours: int = Field(default=0, ge=0, le=168)
     worker_start_delay_seconds: Optional[int] = Field(default=None, ge=0, le=3600)
     proxy_workers_per_proxy: Optional[int] = Field(default=None, ge=0, le=500)
+
+
+class TaThuStartRequest(BaseModel):
+    worker_count: Optional[int] = Field(default=None, ge=1, le=500)
+    # True: chia lại worker Tà Thú từ account.csv; False: dùng worker hiện có.
+    rebuild: Optional[bool] = None
 
 
 class ScheduleRequest(BaseModel):
@@ -58,11 +74,23 @@ class ScheduleRequest(BaseModel):
     server: Optional[str] = None
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or Settings.from_env()
-    manager = HeadlessManager(settings)
-    jobs = BuildJobManager(manager)
-    scheduler = ScheduleManager(settings.runtime_dir, jobs, manager)
+def create_app(
+    settings: Settings | None = None,
+    *,
+    manager: Any = None,
+    jobs: Any = None,
+    scheduler: Any = None,
+) -> FastAPI:
+    """Tạo app dashboard.
+
+    Ubuntu: create_app(settings). Windows (web_control_win) truyền manager/jobs
+    riêng nhưng dùng chung toàn bộ API, scheduler, parser log và giao diện.
+    """
+    if manager is None:
+        manager = HeadlessManager(settings or Settings.from_env())
+    settings = manager.settings
+    jobs = jobs or BuildJobManager(manager)
+    scheduler = scheduler or ScheduleManager(manager.web_runtime_dir, jobs, manager)
     static_dir = Path(__file__).with_name("static")
 
     @asynccontextmanager
@@ -111,24 +139,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         data["schedule"] = scheduler.get_state()
         data["current_phase"] = scheduler.current_phase
         data["ta_thu"] = manager.ta_thu_supervisor_status()
+        data["ta_thu"]["desired"] = manager.desired_ta_thu()
+        data["ta_thu_runtime"] = await manager.ta_thu_status()
         active = jobs.active_job()
         data["active_job"] = active.public() if active else None
         return data
 
     @app.get("/api/ta-thu/status")
     async def ta_thu_status() -> dict[str, object]:
-        status_script = settings.ta_thu_dir / "scripts" / "status-workers.sh"
-        if not status_script.is_file():
-            return {"workers": [], "totals": {"running": 0, "stopped": 0, "done": 0, "total": 0}}
-        code, output = await manager._capture(str(status_script), "--json")
-        if code != 0:
-            return {"workers": [], "totals": {"running": 0, "stopped": 0, "done": 0, "total": 0}}
-        try:
-            data = json.loads(output)
-            data["supervisor"] = manager.ta_thu_supervisor_status()
-            return data
-        except Exception:
-            return {"workers": [], "totals": {"running": 0, "stopped": 0, "done": 0, "total": 0}}
+        return await manager.ta_thu_status()
 
     @app.get("/api/schedule")
     async def get_schedule() -> dict[str, object]:
@@ -208,11 +227,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise ControlError("Không dừng được toàn bộ Tà Thú")
             return await manager.stop_supervisor()
 
+    @app.post("/api/nvhn/supervisor/stop")
+    async def stop_nvhn_supervisor() -> dict[str, object]:
+        """Chỉ dừng NVHN (supervisor + worker), không đụng Tà Thú."""
+        async with scheduler.transition_lock:
+            require_idle()
+            return await manager.stop_supervisor()
+
+    @app.post("/api/ta-thu/supervisor/start")
+    async def start_ta_thu_supervisor(body: TaThuStartRequest | None = None) -> dict[str, object]:
+        body = body or TaThuStartRequest()
+        async with scheduler.transition_lock:
+            require_idle()
+            if manager.supervisor_status()["running"]:
+                raise ControlError(
+                    "NVHN đang chạy cùng account; hãy Stop NVHN trước khi chạy Tà Thú"
+                )
+            workers_root = manager.ta_thu_workers_dir
+            existing = sorted(p for p in workers_root.glob("worker-*") if p.is_dir())
+            rebuild = body.rebuild if body.rebuild is not None else not existing
+            worker_count = (
+                body.worker_count
+                or (len(existing) if existing and not rebuild else None)
+                or scheduler.worker_count
+            )
+            started = await manager.start_ta_thu(
+                worker_count=worker_count,
+                rebuild_workers=rebuild,
+                nvhn_workers_dir=None,
+            )
+            if not started:
+                raise ControlError(
+                    f"Không khởi động được Tà Thú. Xem log supervisor Tà Thú ({manager.ta_thu_supervisor_log})"
+                )
+            scheduler.current_phase = "ta_thu"
+            scheduler._save()
+            return {"ok": True, "supervisor": manager.ta_thu_supervisor_status()}
+
     @app.post("/api/ta-thu/supervisor/stop")
     async def stop_ta_thu_supervisor() -> dict[str, object]:
+        async with scheduler.transition_lock:
+            require_idle()
+            stopped = await manager.stop_ta_thu()
+            # Giữ pha ta_thu + ta_thu_desired=False: scheduler không tự bật lại,
+            # và cũng không coi NVHN xong là tín hiệu chạy Tà Thú lần nữa.
+            scheduler.current_phase = "ta_thu"
+            scheduler._save()
+            return {"ok": stopped, "supervisor": manager.ta_thu_supervisor_status()}
+
+    @app.post("/api/ta-thu/workers/{worker_name}/{action}")
+    async def ta_thu_worker_action(
+        worker_name: str, action: Literal["start", "stop", "restart"]
+    ) -> dict[str, str]:
         require_idle()
-        stopped = await manager.stop_ta_thu()
-        return {"ok": stopped, "supervisor": manager.ta_thu_supervisor_status()}
+        return {"output": await manager.ta_thu_worker_action(worker_name, action)}
 
     @app.post("/api/workers/{worker_name}/restart")
     async def restart_worker(worker_name: str) -> dict[str, str]:
@@ -229,6 +297,149 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_idle()
         return {"output": await manager.start_worker(worker_name)}
 
+    def resolve_log(runtime: str, worker: str, kind: str) -> Path:
+        if runtime not in RUNTIMES:
+            raise ControlError("Runtime không hợp lệ")
+        return manager.log_path(worker, kind, runtime=runtime)
+
+    def file_mtime(path: Path) -> str | None:
+        try:
+            return datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).astimezone().isoformat(
+                timespec="seconds"
+            )
+        except OSError:
+            return None
+
+    def filter_entries(
+        entries: list[dict[str, object]], level: str, query: str
+    ) -> list[dict[str, object]]:
+        needle = query.strip().lower()
+        result = []
+        for entry in entries:
+            if entry["kind"] != "session" and not level_at_least(str(entry["level"]), level):
+                continue
+            if needle and needle not in str(entry["msg"]).lower():
+                continue
+            result.append(entry)
+        return result
+
+    @app.get("/api/logs")
+    async def read_logs(
+        worker: str = "worker-01",
+        runtime: Runtime = "nvhn",
+        kind: LogKind = "stdout",
+        lines: int = 500,
+        level: Literal["debug", "info", "success", "warn", "error"] = "debug",
+        q: str = "",
+    ) -> dict[str, object]:
+        """Đọc log có cấu trúc; có lọc theo level và chuỗi tìm kiếm."""
+        path = resolve_log(runtime, worker, kind)
+        lines = max(1, min(lines, 5000))
+        # Khi tìm kiếm thì quét rộng hơn rồi mới cắt theo số dòng yêu cầu.
+        scan = 20000 if q.strip() or level != "debug" else lines
+        raw, size = read_tail_lines(path, scan, max_bytes=4 * 1024 * 1024)
+        entries = filter_entries(parse_lines(raw), level, q)[-lines:]
+        return {"lines": entries, "offset": size, "modified_at": file_mtime(path), "path": path.name}
+
+    @app.get("/api/logs/download")
+    async def download_log(
+        worker: str = "worker-01",
+        runtime: Runtime = "nvhn",
+        kind: LogKind = "stdout",
+    ) -> FileResponse:
+        path = resolve_log(runtime, worker, kind)
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Chưa có file log")
+        label = "supervisor" if kind == "supervisor" else worker
+        return FileResponse(
+            path,
+            media_type="text/plain; charset=utf-8",
+            filename=f"{runtime}-{label}-{path.name}",
+        )
+
+    @app.get("/api/logs/stream")
+    async def stream_logs(
+        request: Request,
+        worker: str = "worker-01",
+        runtime: Runtime = "nvhn",
+        kind: LogKind = "stdout",
+        tail: int = 400,
+        offset: int = -1,
+    ) -> StreamingResponse:
+        """SSE log theo dòng.
+
+        event `lines`: {lines:[entry], offset, initial, modified_at}; SSE id là
+        byte offset đã đọc, trình duyệt gửi lại qua Last-Event-ID khi kết nối
+        lại nên không mất hay lặp dòng. event `reset`: file bị cắt/xoay vòng.
+        """
+        path = resolve_log(runtime, worker, kind)
+        tail = max(0, min(tail, 3000))
+        last_event_id = request.headers.get("last-event-id", "")
+        if last_event_id.isdigit():
+            offset = int(last_event_id)
+
+        def sse(event: str, payload: dict[str, object], event_id: int | None = None) -> str:
+            head = f"id: {event_id}\n" if event_id is not None else ""
+            return f"{head}event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+        async def stream() -> AsyncIterator[str]:
+            position = offset
+            if position < 0:
+                raw, position = read_tail_lines(path, tail) if tail else ([], 0)
+                if not tail:
+                    try:
+                        position = path.stat().st_size
+                    except OSError:
+                        position = 0
+                yield sse(
+                    "lines",
+                    {"lines": parse_lines(raw), "offset": position, "initial": True,
+                     "modified_at": file_mtime(path), "path": path.name},
+                    position,
+                )
+            else:
+                yield sse("lines", {"lines": [], "offset": position, "initial": True,
+                                    "modified_at": file_mtime(path), "path": path.name}, position)
+            idle = 0.0
+            while True:
+                if await request.is_disconnected():
+                    return
+                raw, position, reset = read_new_lines(path, position)
+                if reset:
+                    yield sse("reset", {"offset": 0})
+                if raw:
+                    now = datetime.now().strftime("%H:%M:%S")
+                    entries = []
+                    for line in raw:
+                        if not line.strip():
+                            continue
+                        entry = parse_line(line)
+                        if entry["ts"] is None:
+                            # Dòng không có prefix giờ: dùng giờ server nhận được.
+                            entry["ts"] = now
+                            entry["ts_estimated"] = True
+                        entries.append(entry)
+                    if entries:
+                        yield sse(
+                            "lines",
+                            {"lines": entries, "offset": position, "initial": False,
+                             "modified_at": file_mtime(path)},
+                            position,
+                        )
+                    idle = 0.0
+                else:
+                    idle += 0.5
+                    if idle >= 15:
+                        idle = 0.0
+                        yield ": keepalive\n\n"
+                    await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/api/workers/{worker_name}/logs")
     async def worker_logs(
         worker_name: str,
@@ -236,60 +447,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lines: int = 200,
         runtime: str = "auto",
     ) -> dict[str, str]:
+        """Giữ cho client cũ: trả text thô."""
         return {"content": manager.tail_log(worker_name, kind, lines, runtime=runtime)}
-
-    @app.get("/api/workers/{worker_name}/logs/stream")
-    async def worker_log_stream(
-        worker_name: str,
-        request: Request,
-        kind: Literal["stdout", "error"] = "stdout",
-        runtime: str = "auto",
-    ) -> StreamingResponse:
-        path = manager.log_path(worker_name, kind, runtime=runtime)
-
-        async def stream() -> AsyncIterator[str]:
-            position = 0
-            initial = manager.tail_log(worker_name, kind, 100, runtime=runtime)
-            if initial:
-                try:
-                    modified_at = datetime.fromtimestamp(
-                        path.stat().st_mtime, timezone.utc
-                    ).astimezone().isoformat(timespec="seconds")
-                except OSError:
-                    modified_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                payload = {"text": initial, "timestamp": modified_at, "initial": True}
-                yield f"event: log\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            if path.exists():
-                position = path.stat().st_size
-            while True:
-                if await request.is_disconnected():
-                    return
-                try:
-                    size = path.stat().st_size
-                    if size < position:
-                        position = 0
-                    if size > position:
-                        with path.open("rb") as log_stream:
-                            log_stream.seek(position)
-                            chunk = log_stream.read()
-                        position += len(chunk)
-                        text = chunk.decode("utf-8", errors="replace")
-                        timestamp = datetime.fromtimestamp(
-                            path.stat().st_mtime, timezone.utc
-                        ).astimezone().isoformat(timespec="seconds")
-                        payload = {"text": text, "timestamp": timestamp, "initial": False}
-                        yield f"event: log\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    else:
-                        yield ": keepalive\n\n"
-                except OSError:
-                    yield ": waiting-for-log\n\n"
-                await asyncio.sleep(1)
-
-        return StreamingResponse(
-            stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
 
     @app.post("/api/accounts/upload")
     async def upload_accounts(request: Request) -> dict[str, int]:
@@ -345,7 +504,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         await asyncio.wait_for(
                             job.changed.wait_for(lambda: job.version != version), timeout=15
                         )
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
 
         return StreamingResponse(

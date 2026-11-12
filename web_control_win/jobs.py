@@ -83,8 +83,15 @@ class WindowsBuildJobManager:
         )
 
     async def create(
-        self, worker_count: int, start_after_build: bool, server: str | None = None
+        self,
+        worker_count: int,
+        start_after_build: bool,
+        server: str | None = None,
+        proxy_workers_per_proxy: int | None = None,
     ) -> BuildJob:
+        if proxy_workers_per_proxy is not None:
+            # Cùng API với Ubuntu: >0 = bật proxy (chia đều), 0 = tắt.
+            self.manager.set_proxy_workers_per_proxy(proxy_workers_per_proxy)
         if worker_count < 1 or worker_count > 500:
             raise ControlError("Số worker phải từ 1 đến 500")
         account_count = int(self.manager.account_summary()["count"])
@@ -147,7 +154,7 @@ class WindowsBuildJobManager:
                         self._stream_process(job, process),
                         timeout=self.manager.settings.build_timeout,
                     )
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     await self._terminate_process(process)
                     raise ControlError(
                         f"Build quá thời gian {self.manager.settings.build_timeout} giây"
@@ -218,7 +225,7 @@ class WindowsBuildJobManager:
 
         try:
             await asyncio.wait_for(process.wait(), timeout=3)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             try:
                 process.kill()
             except ProcessLookupError:

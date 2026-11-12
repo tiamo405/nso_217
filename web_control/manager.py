@@ -8,6 +8,7 @@ import os
 import re
 import signal
 import subprocess
+import tempfile
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -15,27 +16,43 @@ from typing import Any
 from server_config import DEFAULT_SERVER, normalize_server
 
 from .config import Settings
+from .common import (  # noqa: F401  (re-export cho scheduler/test cũ)
+    DEFAULT_PERIODIC_RESTART_HOURS,
+    DEFAULT_PROXY_WORKERS_PER_PROXY,
+    DEFAULT_WORKER_START_DELAY_SECONDS,
+    EMPTY_TOTALS,
+    MAX_PERIODIC_RESTART_HOURS,
+    MAX_PROXY_WORKERS_PER_PROXY,
+    MAX_WORKER_START_DELAY_SECONDS,
+    ControlError,
+    ManagerCommon,
+)
+from .logparse import SummaryCache
 
 
 WORKER_RE = re.compile(r"^worker-([0-9]+)$")
-DEFAULT_PERIODIC_RESTART_HOURS = 3
-MAX_PERIODIC_RESTART_HOURS = 168
-DEFAULT_WORKER_START_DELAY_SECONDS = 30
-MAX_WORKER_START_DELAY_SECONDS = 3600
-DEFAULT_PROXY_WORKERS_PER_PROXY = 6
-MAX_PROXY_WORKERS_PER_PROXY = 500
+RUNTIMES = ("nvhn", "ta_thu")
+LOG_KINDS = {"stdout": "stdout.log", "error": "java-errors.log"}
 
 
-class ControlError(RuntimeError):
-    pass
 
 
-class HeadlessManager:
+class HeadlessManager(ManagerCommon):
     def __init__(self, settings: Settings):
         self.settings = settings
         self.control_lock = asyncio.Lock()
         self._supervisor_process: subprocess.Popen[bytes] | None = None
         self.settings.runtime_dir.mkdir(parents=True, exist_ok=True)
+        self.log_summaries = SummaryCache()
+
+    @property
+    def web_runtime_dir(self) -> Path:
+        """Thư mục state của dashboard (schedule.json, state.json, log supervisor)."""
+        return self.settings.runtime_dir
+
+    @property
+    def ta_thu_workers_dir(self) -> Path:
+        return self.settings.ta_thu_dir / "workers"
 
     @property
     def state_file(self) -> Path:
@@ -61,29 +78,43 @@ class HeadlessManager:
         timeout: int | None = None,
         server: str | None = None,
         proxy_workers_per_proxy: int | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> tuple[int, str]:
         environment = self.settings.command_env(server)
+        if extra_env:
+            environment.update(extra_env)
         if proxy_workers_per_proxy is not None:
             environment["NSO_PROXY_WORKERS_PER_PROXY"] = str(proxy_workers_per_proxy)
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
-                cwd=self.settings.repo_dir,
-                env=environment,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except OSError as exc:
-            raise ControlError(f"Không chạy được {Path(args[0]).name}: {exc}") from exc
-        try:
-            stdout, _ = await asyncio.wait_for(
-                process.communicate(), timeout=timeout or self.settings.command_timeout
-            )
-        except TimeoutError:
-            process.kill()
-            await process.wait()
-            raise ControlError(f"Lệnh quá thời gian: {Path(args[0]).name}")
-        return process.returncode or 0, stdout.decode("utf-8", errors="replace")
+        # Ghi output ra file tạm thay vì PIPE: các script start-workers.sh chạy
+        # java nền (nohup ... &). Dưới uvloop, đầu ghi của PIPE bị tiến trình
+        # cháu giữ lại nên communicate() treo tới hết timeout dù script đã xong.
+        # Với file tạm ta chỉ chờ chính script thoát.
+        with tempfile.TemporaryFile() as output:
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *args,
+                    cwd=self.settings.repo_dir,
+                    env=environment,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+            except OSError as exc:
+                raise ControlError(f"Không chạy được {Path(args[0]).name}: {exc}") from exc
+            try:
+                await asyncio.wait_for(
+                    process.wait(), timeout=timeout or self.settings.command_timeout
+                )
+            except asyncio.TimeoutError:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                await process.wait()
+                raise ControlError(f"Lệnh quá thời gian: {Path(args[0]).name}")
+            output.seek(0)
+            data = output.read()
+        return process.returncode or 0, data.decode("utf-8", errors="replace")
 
     async def status(self) -> dict[str, Any]:
         code, output = await self._capture(str(self._script("status-workers.sh")), "--json")
@@ -94,6 +125,25 @@ class HeadlessManager:
         except json.JSONDecodeError as exc:
             raise ControlError("status-workers.sh trả về JSON không hợp lệ") from exc
         data["supervisor"] = self.supervisor_status()
+        self.enrich_workers(data.get("workers") or [])
+        return data
+
+    async def ta_thu_status(self) -> dict[str, Any]:
+        status_script = self.settings.ta_thu_dir / "scripts" / "status-workers.sh"
+        data: dict[str, Any] = {"workers": [], "totals": dict(EMPTY_TOTALS)}
+        if status_script.is_file():
+            code, output = await self._capture(str(status_script), "--json")
+            if code == 0:
+                try:
+                    parsed = json.loads(output)
+                    if isinstance(parsed, dict):
+                        data.update(parsed)
+                except json.JSONDecodeError:
+                    pass
+        totals = data.get("totals") or {}
+        data["totals"] = {**EMPTY_TOTALS, **totals}
+        self.enrich_workers(data.get("workers") or [])
+        data["supervisor"] = self.ta_thu_supervisor_status()
         return data
 
     def _read_pid(self, path: Path) -> int | None:
@@ -170,84 +220,6 @@ class HeadlessManager:
         state.setdefault("server", self.selected_server())
         self._write_state(state)
 
-    def periodic_restart_hours(self) -> int:
-        """Configured per-worker periodic restart interval; zero disables it."""
-        raw = self._read_state().get(
-            "periodic_restart_hours", DEFAULT_PERIODIC_RESTART_HOURS
-        )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = DEFAULT_PERIODIC_RESTART_HOURS
-        return max(0, min(value, MAX_PERIODIC_RESTART_HOURS))
-
-    def set_periodic_restart_hours(self, hours: int) -> int:
-        """Persist the periodic restart interval in whole hours."""
-        try:
-            value = int(hours)
-        except (TypeError, ValueError) as exc:
-            raise ControlError("Số giờ restart định kỳ không hợp lệ") from exc
-        if value < 0 or value > MAX_PERIODIC_RESTART_HOURS:
-            raise ControlError(
-                f"Số giờ restart định kỳ phải từ 0 đến {MAX_PERIODIC_RESTART_HOURS}"
-            )
-        state = self._read_state()
-        state["periodic_restart_hours"] = value
-        self._write_state(state)
-        return value
-
-    def worker_start_delay_seconds(self) -> int:
-        """Configured delay between starting consecutive workers."""
-        raw = self._read_state().get(
-            "worker_start_delay_seconds", DEFAULT_WORKER_START_DELAY_SECONDS
-        )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = DEFAULT_WORKER_START_DELAY_SECONDS
-        return max(0, min(value, MAX_WORKER_START_DELAY_SECONDS))
-
-    def set_worker_start_delay_seconds(self, seconds: int) -> int:
-        """Persist the delay between consecutive worker starts."""
-        try:
-            value = int(seconds)
-        except (TypeError, ValueError) as exc:
-            raise ControlError("Giãn cách khởi động worker không hợp lệ") from exc
-        if value < 0 or value > MAX_WORKER_START_DELAY_SECONDS:
-            raise ControlError(
-                "Giãn cách khởi động worker phải từ "
-                f"0 đến {MAX_WORKER_START_DELAY_SECONDS} giây"
-            )
-        state = self._read_state()
-        state["worker_start_delay_seconds"] = value
-        self._write_state(state)
-        return value
-
-    def proxy_workers_per_proxy(self) -> int:
-        raw = self._read_state().get(
-            "proxy_workers_per_proxy", DEFAULT_PROXY_WORKERS_PER_PROXY
-        )
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            value = DEFAULT_PROXY_WORKERS_PER_PROXY
-        return max(0, min(value, MAX_PROXY_WORKERS_PER_PROXY))
-
-    def set_proxy_workers_per_proxy(self, count: int) -> int:
-        try:
-            value = int(count)
-        except (TypeError, ValueError) as exc:
-            raise ControlError("Số worker dùng chung proxy không hợp lệ") from exc
-        if value < 0 or value > MAX_PROXY_WORKERS_PER_PROXY:
-            raise ControlError(
-                "Số worker dùng chung proxy phải từ "
-                f"0 đến {MAX_PROXY_WORKERS_PER_PROXY}"
-            )
-        state = self._read_state()
-        state["proxy_workers_per_proxy"] = value
-        self._write_state(state)
-        return value
-
     def supervisor_status(self) -> dict[str, Any]:
         pid = self._read_pid(self.supervisor_pid_file)
         running = pid is not None and self._supervisor_pid_is_valid(pid)
@@ -261,6 +233,9 @@ class HeadlessManager:
             "periodic_restart_hours": self.periodic_restart_hours(),
             "worker_start_delay_seconds": self.worker_start_delay_seconds(),
             "proxy_workers_per_proxy": self.proxy_workers_per_proxy(),
+            # >0 = bật proxy, chia đều worker cho các proxy trong proxy-tk.txt.
+            "proxy_enabled": self.proxy_workers_per_proxy() > 0,
+            "proxy_count": self.proxy_count(),
             "log": str(self.supervisor_log),
         }
 
@@ -492,6 +467,8 @@ class HeadlessManager:
                 str(self._script("restart-workers.sh")),
                 number,
                 timeout=30,
+                # Restart 1 worker từ web: không chờ giãn cách sau worker cuối.
+                extra_env={"START_DELAY": "0"},
                 server=self.selected_server(),
                 proxy_workers_per_proxy=self.proxy_workers_per_proxy(),
             )
@@ -503,8 +480,15 @@ class HeadlessManager:
             return output.strip()
 
     def log_path(self, worker_name: str, kind: str, runtime: str = "auto") -> Path:
-        number = self.worker_number(worker_name)
-        filename = {"stdout": "stdout.log", "error": "java-errors.log"}.get(kind)
+        if kind == "supervisor":
+            if runtime == "ta_thu":
+                return self.ta_thu_supervisor_log
+            return self.supervisor_log
+        if runtime == "ta_thu":
+            number = self.ta_thu_worker_number(worker_name, must_exist=False)
+        else:
+            number = self.worker_number(worker_name)
+        filename = LOG_KINDS.get(kind)
         if filename is None:
             raise ControlError("Loại log không hợp lệ")
 
@@ -636,6 +620,7 @@ class HeadlessManager:
         async with self.control_lock:
             status = self.ta_thu_supervisor_status()
             if status["running"]:
+                self.set_desired_ta_thu(True)
                 return True
             selected_server = self.selected_server() if server is None else self.set_server(server)
 
@@ -653,6 +638,7 @@ class HeadlessManager:
                     str(worker_count),
                     timeout=300,
                     server=selected_server,
+                    proxy_workers_per_proxy=self.proxy_workers_per_proxy(),
                 )
                 if code != 0:
                     return False
@@ -667,6 +653,7 @@ class HeadlessManager:
             log_stream = self.ta_thu_supervisor_log.open("ab", buffering=0)
             try:
                 environment = self.settings.command_env(selected_server)
+                environment["NSO_PROXY_WORKERS_PER_PROXY"] = str(self.proxy_workers_per_proxy())
                 if nvhn_workers_dir is not None:
                     environment["TA_THU_NVHN_WORKERS_DIR"] = str(nvhn_workers_dir)
                 subprocess.Popen(
@@ -685,9 +672,61 @@ class HeadlessManager:
                 log_stream.close()
 
             await asyncio.sleep(1)
-            return self.ta_thu_supervisor_status()["running"]
+            running = self.ta_thu_supervisor_status()["running"]
+            if running:
+                self.set_desired_ta_thu(True)
+            return running
 
-    async def stop_ta_thu(self) -> bool:
+    def ta_thu_worker_number(self, worker_name: str, *, must_exist: bool = True) -> str:
+        match = WORKER_RE.fullmatch(worker_name)
+        if not match:
+            raise ControlError("Tên worker không hợp lệ")
+        number = int(match.group(1))
+        workers_root = (self.settings.ta_thu_dir / "workers").resolve()
+        worker_dir = (workers_root / f"worker-{number:02d}").resolve()
+        if worker_dir.parent != workers_root or (must_exist and not worker_dir.is_dir()):
+            raise ControlError("Không tìm thấy worker Tà Thú")
+        return str(number)
+
+    def _ta_thu_script(self, name: str) -> Path:
+        path = (self.settings.ta_thu_dir / "scripts" / name).resolve()
+        if not path.is_file():
+            raise ControlError(f"Không tìm thấy script Tà Thú: {name}")
+        return path
+
+    async def ta_thu_worker_action(self, worker_name: str, action: str) -> str:
+        """Start / Stop / Restart một worker Tà Thú (giống NVHN, dùng marker .paused)."""
+        if action not in ("start", "stop", "restart"):
+            raise ControlError("Thao tác không hợp lệ")
+        async with self.control_lock:
+            number = self.ta_thu_worker_number(worker_name)
+            marker = self.settings.ta_thu_dir / "workers" / f"worker-{int(number):02d}" / ".paused"
+            was_paused = marker.is_file()
+            if action == "stop":
+                marker.touch(mode=0o600, exist_ok=True)
+                code, output = await self._capture(
+                    str(self._ta_thu_script("stop-workers.sh")), number, timeout=30
+                )
+            else:
+                marker.unlink(missing_ok=True)
+                if action == "start":
+                    args = [str(self._ta_thu_script("start-workers.sh")), "--delay", "0", number]
+                else:
+                    args = [str(self._ta_thu_script("restart-workers.sh")), number]
+                code, output = await self._capture(
+                    *args, timeout=45, server=self.selected_server(), extra_env={"START_DELAY": "0"},
+                    proxy_workers_per_proxy=self.proxy_workers_per_proxy(),
+                )
+                if code != 0 and was_paused:
+                    marker.touch(mode=0o600, exist_ok=True)
+            if code != 0:
+                raise ControlError(output.strip() or f"Tà Thú {action} {worker_name} thất bại")
+            return output.strip()
+
+    async def stop_ta_thu(self, *, remember: bool = True) -> bool:
+        if remember:
+            # Ghi trước để scheduler không tự khôi phục Tà Thú trong lúc đang dừng.
+            self.set_desired_ta_thu(False)
         async with self.control_lock:
             # 1. Tìm PID của Tà Thú supervisor trước khi gọi script dừng
             status = self.ta_thu_supervisor_status()

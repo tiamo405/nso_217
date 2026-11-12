@@ -98,7 +98,7 @@ stop_worker_dir() {
     fi
 
     cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
-    if [[ "$cmdline" != *"HeadlessMain"* || "$cmdline" != *"-Dnso.runtime=ta-thu"* || "$cmdline" != *"$worker_dir"* ]]; then
+    if [[ ( "$cmdline" != *"OptimizedMain"* && "$cmdline" != *"HeadlessMain"* ) || "$cmdline" != *"-Dnso.runtime=ta-thu"* || "$cmdline" != *"$worker_dir"* ]]; then
         echo "Bỏ qua $worker_name: PID $pid không thuộc Tà Thú worker này." >&2
         return
     fi
@@ -144,6 +144,9 @@ find_repeated_status() {
 
     [[ -f "$log_file" ]] || return 1
     awk -v limit="$REPEATED_STATUS_LIMIT" '
+        # Log có thể có prefix giờ "HH:mm:ss " (-Dnso.log.timestamp); bỏ đi
+        # để các rule neo ^ phía dưới và key so sánh lặp không phụ thuộc giờ.
+        { sub(/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "") }
         /^===== START / {
             last_key = ""
             repeated = 0
@@ -229,7 +232,7 @@ restart_worker() {
     fi
 
     cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
-    if [[ "$cmdline" != *"HeadlessMain"* || "$cmdline" != *"-Dnso.runtime=ta-thu"* || "$cmdline" != *"$worker_dir"* ]]; then
+    if [[ ( "$cmdline" != *"OptimizedMain"* && "$cmdline" != *"HeadlessMain"* ) || "$cmdline" != *"-Dnso.runtime=ta-thu"* || "$cmdline" != *"$worker_dir"* ]]; then
         echo "Bỏ qua restart $worker_name: PID $pid không thuộc Tà Thú worker này." >&2
         return 1
     fi

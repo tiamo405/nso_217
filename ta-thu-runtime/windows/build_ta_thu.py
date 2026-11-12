@@ -159,6 +159,11 @@ def _apply_ta_thu_hooks(work_src: Path) -> None:
             'TileMap.class.getResourceAsStream("/map/" + var1)',
         ),
         (
+            "TileMap.java",
+            '"".getClass().getResourceAsStream("/map/" + mapID)',
+            'TileMap.class.getResourceAsStream("/map/" + mapID)',
+        ),
+        (
             "RMS.java",
             '"".getClass().getResourceAsStream(var0)',
             'RMS.class.getResourceAsStream(var0)',
@@ -174,7 +179,14 @@ def _apply_ta_thu_hooks(work_src: Path) -> None:
 
     patches_dir = TA_THU_DIR / "patches"
     for patch_file in sorted(patches_dir.glob("*.patch")):
-        _apply_unified_patch(work_src / "Controller.java", patch_file)
+        # File đích lấy từ header "+++ b/<File>.java"; patch cũ không có header
+        # thì mặc định Controller.java như trước.
+        target = "Controller.java"
+        for header in patch_file.read_text(encoding="utf-8").splitlines():
+            if header.startswith("+++ "):
+                target = Path(header[4:].split("\t")[0].strip()).name
+                break
+        _apply_unified_patch(work_src / target, patch_file)
 
     required = (
         ("GameMidlet.java", "TaThuAccountManager.start()"),
@@ -212,15 +224,21 @@ def build() -> Path:
 
     try:
         classes.mkdir(parents=True)
+        # Layer giống build-ta-thu.sh: src gốc -> nền optimized -> code Tà Thú.
+        # Bỏ Auto.java/AutoPrepareNvhn.java của optimized vì Tà Thú có bản riêng.
+        optimized_dir = REPO_DIR / "optimized-runtime"
         _copy_tree(REPO_DIR / "src", work_src)
+        _copy_tree(optimized_dir / "src", work_src)
+        for override in sorted((optimized_dir / "overrides").glob("*.java")):
+            if override.name in {"Auto.java", "AutoPrepareNvhn.java"}:
+                continue
+            shutil.copy2(override, work_src / override.name)
         _copy_tree(TA_THU_DIR / "src", work_src)
         _copy_tree(TA_THU_DIR / "overrides", work_src)
+        _replace_all(work_src / "Auto.java", "Thread.sleep(1L);", "Thread.sleep(20L);")
         _apply_ta_thu_hooks(work_src)
 
-        java_sources = sorted(
-            [path.as_posix() for path in (REPO_DIR / "headless-runtime" / "src").rglob("*.java")]
-            + [path.as_posix() for path in work_src.rglob("*.java")]
-        )
+        java_sources = sorted(path.as_posix() for path in work_src.rglob("*.java"))
         sources_file.write_text("\n".join(java_sources) + "\n", encoding="utf-8", newline="\n")
         command = [
             javac,
@@ -241,13 +259,17 @@ def build() -> Path:
         map_dir = classes / "map"
         map_dir.mkdir(parents=True, exist_ok=True)
         for map_id in range(160):
-            (map_dir / str(map_id)).touch(exist_ok=True)
+            source_map = REPO_DIR / "src" / "map" / str(map_id)
+            if source_map.is_file():
+                shutil.copy2(source_map, map_dir / str(map_id))
+            else:
+                (map_dir / str(map_id)).touch(exist_ok=True)
         shutil.copy2(account_csv, classes / "account.csv")
         extra = REPO_DIR / "delllllllllll.txt"
         if extra.is_file():
             shutil.copy2(extra, classes / extra.name)
 
-        if not (classes / "HeadlessMain.class").is_file() or not (
+        if not (classes / "OptimizedMain.class").is_file() or not (
             classes / "TaThuAccountManager.class"
         ).is_file():
             raise RuntimeError("Build lỗi: thiếu class runtime Tà Thú")

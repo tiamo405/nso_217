@@ -153,6 +153,9 @@ find_repeated_status() {
         -v limit="$REPEATED_STATUS_LIMIT" \
         -v window="$REPEATED_STATUS_WINDOW_LINES" \
         -v npc25_message="AUTO NVHN NPC25: [Hãy nhận nhiệm vụ mỗi ngày từ ta rồi mới sử dụng tính năng này.]" '
+        # Log có thể có prefix giờ "HH:mm:ss " (-Dnso.log.timestamp); bỏ đi
+        # để các rule neo ^ phía dưới và key so sánh lặp không phụ thuộc giờ.
+        { sub(/^[0-9][0-9]:[0-9][0-9]:[0-9][0-9] /, "") }
         {
             line_number++
             expired = line_number - window

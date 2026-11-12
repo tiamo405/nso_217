@@ -1,9 +1,18 @@
 # NSO Tà Thú Runtime
 
-Runtime headless riêng cho luồng Tà Thú. Thư mục này không sửa source đang chạy
-của `headless-runtime`: lúc build, nó copy `src/` vào thư mục tạm, chèn các hook
-Tà Thú vào bản copy rồi compile cùng compatibility layer J2ME của
-`headless-runtime/src`.
+Runtime riêng cho luồng Tà Thú, chạy trên **nền optimized** (entry `OptimizedMain`,
+giống NVHN). Lúc build, `build-ta-thu.sh` copy vào thư mục tạm theo thứ tự:
+
+1. `src/` gốc
+2. `optimized-runtime/src` (OptimizedMain, OptimizedTuning, javax J2ME có SOCKS5)
+3. `optimized-runtime/overrides/*.java` **trừ** `Auto.java` và `AutoPrepareNvhn.java`
+4. `ta-thu-runtime/src` và `ta-thu-runtime/overrides` (Auto.java/TaThu.java riêng)
+
+Sau đó chèn hook Tà Thú, áp `patches/`, đổi `Thread.sleep(1L)` trong Auto.java
+thành 20ms như optimized rồi compile. Worker chạy với cùng bộ `-Dnso.*` của
+`optimized-runtime/scripts/tuning-options.sh` cộng `-Dnso.runtime=ta-thu`.
+Script stop/status/supervise vẫn nhận ra tiến trình `HeadlessMain` cũ để dừng
+được worker đang chạy từ bản build trước.
 
 ## Luồng mỗi nhân vật
 

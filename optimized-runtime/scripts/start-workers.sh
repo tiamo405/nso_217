@@ -125,7 +125,8 @@ if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; the
     proxy_prepare_needed=true
 elif (( PROXY_GROUP_SIZE > 0 )); then
     proxy_marker="$WORKERS_DIR/.proxy-group-size"
-    if [[ ! -f "$proxy_marker" ]] || [[ "$(<"$proxy_marker")" != "$PROXY_GROUP_SIZE" ]]; then
+    # Marker "even:<số proxy>" do proxy_support.py ghi (chia đều kiểu uplevel).
+    if [[ ! -f "$proxy_marker" ]] || [[ "$(<"$proxy_marker")" != even:* ]]; then
         proxy_prepare_needed=true
     fi
     for worker_dir in "${worker_dirs[@]}"; do
@@ -200,13 +201,12 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 
     proxy_env=(env -u NSO_SOCKS5_PROXY NSO_PROXY_REQUIRED=0)
-    if (( PROXY_GROUP_SIZE > 0 )); then
-        if [[ ! -s "$worker_dir/.proxy" ]]; then
-            echo "$worker_name thiếu proxy assignment; không khởi động." >&2
-            exit 1
-        fi
+    if (( PROXY_GROUP_SIZE > 0 )) && [[ -s "$worker_dir/.proxy" ]]; then
         proxy_value=$(<"$worker_dir/.proxy")
         proxy_env=(env NSO_PROXY_REQUIRED=1 "NSO_SOCKS5_PROXY=$proxy_value")
+    elif (( PROXY_GROUP_SIZE > 0 )) && [[ "$(cat "$WORKERS_DIR/.proxy-group-size" 2>/dev/null)" != "even:0" ]]; then
+        echo "$worker_name thiếu proxy assignment; không khởi động." >&2
+        exit 1
     fi
 
     nohup "${proxy_env[@]}" "${command_prefix[@]}" "$JAVA_BIN" \

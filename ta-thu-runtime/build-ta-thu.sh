@@ -26,9 +26,25 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$CLASSES_DIR" "$WORK_SRC_DIR"
+OPTIMIZED_DIR="$REPO_DIR/optimized-runtime"
+
+# Layer nguồn: src gốc -> nền optimized (OptimizedMain, javax, tuning, render
+# overrides) -> code riêng Tà Thú. Auto.java và AutoPrepareNvhn.java của
+# optimized KHÔNG được dùng: Tà Thú có Auto.java riêng, còn AutoPrepareNvhn lấy
+# từ src gốc để patch 001 và hook onPreparationFinished áp đúng như trước.
 cp -R "$REPO_DIR/src"/. "$WORK_SRC_DIR"/
+cp -R "$OPTIMIZED_DIR/src"/. "$WORK_SRC_DIR"/
+for override in "$OPTIMIZED_DIR/overrides"/*.java; do
+    case "$(basename -- "$override")" in
+        Auto.java|AutoPrepareNvhn.java) continue ;;
+    esac
+    cp -- "$override" "$WORK_SRC_DIR"/
+done
 cp -R "$RUNTIME_DIR/src"/. "$WORK_SRC_DIR"/
 cp -R "$RUNTIME_DIR/overrides"/. "$WORK_SRC_DIR"/
+
+# Giống optimized Auto.java: vòng chờ trong Auto ngủ 20ms thay vì 1ms để giảm CPU.
+sed -i 's/Thread\.sleep(1L);/Thread.sleep(20L);/g' "$WORK_SRC_DIR/Auto.java"
 
 # Apply Ta Thu-only hooks to the disposable source copy. Repository src/ is untouched.
 sed -i 's/AccountAutoManager\.start()/TaThuAccountManager.start()/' "$WORK_SRC_DIR/GameMidlet.java"
@@ -82,18 +98,21 @@ require_hook 'TaThuAccountManager.onPreparationFinished()' "$WORK_SRC_DIR/AutoPr
 require_hook 'TaThuAccountManager.onCaveEntered()' "$WORK_SRC_DIR/AutoEnterCave.java"
 
 # The desktop JVM needs class-based resource lookup for these decompiled expressions.
-sed -i 's#"".getClass().getResourceAsStream("/map/" + var1)#TileMap.class.getResourceAsStream("/map/" + var1)#' "$WORK_SRC_DIR/TileMap.java"
-sed -i 's#"".getClass().getResourceAsStream(var0)#RMS.class.getResourceAsStream(var0)#' "$WORK_SRC_DIR/RMS.java"
-sed -i 's#"".getClass().getResourceAsStream(var0)#Res.class.getResourceAsStream(var0)#' "$WORK_SRC_DIR/Res.java"
+sed -i 's#"".getClass().getResourceAsStream("/map/" + var1)#TileMap.class.getResourceAsStream("/map/" + var1)#g' "$WORK_SRC_DIR/TileMap.java"
+sed -i 's#"".getClass().getResourceAsStream("/map/" + mapID)#TileMap.class.getResourceAsStream("/map/" + mapID)#g' "$WORK_SRC_DIR/TileMap.java"
+sed -i 's#"".getClass().getResourceAsStream(var0)#RMS.class.getResourceAsStream(var0)#g' "$WORK_SRC_DIR/RMS.java"
+sed -i 's#"".getClass().getResourceAsStream(var0)#Res.class.getResourceAsStream(var0)#g' "$WORK_SRC_DIR/Res.java"
 
-find "$REPO_DIR/headless-runtime/src" "$WORK_SRC_DIR" -name '*.java' | sort >"$SOURCES_FILE"
+find "$WORK_SRC_DIR" -name '*.java' | sort >"$SOURCES_FILE"
 javac -encoding UTF-8 -source 8 -target 8 -Xlint:none -d "$CLASSES_DIR" @"$SOURCES_FILE"
 
 cp -R "$WORK_SRC_DIR"/. "$CLASSES_DIR"/
 find "$CLASSES_DIR" -name '*.java' -delete
 mkdir -p "$CLASSES_DIR/map"
 for map_id in $(seq 0 159); do
-    if [[ ! -f "$CLASSES_DIR/map/$map_id" ]]; then
+    if [[ -f "$REPO_DIR/src/map/$map_id" ]]; then
+        cp "$REPO_DIR/src/map/$map_id" "$CLASSES_DIR/map/$map_id"
+    elif [[ ! -f "$CLASSES_DIR/map/$map_id" ]]; then
         : >"$CLASSES_DIR/map/$map_id"
     fi
 done
@@ -104,7 +123,7 @@ if [[ -f "$REPO_DIR/delllllllllll.txt" ]]; then
     cp -- "$REPO_DIR/delllllllllll.txt" "$CLASSES_DIR/delllllllllll.txt"
 fi
 
-if [[ ! -f "$CLASSES_DIR/HeadlessMain.class" || ! -f "$CLASSES_DIR/TaThuAccountManager.class" ]]; then
+if [[ ! -f "$CLASSES_DIR/OptimizedMain.class" || ! -f "$CLASSES_DIR/TaThuAccountManager.class" ]]; then
     echo "Build lỗi: thiếu class runtime Tà Thú" >&2
     exit 1
 fi
@@ -121,4 +140,4 @@ fi
 STAGING_DIR=''
 rm -rf -- "$BACKUP_DIR"
 trap - EXIT
-echo "Ta Thu runtime built at $BUILD_ROOT/classes"
+echo "Ta Thu runtime (nền optimized, entry OptimizedMain) built at $BUILD_ROOT/classes"

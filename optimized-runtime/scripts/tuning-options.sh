@@ -26,4 +26,6 @@ OPTIMIZED_SYSTEM_PROPS=(
   "-Dnso.lazy.map=${NSO_LAZY_MAP:-true}"
   "-Dnso.event.sender=true"
   "-Dnso.nvhn.headless=true"
+  # Thêm "HH:mm:ss " đầu mỗi dòng stdout/stderr để web control hiển thị giờ.
+  "-Dnso.log.timestamp=${NSO_LOG_TIMESTAMP:-true}"
 )

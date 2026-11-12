@@ -35,6 +35,12 @@ class OptimizedSupervisorWatchdogTest(unittest.TestCase):
             windows.mkdir(parents=True)
             win_manager = windows / "win_manager.py"
             shutil.copy2(REPO_DIR / "optimized-runtime/windows/win_manager.py", win_manager)
+            # win_manager dùng chung proxy_support.py với Ubuntu.
+            (windows.parent / "scripts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                REPO_DIR / "optimized-runtime/scripts/proxy_support.py",
+                windows.parent / "scripts" / "proxy_support.py",
+            )
 
             process_title = f"OptimizedMain {worker}"
             worker_process = subprocess.Popen(
@@ -363,6 +369,12 @@ class OptimizedSupervisorWatchdogTest(unittest.TestCase):
             windows.mkdir(parents=True)
             win_manager = windows / "win_manager.py"
             shutil.copy2(REPO_DIR / "optimized-runtime/windows/win_manager.py", win_manager)
+            # win_manager dùng chung proxy_support.py với Ubuntu.
+            (windows.parent / "scripts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                REPO_DIR / "optimized-runtime/scripts/proxy_support.py",
+                windows.parent / "scripts" / "proxy_support.py",
+            )
 
             bin_dir = root / "bin"
             bin_dir.mkdir()
@@ -458,6 +470,12 @@ class OptimizedSupervisorWatchdogTest(unittest.TestCase):
             windows.mkdir(parents=True)
             win_manager = windows / "win_manager.py"
             shutil.copy2(REPO_DIR / "optimized-runtime/windows/win_manager.py", win_manager)
+            # win_manager dùng chung proxy_support.py với Ubuntu.
+            (windows.parent / "scripts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                REPO_DIR / "optimized-runtime/scripts/proxy_support.py",
+                windows.parent / "scripts" / "proxy_support.py",
+            )
 
             bin_dir = root / "bin"
             bin_dir.mkdir()
@@ -560,6 +578,12 @@ class OptimizedSupervisorWatchdogTest(unittest.TestCase):
             windows.mkdir(parents=True)
             win_manager = windows / "win_manager.py"
             shutil.copy2(REPO_DIR / "optimized-runtime/windows/win_manager.py", win_manager)
+            # win_manager dùng chung proxy_support.py với Ubuntu.
+            (windows.parent / "scripts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(
+                REPO_DIR / "optimized-runtime/scripts/proxy_support.py",
+                windows.parent / "scripts" / "proxy_support.py",
+            )
 
             bin_dir = root / "bin"
             bin_dir.mkdir()

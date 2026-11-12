@@ -41,42 +41,72 @@ Dashboard không có password riêng. FastAPI chỉ listen trên `127.0.0.1`; tr
 
 ## Quy trình dashboard
 
-1. Upload `account.csv` có header `username,password`.
-2. Chọn số worker.
-3. Server game cố định là `180.93.114.122:14444` (không cần chọn).
-4. Nhấn **Chỉ Build** để compile và chia worker; nhấn **Run workers** để khởi động supervisor với server đã chọn.
-5. Cấu hình **Hẹn giờ & Tự động (GMT+7)**:
-   - **Giờ chạy đầu tiên**: đến mốc này hệ thống sẽ build lại từ đầu (xóa worker done, compile, chia lại account và run supervisor).
-   - **Lặp lại sau (giờ)**: sau mỗi lần lịch được kích hoạt, hệ thống chờ đúng số giờ này rồi build & run lại toàn bộ worker. Hai giá trị này luôn dùng cùng nhau, không còn là hai chế độ loại trừ.
-   - **Giãn cách worker (giây)**: thời gian chờ giữa hai worker khi lịch tự động khởi động NVHN hoặc Tà Thú; `0` để chạy liên tiếp.
-   - **Bật tự động Build & Run NVHN**: bật chu kỳ ở trên.
-   - **Auto Tà Thú khi NVHN xong**: Khi từng worker hoàn tất NVHN, worker Tà Thú cùng số thứ tự được tự động khởi chạy; worker NVHN lỗi không chặn worker khác. Hệ thống build Tà Thú một lần theo tổng số worker (`ta-thu-runtime/`).
-   - **Ưu tiên NVHN**: Khi đến mốc hẹn giờ của ngày hôm sau, hệ thống tự động ngắt toàn bộ tiến trình Tà Thú để ưu tiên Build & Run lại NVHN.
-6. Xem status, tên nhân vật đang chạy, live log; Stop, Start hoặc Restart từng worker.
-7. Stop tất cả sẽ dừng cả supervisor NVHN và Tà Thú, đồng thời ghi nhớ không tự bật lại sau reboot.
+Màn hình gồm 3 thẻ điều khiển (NVHN, Tà Thú, Hệ thống), panel **Cấu hình** thu gọn,
+bảng worker và khung **Log** trượt bên phải. Nút nào không dùng được ở trạng thái
+hiện tại sẽ bị khoá (rê chuột để xem lý do); thao tác dừng/build luôn hỏi xác nhận.
 
-Trong panel **Supervisor**, có thể cấu hình các giá trị tương tự cho lần chạy thủ công:
+1. Upload `account.csv` (header `username,password`) ở thẻ **Hệ thống**.
+2. Mở **Cấu hình**, đặt số worker, giãn cách, tick **Dùng proxy** và lịch rồi bấm
+   **Lưu cấu hình** (một nút lưu tất cả).
+   - **Dùng proxy**: chia đều worker cho các proxy trong `proxy-tk.txt` giống uplevel
+     (W worker / P proxy, khối liên tiếp: mỗi proxy W//P worker, W%P proxy đầu thêm 1;
+     VD 10 worker / 4 proxy = 3+3+2+2). Proxy không kết nối được bị bỏ qua khi chia.
+3. Thẻ **NVHN**:
+   - **Build & Run**: dừng NVHN, build lại, chia worker từ account.csv rồi chạy.
+   - **Chỉ Build**: build và chia worker, chưa chạy.
+   - **▶ Start**: chạy tiếp tiến độ hiện có (nếu Tà Thú đang chạy sẽ bị dừng trước).
+   - **■ Stop**: chỉ dừng NVHN, không ảnh hưởng Tà Thú.
+4. Thẻ **Tà Thú**:
+   - **▶ Start Tà Thú**: chạy thủ công, không chờ NVHN. Có worker cũ thì dùng lại, có
+     thể tick "Chia lại worker" để build lại từ account.csv. Bị khoá khi NVHN đang chạy
+     (hai runtime dùng chung account).
+   - **■ Stop Tà Thú**: dừng và ghi `ta_thu_desired=false`, scheduler không tự bật lại.
+5. **⏹ Stop tất cả**: dừng NVHN + Tà Thú, tắt tự khởi động (kể cả sau reboot).
+6. **Chạy lại từ đầu theo lịch (GMT+7)**: đến **Lần đầu lúc** và sau đó cứ mỗi
+   **N giờ**, hệ thống ngắt Tà Thú, build lại từ đầu (chia lại worker, xoá tiến độ cũ)
+   rồi chạy NVHN. **Auto Tà Thú khi NVHN xong** chạy worker Tà Thú cùng số thứ tự khi
+   worker NVHN tương ứng hoàn tất.
 
-- **Restart worker định kỳ (giờ)**: tính từ lần khởi động gần nhất của từng worker; `0` để tắt.
-- **Giãn cách khởi động worker tiếp theo (giây)**: thời gian chờ giữa các worker khi Supervisor khởi động; `0` để chạy liên tiếp.
+Không còn "Restart worker định kỳ" riêng (mặc định 0): việc chạy lại do lịch ở trên
+đảm nhiệm. Đổi số worker / proxy khi Supervisor đang chạy cần Stop rồi Start.
 
-Nhấn **Lưu cấu hình Supervisor**. Nếu Supervisor đang chạy, cần Stop rồi Start lại
-để cấu hình mới được truyền vào tiến trình Supervisor.
+### Bảng worker
 
-Nếu đã bật lịch build lại toàn bộ, nên đặt **Restart worker định kỳ** về `0` để
-không có hai bộ hẹn giờ cùng tác động lên worker gần cùng một thời điểm.
-
-**Start/Run** supervisor chạy tiếp tiến độ hiện có. Nếu toàn bộ worker đã hoàn
-thành, nhấn **Build** rồi **Run** để chạy lại từ đầu. Start thất bại
-hoặc Stop tất cả sẽ không kích hoạt Auto Tà Thú từ tiến độ NVHN cũ.
+- Tab **NVHN** / **Tà Thú**, lọc theo trạng thái (Đang chạy, Dừng, Tạm dừng, Xong,
+  **Có vấn đề** = lỗi/PID cũ/log im lặng > 5 phút), tìm theo worker hoặc nhân vật.
+- Tick nhiều worker để **Start / Restart / Stop hàng loạt**.
+- Cột Worker hiện **TK i/n · username**: worker đang chạy tài khoản thứ i trên n tài
+  khoản của nó (lấy từ dòng "đăng nhập tài khoản/account" trong log).
+- NVHN: tiến độ `NV x/20`, mục tiêu, map. Tà Thú: thanh máu boss, map/khu (🔒 đã
+  khoá, 🔎 đang tìm), HP/MP, kết quả ✔ kết liễu / ✖ bị cướp / ☠ chết (tính trong
+  phiên chạy hiện tại).
+- **Sự kiện cuối** là dòng log có ý nghĩa gần nhất (bỏ qua dòng kỹ thuật), có màu
+  theo mức độ và thời gian "x giây trước". Bấm vào để mở log.
 
 `Stop` tại một worker tạo marker `.paused`, dừng Java và giữ supervisor chạy cho
-các worker còn lại. Supervisor không tự bật lại worker có trạng thái `PAUSED`.
-Nhấn `Start` worker đó để xóa marker và chạy lại; nút `Restart` dùng để khởi
-động lại một worker đang hoạt động. Trạng thái pause được giữ khi restart
-dashboard hoặc VPS; build lại danh sách worker sẽ xóa trạng thái pause cũ.
+các worker còn lại; `Start` xoá marker và chạy lại. Áp dụng cho cả NVHN và Tà Thú.
+Build lại danh sách worker sẽ xoá trạng thái pause cũ.
 
-Dashboard hiển thị thời điểm `stdout.log` cập nhật gần nhất và cột **Nhân vật** trong bảng worker. Cửa sổ live log cũng thêm thời gian cho từng đợt dữ liệu mới nhận được.
+### Khung log
+
+- Chọn worker, runtime (NVHN/Tà Thú) và loại log: **Log** (`stdout.log`), **Lỗi Java**
+  (`java-errors.log`), **Supervisor**.
+- Mỗi dòng có giờ, tag, nội dung, màu theo mức `debug/info/ok/warn/error`. Mặc định
+  ẩn `debug` (menu server, trace đăng nhập, FIGHT/FILTER mỗi 10s, sát thương nhận…).
+  Dòng trùng liên tiếp được gộp thành `×N`; mỗi phiên chạy có dải phân cách `START`.
+- Tìm kiếm có tô sáng, tắt/bật xuống dòng, tự cuộn (kéo lên sẽ dừng và hiện nút
+  "↓ N dòng mới"), Copy phần đang hiển thị, Tải file gốc.
+- Log Tà Thú có **thẻ trận đấu**: máu boss, tốc độ trừ máu/giây và thời gian còn lại,
+  HP/MP, số đòn gửi / server xác nhận, trạng thái skill.
+- Tab **Build** hiển thị output build riêng, không cắt luồng log worker.
+
+Giờ trên từng dòng do Java ghi (`-Dnso.log.timestamp=true`, bật mặc định trong
+`optimized-runtime/scripts/tuning-options.sh`, tắt bằng `NSO_LOG_TIMESTAMP=false`).
+Dòng cũ không có giờ thì hiển thị giờ server nhận được (in nghiêng).
+
+API log: `GET /api/logs?runtime=&worker=&kind=&lines=&level=&q=`,
+`GET /api/logs/stream` (SSE theo dòng, id = byte offset để nối lại không mất dòng),
+`GET /api/logs/download`.
 
 Supervisor mặc định restart worker đang chạy nếu `stdout.log` im lặng quá 5 phút. Có thể cấu hình trong `.env`:
 
@@ -109,7 +139,7 @@ Không nên chạy hai supervisor cùng lúc. Dashboard nhận diện supervisor
 ## Kiểm thử
 
 ```bash
-python3 -m unittest -v tests.test_web_control
+python3 -m unittest -v tests.test_web_control tests.test_logparse
 bash -n optimized-runtime/scripts/*.sh
 python3 -m compileall -q web_control tests
 ```

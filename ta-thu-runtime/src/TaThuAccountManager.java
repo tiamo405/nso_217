@@ -141,7 +141,8 @@ public final class TaThuAccountManager implements Runnable {
         waitingForCharacters = false;
         waitingForGame = false;
         postProcessing = false;
-        System.out.println("AUTO TA THU: đăng nhập account " + (accountIndex + 1) + "/" + usernames.size());
+        System.out.println("AUTO TA THU: đăng nhập account " + (accountIndex + 1) + "/" + usernames.size()
+                + " (" + getCurrentUsername() + ")");
         Code.fieldAG();
         Session_ME session = Session_ME.gI();
         session.gameAC();
@@ -457,6 +458,7 @@ public final class TaThuAccountManager implements Runnable {
         if (!enabled || task == null || task.taskId != 1 || task.count < task.maxCount) {
             return;
         }
+        TaThu.onMissionKillConfirmed(task);
         TaThuDailyState state = TaThuDailyState.loadCurrent();
         state.rememberTask(task);
         state.completionPending = true;

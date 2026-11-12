@@ -50,6 +50,24 @@ CHECK_INTERVAL = 20
 STALE_LOG_SECONDS = int(os.environ.get("STALE_LOG_SECONDS", "300"))
 REPEATED_STATUS_LIMIT = int(os.environ.get("REPEATED_STATUS_LIMIT", "5"))
 PID_FILE = WORKERS_DIR / "supervisor.pid"
+# Proxy dùng chung cấu hình/thuật toán với NVHN và bản Ubuntu (chia đều kiểu uplevel).
+PROXY_FILE = Path(os.environ.get("PROXY_TK_FILE", REPO_DIR / "proxy-tk.txt"))
+try:
+    PROXY_ENABLED = int(os.environ.get("NSO_PROXY_WORKERS_PER_PROXY", "6")) > 0
+except ValueError:
+    PROXY_ENABLED = True
+LOG_TIMESTAMP = os.environ.get("NSO_LOG_TIMESTAMP", "true")
+
+
+def _load_proxy_support():
+    import importlib.util
+
+    path = REPO_DIR / "optimized-runtime" / "scripts" / "proxy_support.py"
+    spec = importlib.util.spec_from_file_location("nso_proxy_support", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def _norm(value: str | Path) -> str:
@@ -134,7 +152,7 @@ def kill_pid(pid: int) -> bool:
 def is_expected_worker_process(pid: int, worker_dir: Path) -> bool:
     command = " ".join(_process_cmdline(pid))
     return (
-        "HeadlessMain" in command
+        ("OptimizedMain" in command or "HeadlessMain" in command)
         and "-Dnso.runtime=ta-thu" in command
         and _norm(worker_dir) in _norm(command)
     )
@@ -261,25 +279,40 @@ def java_command(worker: Path) -> list[str]:
         "-XX:MinHeapFreeRatio=5",
         "-XX:MaxHeapFreeRatio=10",
         "-Djava.awt.headless=true",
-        "-Dmicroedition.platform=NSOHeadless",
+        "-Xss256k",
+        "-XX:CICompilerCount=2",
+        # Nền optimized: cùng bộ -Dnso.* với NVHN (optimized-runtime/windows/win_manager.py).
+        "-Dnso.optimized=true",
+        f"-Dnso.tick.ms={os.environ.get('NSO_TICK_MS', '100')}",
+        "-Dnso.skip.paint=true",
+        "-Dnso.skip.periodic.gc=true",
+        "-Dnso.skip.auto.popup=true",
+        "-Dnso.skip.decorations=true",
+        "-Dnso.lazy.map=true",
+        "-Dnso.event.sender=true",
+        "-Dnso.nvhn.headless=true",
+        f"-Dnso.log.timestamp={LOG_TIMESTAMP}",
         "-Dnso.runtime=ta-thu",
+        f"-Dnso.worker.name={worker.name}",
         f"-Dnso.server={server}",
         f"-Dta.thu.stage={os.environ.get('TA_THU_STAGE', 'full')}",
         f"-Dta.thu.state.dir={STATE_DIR}",
         f"-Duser.home={worker / 'home'}",
         "-cp",
         classpath,
-        "HeadlessMain",
+        "OptimizedMain",
     ]
 
 
 def start_workers(values: list[str], delay: int) -> int:
-    if not (CLASSES_DIR / "HeadlessMain.class").is_file():
+    if not (CLASSES_DIR / "OptimizedMain.class").is_file():
         raise RuntimeError("Chưa có Tà Thú classes. Hãy build trước")
     paths = selected_worker_dirs(values)
     if not paths:
         raise RuntimeError("Chưa có Tà Thú worker nào. Hãy build trước")
     started = running = completed = failed = 0
+    proxy_support = _load_proxy_support()
+    proxy_support.prepare(WORKERS_DIR, PROXY_FILE, PROXY_ENABLED)
     for worker in paths:
         if (worker / ".paused").is_file():
             print(f"{worker.name} đang tạm dừng, bỏ qua")
@@ -299,16 +332,25 @@ def start_workers(values: list[str], delay: int) -> int:
         pid_file.unlink(missing_ok=True)
         (worker / "home").mkdir(parents=True, exist_ok=True)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            worker_env = os.environ.copy()
+            worker_env.pop("NSO_SOCKS5_PROXY", None)
+            worker_env["NSO_PROXY_REQUIRED"] = "0"
+            worker_env.update(proxy_support.launch_env(worker, PROXY_ENABLED))
+        except proxy_support.ProxyError as exc:
+            print(f"{worker.name}: {exc}", file=sys.stderr)
+            failed += 1
+            continue
         with (worker / "stdout.log").open("a", encoding="utf-8") as stream:
-            stream.write(f"\n===== START TA THU {now} PASS 1/1 =====\n")
+            stream.write(f"\n===== START OPTIMIZED TA THU {now} PASS 1/1 =====\n")
         with (worker / "java-errors.log").open("a", encoding="utf-8") as stream:
-            stream.write(f"\n===== START TA THU {now} PASS 1/1 =====\n")
+            stream.write(f"\n===== START OPTIMIZED TA THU {now} PASS 1/1 =====\n")
         try:
             with (worker / "stdout.log").open("a", encoding="utf-8") as output, (worker / "java-errors.log").open("a", encoding="utf-8") as errors:
                 process = subprocess.Popen(
                     java_command(worker),
                     cwd=str(worker),
-                    env=os.environ.copy(),
+                    env=worker_env,
                     stdout=output,
                     stderr=errors,
                     creationflags=_creationflags(),
@@ -422,6 +464,8 @@ def status_dict() -> dict[str, Any]:
             "rss_mb": rss,
             "elapsed": elapsed,
             "accounts": accounts,
+            "proxy": ((worker / ".proxy").read_text(encoding="utf-8").strip() or None)
+            if (worker / ".proxy").is_file() else None,
             "last_auto_log": _last_log(worker / "stdout.log", "AUTO TA THU"),
             "last_log_at": log_at,
             "last_log_age_seconds": log_age,

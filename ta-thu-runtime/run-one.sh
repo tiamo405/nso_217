@@ -8,7 +8,9 @@ JAVA_BIN=${JAVA_BIN:-java}
 JAVA_XMS=${JAVA_XMS:-8m}
 JAVA_XMX=${JAVA_XMX:-48m}
 TA_THU_STAGE=${TA_THU_STAGE:-full}
-JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -Djava.awt.headless=true"}
+JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -Djava.awt.headless=true -Xss256k"}
+# shellcheck source=../optimized-runtime/scripts/tuning-options.sh
+source "$RUNTIME_DIR/../optimized-runtime/scripts/tuning-options.sh"
 
 if [[ ! -d "$CLASSES_DIR" ]]; then
     "$RUNTIME_DIR/build-ta-thu.sh"
@@ -20,9 +22,9 @@ exec "$JAVA_BIN" \
     "-Xms$JAVA_XMS" \
     "-Xmx$JAVA_XMX" \
     "${java_opts_array[@]}" \
-    -Dmicroedition.platform=NSOHeadless \
+    "${OPTIMIZED_SYSTEM_PROPS[@]}" \
     -Dnso.runtime=ta-thu \
     "-Dta.thu.stage=$TA_THU_STAGE" \
     "-Duser.home=$RUNTIME_HOME" \
     -cp "$CLASSES_DIR" \
-    HeadlessMain
+    OptimizedMain

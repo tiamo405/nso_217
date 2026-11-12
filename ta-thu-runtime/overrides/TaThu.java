@@ -27,6 +27,29 @@ public final class TaThu extends Auto {
    private long foodSupplyCheckAfter;
    private long foodMissingSince;
    private boolean supplyingFood;
+   // Theo dõi máu boss thấy lần cuối để phân biệt "boss chết" với "boss tạm khuất".
+   private int lastSeenBossHp = -1;
+   private int lastSeenBossMaxHp = -1;
+   private long bossLockedAt;
+   // Phát hiện máu boss không giảm khi đang đánh (chạy cả khi boss còn sống).
+   private int stuckCheckHp = -1;
+   private long stuckCheckSince;
+
+   /** Boss coi là "sắp chết" khi máu thấy lần cuối <= 5% max. */
+   private static final int LOW_HP_PERCENT = 5;
+   /** Boss sắp chết đã biến mất mà task chưa tăng sau 3s => người khác kết liễu. */
+   private static final long LOST_KILL_GRACE_MS = 3000L;
+   /** Khu bắt đầu tìm Tà Thú; đổi bằng -Dta.thu.start.zone (bội số của 5). */
+   private static final int START_ZONE = startZone();
+
+   private static int startZone() {
+      try {
+         int zone = Integer.parseInt(System.getProperty("ta.thu.start.zone", "5"));
+         return zone >= 0 && zone % 5 == 0 ? zone : 5;
+      } catch (NumberFormatException e) {
+         return 5;
+      }
+   }
 
    // Static field để Auto.fieldAA(int,int) biết đang lock boss Tà Thú level 3
    public static int targetTaThuTemplateId = -1;
@@ -35,6 +58,7 @@ public final class TaThu extends Auto {
    public final void fieldAD() {
       super.fieldAD();
       this.fieldAY = Char.fieldAM(1);
+      this.resetBossTracking();
       this.pkDeathCount = 0;
       this.wasDeadLastTick = false;
       this.clearPlayerAttackMarker();
@@ -66,7 +90,7 @@ public final class TaThu extends Auto {
          }
       }
 
-      super.fieldAC = 5;
+      super.fieldAC = START_ZONE;
       this.unlockMissionZone();
       fieldAW = false;
    }
@@ -79,7 +103,7 @@ public final class TaThu extends Auto {
       if (TileMap.mapID == var1 && TileMap.zoneID % 5 == 0) {
          super.fieldAC = TileMap.zoneID;
       } else {
-         super.fieldAC = 5;
+         super.fieldAC = START_ZONE;
       }
       this.unlockMissionZone();
    }
@@ -161,6 +185,7 @@ public final class TaThu extends Auto {
                   // tin mobFocus cũ vì packet attack có thể ghi đè bằng quái
                   // thường cùng templateId.
                   Char.getMyChar().mobFocus = boss;
+                  this.checkBossHpProgress(boss);
                   // Gọi fieldAB chỉ để di chuyển và gửi đòn đánh — KHÔNG dùng
                   // templateId làm filter vì selector sẽ chọn cả quái thường
                   // cùng templateId (levelBoss=0). Thay vào đó dùng templateId=-1
@@ -238,6 +263,10 @@ public final class TaThu extends Auto {
             Char.getMyChar().mobFocus = mob;
             this.lastMobHp = mob.hp;
             this.lastMobHpChange = System.currentTimeMillis();
+            this.lastSeenBossHp = mob.hp;
+            this.lastSeenBossMaxHp = mob.maxHp;
+            this.bossLockedAt = System.currentTimeMillis();
+            this.stuckCheckHp = -1;
             this.missionAttackCount = 0;
             this.lastMissionAttackAt = 0L;
             this.resetSkillTracking();
@@ -282,13 +311,14 @@ public final class TaThu extends Auto {
       if (!this.missionZoneLocked || TileMap.mapID != super.fieldAB || TileMap.zoneID != super.fieldAC) {
          return;
       }
-      boolean found = false;
-      for (int index = 0; index < GameScr.vMob.size(); ++index) {
-         Mob mob = (Mob)GameScr.vMob.elementAt(index);
-         if (mob != null && mob.hp > 0 && mob.status != 0 && mob.status != 1
-                 && mob.templateId == this.fieldAV && mob.levelBoss == 3) {
-            found = true;
-            break;
+      Mob liveBoss = this.findLiveMissionTarget();
+      boolean found = liveBoss != null;
+      if (found) {
+         this.lastSeenBossHp = liveBoss.hp;
+         this.lastSeenBossMaxHp = liveBoss.maxHp;
+         // Khóa lại từ state (RESUME) không đi qua rememberMissionTargetIfPresent.
+         if (this.bossLockedAt == 0L) {
+            this.bossLockedAt = System.currentTimeMillis();
          }
       }
       if (found) {
@@ -304,6 +334,7 @@ public final class TaThu extends Auto {
       // the zone is done — release it immediately regardless of grace time.
       if (this.fieldAY != null && this.fieldAY.count >= this.fieldAY.maxCount) {
          int oldZone = super.fieldAC;
+         this.resetBossTracking();
          this.unlockMissionZone();
          System.out.println("AUTO TA THU NEXT: task server đã xác nhận count="
                  + this.fieldAY.count + "/" + this.fieldAY.maxCount
@@ -314,13 +345,27 @@ public final class TaThu extends Auto {
       // has disappeared and this task is still unfinished, another worker got
       // the last hit. Use a longer grace when we have seen the target to give
       // the server time to send the task progress packet before switching zone.
-      long grace = this.missionTargetSeen ? 20000L : 12000L;
+      boolean bossWasDying = this.isLastSeenBossLow();
+      long grace = bossWasDying ? LOST_KILL_GRACE_MS : (this.missionTargetSeen ? 20000L : 12000L);
       if (System.currentTimeMillis() - this.missionTargetMissingSince >= grace) {
          int oldZone = super.fieldAC;
+         int lastHp = this.lastSeenBossHp;
+         int lastMaxHp = this.lastSeenBossMaxHp;
+         long fightMs = this.bossLockedAt == 0L ? -1L : System.currentTimeMillis() - this.bossLockedAt;
+         this.resetBossTracking();
          this.unlockMissionZone();
          TaThuDailyState state = TaThuDailyState.loadCurrent();
          if (state.mapId == super.fieldAB && state.killId == this.fieldAV && state.zoneId == oldZone) {
             state.clearLockedZone();
+         }
+         if (bossWasDying) {
+            System.out.println("AUTO TA THU LOST: người khác kết liễu Tà Thú map=" + super.fieldAB
+                    + " zone=" + oldZone + " killId=" + this.fieldAV
+                    + " máu cuối thấy=" + lastHp + "/" + lastMaxHp
+                    + " đánh=" + formatAgoSeconds(fightMs)
+                    + " đòn gửi=" + this.missionAttackCount
+                    + "; task vẫn " + this.taskProgress() + " sau " + grace / 1000 + "s, next khu");
+            return;
          }
          System.out.println("AUTO TA THU NEXT: Tà Thú không còn ở map=" + super.fieldAB
                  + " zone=" + oldZone + " sau " + grace/1000 + "s, task chưa xong"
@@ -385,6 +430,54 @@ public final class TaThu extends Auto {
       System.out.println("AUTO TA THU FOOD: khôi phục fighter map=" + super.fieldAB
               + " zone=" + super.fieldAC + " killId=" + this.fieldAV
               + "; sẽ chỉ focus boss levelBoss=3 đúng nhiệm vụ");
+   }
+
+   private boolean isLastSeenBossLow() {
+      return this.lastSeenBossHp > 0 && this.lastSeenBossMaxHp > 0
+              && (long)this.lastSeenBossHp * 100L <= (long)this.lastSeenBossMaxHp * LOW_HP_PERCENT;
+   }
+
+   private void resetBossTracking() {
+      this.lastSeenBossHp = -1;
+      this.lastSeenBossMaxHp = -1;
+      this.bossLockedAt = 0L;
+      this.stuckCheckHp = -1;
+   }
+
+   private String taskProgress() {
+      return this.fieldAY == null ? "none" : this.fieldAY.count + "/" + this.fieldAY.maxCount;
+   }
+
+   /** Cảnh báo khi đang đánh đúng boss mà máu boss không đổi quá 30 giây. */
+   private void checkBossHpProgress(Mob boss) {
+      long now = System.currentTimeMillis();
+      if (boss.hp != this.stuckCheckHp) {
+         this.stuckCheckHp = boss.hp;
+         this.stuckCheckSince = now;
+      } else if (now - this.stuckCheckSince > 30000L) {
+         System.out.println("AUTO TA THU WARN: Tà Thú HP stuck " + boss.hp + "/" + boss.maxHp
+                 + " sau 30s; atk=" + this.missionAttackCount + " ack=" + this.serverAttackAckCount
+                 + ", tiếp tục đánh");
+         this.stuckCheckSince = now;
+      }
+   }
+
+   /**
+    * TaThuAccountManager gọi khi server báo TaskOrder Tà Thú đạt đủ count:
+    * nhân vật này là người kết liễu.
+    */
+   public static void onMissionKillConfirmed(TaskOrder task) {
+      if (!(Code.fieldAB instanceof TaThu)) {
+         System.out.println("AUTO TA THU KILL: kết liễu Tà Thú task=" + task.count + "/" + task.maxCount);
+         return;
+      }
+      TaThu auto = (TaThu)Code.fieldAB;
+      long fightMs = auto.bossLockedAt == 0L ? -1L : System.currentTimeMillis() - auto.bossLockedAt;
+      System.out.println("AUTO TA THU KILL: mình kết liễu Tà Thú map=" + auto.fieldAB
+              + " zone=" + auto.fieldAC + " killId=" + auto.fieldAV
+              + " task=" + task.count + "/" + task.maxCount
+              + " đánh=" + formatAgoSeconds(fightMs)
+              + " đòn gửi=" + auto.missionAttackCount + " ack=" + auto.serverAttackAckCount);
    }
 
    /**
@@ -463,7 +556,8 @@ public final class TaThu extends Auto {
          int dx = actualBoss.x - me.cx;
          int dy = actualBoss.y - me.cy;
          bossInfo = "boss=id" + actualBoss.mobId + "(dx=" + dx + ",dy=" + dy
-                 + ",hp=" + formatCompactNumber(actualBoss.hp) + "/" + formatCompactNumber(actualBoss.maxHp) + ")";
+                 + ",hp=" + actualBoss.hp + "/" + actualBoss.maxHp
+                 + "(" + (actualBoss.maxHp > 0 ? (int)((long)actualBoss.hp * 100L / actualBoss.maxHp) : 0) + "%))";
       }
       // Log focus nếu đang focus quái khác boss nhiệm vụ
       String focusInfo = "";

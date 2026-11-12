@@ -24,7 +24,7 @@ Bạn có thể chạy trực tiếp bằng cách **nhấp đúp chuột** vào 
 
 | File Batch | Chức năng |
 | :--- | :--- |
-| `run-web.bat` | **Khởi động Web Dashboard** (Giao diện web riêng biệt `web_control_win/` tương thích Windows Server) |
+| `run-web.bat` | **Khởi động Web Dashboard** (`web_control_win/`: cùng giao diện, API, lịch và khung log với bản Ubuntu, chỉ phần điều khiển tiến trình dùng `win_manager.py` / `ta_thu_manager.py`) |
 | `build.bat` | Biên dịch mã nguồn Java thành các class tối ưu (`OptimizedMain`) |
 | `build-workers.bat` | Nhập số worker muốn chia từ `account.csv` và tự động tạo thư mục `worker-XX` |
 | `supervise.bat` | Chạy Supervisor tự động giám sát, tự restart nếu crash hoặc tới chu kỳ |
@@ -78,20 +78,19 @@ ngày...” được đếm trong 20 dòng gần nhất nên vẫn phát hiện 
 status/log khác. Đổi ngưỡng bằng `REPEATED_STATUS_LIMIT`; đặt `0` để tắt kiểm
 tra lặp.
 
-Supervisor cũng restart từng worker sau khoảng thời gian cấu hình tính từ lần
-worker được start gần nhất, không phụ thuộc log đang bình thường hay stale. Khi
-chạy qua Web Dashboard, đặt **Restart worker định kỳ (giờ)** và **Giãn cách khởi
-động worker tiếp theo (giây)** rồi bấm **Lưu cấu hình Supervisor**. Nếu Supervisor
-đang chạy, cần Stop rồi Start lại để áp dụng. Khi chạy trực tiếp, có thể dùng
-`PERIODIC_RESTART_SECONDS=10800` và tham số `--delay 30`.
+Web Dashboard Windows dùng chung giao diện với Ubuntu (xem `web_control/README.md`):
+thẻ NVHN / Tà Thú / Hệ thống, panel **Cấu hình**, bảng worker (TK i/n, thanh máu
+boss Tà Thú, thao tác hàng loạt) và khung log có giờ, lọc mức độ, tìm kiếm.
 
-Chỉ có một server game duy nhất: `180.93.114.122:14444`; Web Dashboard không
-còn ô chọn server.
-
-Trong panel **Hẹn giờ & Tự động**, trường **Giãn cách worker khi tự động (giây)**
-được dùng cho cả lúc lịch build/chạy lại NVHN và lúc chuyển sang Tà Thú. Giá trị
-`0` nghĩa là khởi động liên tiếp. Cấu hình này được lưu khi reload dashboard;
-ô tương ứng trong panel Supervisor cũng được đồng bộ.
+- **Không còn "Restart worker định kỳ"** (mặc định 0). Việc chạy lại từ đầu do lịch
+  **Lần đầu lúc / Lặp lại mỗi N giờ** đảm nhiệm: dừng Tà Thú, build lại, chạy NVHN.
+  Chạy tay vẫn có thể đặt `PERIODIC_RESTART_SECONDS` nếu cần.
+- **Dùng proxy** (một ô tick cho cả NVHN và Tà Thú): chia đều worker cho các proxy
+  trong `proxy-tk.txt` theo khối liên tiếp giống uplevel (VD 10 worker / 4 proxy =
+  3+3+2+2). Proxy lỗi bị bỏ qua; file rỗng thì chạy mạng của máy. Chạy tay:
+  `set NSO_PROXY_WORKERS_PER_PROXY=0` để tắt, giá trị > 0 để bật.
+- Mỗi dòng log có giờ `HH:mm:ss` (`-Dnso.log.timestamp=true`, tắt bằng
+  `set NSO_LOG_TIMESTAMP=false`); watchdog lặp trạng thái bỏ qua prefix giờ.
 
 Dashboard Windows cũng hỗ trợ chu kỳ tự động NVHN -> Tà Thú. Khi bật **Auto
 Tà Thú khi NVHN xong**, đến giờ định kỳ hệ thống sẽ dừng cả hai runtime,

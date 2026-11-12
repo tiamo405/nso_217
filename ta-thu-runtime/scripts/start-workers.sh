@@ -8,14 +8,23 @@ CLASSES_DIR=${TA_THU_CLASSES_DIR:-"$TA_THU_DIR/build/classes"}
 JAVA_BIN=${JAVA_BIN:-java}
 JAVA_XMS=${JAVA_XMS:-8m}
 JAVA_XMX=${JAVA_XMX:-48m}
-JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true"}
+JAVA_OPTS=${JAVA_OPTS:-"-XX:+UseSerialGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -Djava.awt.headless=true -Xss256k -XX:CICompilerCount=2"}
 TA_THU_STAGE=${TA_THU_STAGE:-full}
+# Tà Thú chạy trên nền optimized: dùng chung bộ -Dnso.* với NVHN (tick, skip paint,
+# event sender...). JAVA_XMX/JAVA_OPTS đã đặt ở trên nên không bị ghi đè.
+# shellcheck source=../../optimized-runtime/scripts/tuning-options.sh
+source "$TA_THU_DIR/../optimized-runtime/scripts/tuning-options.sh"
 # Chỉ còn 1 server game; giá trị tên cũ (tk, ninjamobile...) Java sẽ bỏ qua.
 NSO_SERVER=${NSO_SERVER:-180.93.114.122:14444}
 TA_THU_NVHN_WORKERS_DIR=${TA_THU_NVHN_WORKERS_DIR:-}
 START_DELAY=${START_DELAY:-10}
 WORKER_NICE=${WORKER_NICE:-}
 WORKER_TASKSET=${WORKER_TASKSET:-}
+# Proxy dùng chung cấu hình với NVHN: >0 = bật, chia đều worker cho proxy-tk.txt.
+REPO_DIR=$(cd -- "$TA_THU_DIR/.." && pwd)
+PROXY_FILE=${PROXY_TK_FILE:-"$REPO_DIR/proxy-tk.txt"}
+PROXY_GROUP_SIZE=${NSO_PROXY_WORKERS_PER_PROXY:-6}
+PROXY_SUPPORT_SCRIPT="$REPO_DIR/optimized-runtime/scripts/proxy_support.py"
 
 usage() {
     cat >&2 <<EOF
@@ -89,6 +98,32 @@ else
     fi
 fi
 
+if ! [[ "$PROXY_GROUP_SIZE" =~ ^[0-9]+$ ]]; then
+    echo "NSO_PROXY_WORKERS_PER_PROXY phải là số nguyên không âm." >&2
+    exit 1
+fi
+proxy_prepare_needed=false
+if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; then
+    proxy_prepare_needed=true
+elif (( PROXY_GROUP_SIZE > 0 )); then
+    if [[ ! -f "$WORKERS_DIR/.proxy-group-size" ]] || [[ "$(<"$WORKERS_DIR/.proxy-group-size")" != even:* ]]; then
+        proxy_prepare_needed=true
+    fi
+    for worker_dir in "${worker_dirs[@]}"; do
+        [[ -f "$worker_dir/.paused" || -f "$worker_dir/worker.done" || -f "$worker_dir/home/worker.done" ]] && continue
+        if [[ ! -s "$worker_dir/.proxy" ]]; then
+            proxy_prepare_needed=true
+            break
+        fi
+    done
+fi
+if [[ "$proxy_prepare_needed" == "true" ]]; then
+    python3 "$PROXY_SUPPORT_SCRIPT" \
+        --workers-dir "$WORKERS_DIR" \
+        --proxy-file "$PROXY_FILE" \
+        --group-size "$PROXY_GROUP_SIZE"
+fi
+
 started=0
 running=0
 failed=0
@@ -129,8 +164,8 @@ for worker_dir in "${worker_dirs[@]}"; do
     fi
 
     mkdir -p "$worker_dir/home"
-    printf '\n===== START %s PASS %s/1 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/stdout.log"
-    printf '\n===== START %s PASS %s/1 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/java-errors.log"
+    printf '\n===== START OPTIMIZED TA THU %s PASS %s/1 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/stdout.log"
+    printf '\n===== START OPTIMIZED TA THU %s PASS %s/1 =====\n' "$(date '+%F %T')" "$worker_pass" >>"$worker_dir/java-errors.log"
 
     read -r -a java_opts_array <<< "$JAVA_OPTS"
     command_prefix=()
@@ -148,17 +183,27 @@ for worker_dir in "${worker_dirs[@]}"; do
         continue
     fi
 
-    nohup "${command_prefix[@]}" "$JAVA_BIN" \
+    proxy_env=(env -u NSO_SOCKS5_PROXY NSO_PROXY_REQUIRED=0)
+    if (( PROXY_GROUP_SIZE > 0 )) && [[ -s "$worker_dir/.proxy" ]]; then
+        proxy_env=(env NSO_PROXY_REQUIRED=1 "NSO_SOCKS5_PROXY=$(<"$worker_dir/.proxy")")
+    elif (( PROXY_GROUP_SIZE > 0 )) && [[ "$(cat "$WORKERS_DIR/.proxy-group-size" 2>/dev/null)" != "even:0" ]]; then
+        echo "$worker_name thiếu proxy assignment; không khởi động." >&2
+        failed=$((failed + 1))
+        continue
+    fi
+
+    nohup "${proxy_env[@]}" "${command_prefix[@]}" "$JAVA_BIN" \
         "-Xms$JAVA_XMS" \
         "-Xmx$JAVA_XMX" \
         "${java_opts_array[@]}" \
-        -Dmicroedition.platform=NSOHeadless \
+        "${OPTIMIZED_SYSTEM_PROPS[@]}" \
         -Dnso.runtime=ta-thu \
+        "-Dnso.worker.name=$worker_name" \
         "-Dnso.server=$NSO_SERVER" \
         "-Dta.thu.stage=$TA_THU_STAGE" \
         "-Duser.home=$worker_dir/home" \
         -cp "$worker_dir:$CLASSES_DIR" \
-        HeadlessMain \
+        OptimizedMain \
         >>"$worker_dir/stdout.log" \
         2>>"$worker_dir/java-errors.log" &
 

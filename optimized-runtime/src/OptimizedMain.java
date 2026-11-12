@@ -7,6 +7,8 @@ public final class OptimizedMain {
             System.setProperty("microedition.platform", "NSOUltraOptimized");
         }
 
+        TimestampPrintStream.install();
+
         System.out.println("==================================================");
         System.out.println("  NSO ULTRA-OPTIMIZED STANDALONE RUNTIME STARTED");
         System.out.println("  Tick: " + OptimizedTuning.TICK_MS + "ms | SkipPaint: " + OptimizedTuning.SKIP_PAINT

@@ -34,4 +34,5 @@ fi
 exec "$PYTHON_BIN" -m uvicorn web_control.app:app \
     --host 0.0.0.0 \
     --port "$port" \
-    --workers 1
+    --workers 1 \
+    --timeout-graceful-shutdown 5

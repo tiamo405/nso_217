@@ -33,5 +33,5 @@ echo -----------------------------------------------------------
 echo Nhan Ctrl+C de dung server web.
 echo.
 
-python -m uvicorn web_control_win.app:app --host 0.0.0.0 --port %PORT% --workers 1
+python -m uvicorn web_control_win.app:app --host 0.0.0.0 --port %PORT% --workers 1 --timeout-graceful-shutdown 5
 pause

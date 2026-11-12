@@ -63,7 +63,7 @@ for pid_file in "${pid_files[@]}"; do
     fi
 
     cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
-    if [[ "$cmdline" != *"HeadlessMain"* || "$cmdline" != *"-Dnso.runtime=ta-thu"* || "$cmdline" != *"$worker_dir"* ]]; then
+    if [[ ( "$cmdline" != *"OptimizedMain"* && "$cmdline" != *"HeadlessMain"* ) || "$cmdline" != *"-Dnso.runtime=ta-thu"* || "$cmdline" != *"$worker_dir"* ]]; then
         echo "Bỏ qua $worker_name: PID $pid không thuộc Tà Thú worker này." >&2
         continue
     fi

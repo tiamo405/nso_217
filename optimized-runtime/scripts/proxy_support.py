@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Validate SOCKS5 proxies and assign one proxy to each worker group."""
+"""Kiểm tra proxy SOCKS5 và chia đều proxy cho worker NVHN (giống uplevel).
+
+- --group-size 0: tắt proxy, xoá toàn bộ gán proxy.
+- --group-size > 0: bật proxy. Giá trị cụ thể không còn ý nghĩa (giữ để tương
+  thích env NSO_PROXY_WORKERS_PER_PROXY cũ). Có P proxy hoạt động và W worker →
+  mỗi proxy nhận W//P worker liên tiếp, W%P proxy đầu nhận thêm 1.
+  VD 50 worker / 2 proxy: worker-01..25 = proxy 1, worker-26..50 = proxy 2.
+"""
 
 from __future__ import annotations
 
@@ -126,20 +133,33 @@ def worker_number(worker_dir: Path) -> int:
         raise ProxyError(f"worker không hợp lệ: {worker_dir.name}") from exc
 
 
+def _process_command(pid: int) -> str | None:
+    """Command line của PID trên Linux (/proc) hoặc Windows (psutil)."""
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", errors="replace"
+        )
+    except OSError:
+        pass
+    try:
+        import psutil  # type: ignore
+
+        return " ".join(psutil.Process(pid).cmdline())
+    except Exception:
+        return None
+
+
 def worker_is_running(worker_dir: Path) -> bool:
     pid_file = worker_dir / "bot.pid"
     try:
         pid = int(pid_file.read_text(encoding="utf-8").strip())
-        os.kill(pid, 0)
     except (OSError, ValueError):
         return False
-    try:
-        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(
-            "utf-8", errors="replace"
-        )
-    except OSError:
+    command = _process_command(pid)
+    if not command:
         return False
-    return "OptimizedMain" in command and str(worker_dir) in command
+    norm = lambda value: str(value).replace("\\", "/").casefold()  # noqa: E731
+    return "optimizedmain" in norm(command) and norm(worker_dir) in norm(command)
 
 
 def active_workers(workers_dir: Path) -> list[Path]:
@@ -149,7 +169,7 @@ def active_workers(workers_dir: Path) -> list[Path]:
             continue
         if (worker_dir / ".paused").is_file():
             continue
-        if (worker_dir / "home" / "worker.done").is_file():
+        if (worker_dir / "home" / "worker.done").is_file() or (worker_dir / "worker.done").is_file():
             continue
         if (worker_dir / "home" / "worker.first-pass.done").is_file():
             continue
@@ -163,94 +183,121 @@ def clear_assignments(workers_dir: Path) -> None:
     (workers_dir / ".proxy-group-size").unlink(missing_ok=True)
 
 
+def all_workers(workers_dir: Path) -> list[Path]:
+    """Mọi worker (kể cả đã xong/tạm dừng) để phép chia luôn ổn định theo số thứ tự."""
+    return sorted(
+        (path for path in workers_dir.glob("worker-*") if path.is_dir()), key=worker_number
+    )
+
+
+def even_plan(workers: list[Path], proxies: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    base, extra = divmod(len(workers), len(proxies))
+    order: list[dict[str, object]] = []
+    for index, proxy in enumerate(proxies):
+        order += [proxy] * (base + (1 if index < extra else 0))
+    return {worker.name: order[index] for index, worker in enumerate(workers)}
+
+
 def assign(args: argparse.Namespace) -> int:
     workers_dir = Path(args.workers_dir).resolve()
     proxy_file = Path(args.proxy_file).resolve()
-    workers = active_workers(workers_dir)
-    running = [worker for worker in workers if worker_is_running(worker)]
+    workers = all_workers(workers_dir)
+    pending = {worker.name for worker in active_workers(workers_dir)}
+    running = {worker.name for worker in workers if worker_is_running(worker)}
 
     if args.group_size == 0:
-        if running and any((worker / ".proxy").is_file() for worker in running):
+        if any((workers_dir / name / ".proxy").is_file() for name in running):
             raise ProxyError("hãy Stop toàn bộ worker trước khi tắt proxy")
         clear_assignments(workers_dir)
-        print("Proxy: disabled")
+        print("Proxy: tắt, worker chạy mạng của máy")
         return 0
 
-    if not workers:
-        clear_assignments(workers_dir)
+    if not pending:
         print("Proxy: không có worker cần chạy")
         return 0
 
-    marker = workers_dir / ".proxy-group-size"
-    old_group_size = marker.read_text(encoding="utf-8").strip() if marker.is_file() else ""
-    if old_group_size != str(args.group_size) and running:
-        raise ProxyError("đã đổi số worker/proxy; hãy Stop toàn bộ worker rồi Start lại")
-    if not running:
+    configured = load_proxies(proxy_file) if proxy_file.is_file() else []
+    if not configured:
+        # Giống uplevel: file proxy rỗng / không có → chạy mạng của máy.
+        if any((workers_dir / name / ".proxy").is_file() for name in running):
+            raise ProxyError("hãy Stop toàn bộ worker trước khi bỏ proxy")
         clear_assignments(workers_dir)
-
-    try:
-        configured = load_proxies(proxy_file)
-    except ProxyError as exc:
-        raise ProxyError(str(exc)) from exc
-
-    valid: dict[str, dict[str, object]] = {}
+        marker = workers_dir / ".proxy-group-size"
+        marker.write_text("even:0\n", encoding="utf-8")
+        print(f"Proxy: {proxy_file.name} trống → {len(workers)} worker chạy mạng của máy")
+        return 0
+    valid: list[dict[str, object]] = []
     for proxy in configured:
         try:
             probe(proxy, args.target_host, args.target_port)
         except (OSError, ProxyError) as exc:
-            print(f"Proxy lỗi {masked(proxy)}: {exc}", file=sys.stderr)
+            print(f"Proxy lỗi, bỏ qua {masked(proxy)}: {exc}", file=sys.stderr)
             continue
-        valid[str(proxy["value"])] = proxy
+        valid.append(proxy)
+    if not valid:
+        raise ProxyError(f"không có proxy nào hoạt động trong {proxy_file.name}")
 
-    groups: dict[int, list[Path]] = {}
+    plan = even_plan(workers, valid)
     for worker in workers:
-        group = (worker_number(worker) - 1) // args.group_size
-        groups.setdefault(group, []).append(worker)
-
-    assignments: dict[int, dict[str, object]] = {}
-    used_endpoints: set[str] = set()
-    for group, group_workers in sorted(groups.items()):
-        values = {
-            (worker / ".proxy").read_text(encoding="utf-8").strip()
-            for worker in group_workers
-            if (worker / ".proxy").is_file()
-        }
-        if len(values) > 1:
-            raise ProxyError(f"group {group + 1} có nhiều proxy khác nhau")
-        if values:
-            value = values.pop()
-            proxy = valid.get(value)
-            if proxy is None:
-                raise ProxyError(f"proxy đã gán cho group {group + 1} không hoạt động")
-        else:
-            proxy = next(
-                (candidate for candidate in valid.values()
-                 if str(candidate["endpoint"]) not in used_endpoints),
-                None,
-            )
-            if proxy is None:
-                raise ProxyError(
-                    f"chỉ có {len(valid)} proxy hoạt động, cần {len(groups)} proxy"
-                )
-        endpoint = str(proxy["endpoint"])
-        if endpoint in used_endpoints:
-            raise ProxyError(f"proxy {endpoint} đang bị gán cho nhiều group")
-        used_endpoints.add(endpoint)
-        assignments[group] = proxy
-
-    for group, group_workers in groups.items():
-        value = str(assignments[group]["value"])
-        for worker in group_workers:
-            path = worker / ".proxy"
-            path.write_text(value + "\n", encoding="utf-8")
-            path.chmod(0o600)
-    marker.write_text(str(args.group_size) + "\n", encoding="utf-8")
+        path = worker / ".proxy"
+        wanted = str(plan[worker.name]["value"])
+        if worker.name in running:
+            # Không đổi proxy của worker đang chạy; nếu lệch thì cần Stop/Start toàn bộ.
+            current = path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+            if current and current != wanted:
+                print(f"  {worker.name} đang chạy với proxy cũ; Stop rồi Start để chia lại",
+                      file=sys.stderr)
+            continue
+        path.write_text(wanted + "\n", encoding="utf-8")
+        path.chmod(0o600)
+    marker = workers_dir / ".proxy-group-size"
+    marker.write_text(f"even:{len(valid)}\n", encoding="utf-8")
     marker.chmod(0o600)
 
-    print(f"Proxy: {len(assignments)} group, {len(valid)}/{len(configured)} hoạt động")
-    for group, proxy in sorted(assignments.items()):
-        print(f"  group {group + 1}: {masked(proxy)}")
+    used = [proxy for proxy in valid if proxy in plan.values()]
+    print(f"Proxy: {len(workers)} worker chia đều cho {len(used)} proxy "
+          f"({len(valid)}/{len(configured)} proxy hoạt động)")
+    for number, proxy in enumerate(valid, 1):
+        names = [name for name, value in plan.items() if value is proxy]
+        if not names:
+            print(f"  proxy {number} {masked(proxy)}: không dùng (ít worker hơn proxy)")
+            continue
+        span = names[0] if len(names) == 1 else f"{names[0]}..{names[-1]}"
+        print(f"  proxy {number} {masked(proxy)}: {span} ({len(names)} worker)")
     return 0
+
+
+def prepare(
+    workers_dir: Path,
+    proxy_file: Path,
+    enabled: bool,
+    target_host: str = DEFAULT_TARGET_HOST,
+    target_port: int = DEFAULT_TARGET_PORT,
+) -> None:
+    """Dùng từ Python (manager Windows): chia proxy trước khi start worker."""
+    assign(argparse.Namespace(
+        workers_dir=str(workers_dir), proxy_file=str(proxy_file),
+        group_size=1 if enabled else 0, target_host=target_host, target_port=target_port,
+    ))
+
+
+def launch_env(worker_dir: Path, enabled: bool) -> dict[str, str]:
+    """Env proxy cho JVM của một worker (Connector.java đọc NSO_SOCKS5_PROXY).
+
+    Trả về {} khi tắt proxy hoặc file proxy rỗng (marker even:0) → mạng của máy.
+    """
+    proxy_path = worker_dir / ".proxy"
+    if not enabled:
+        return {}
+    if proxy_path.is_file() and proxy_path.read_text(encoding="utf-8").strip():
+        return {
+            "NSO_PROXY_REQUIRED": "1",
+            "NSO_SOCKS5_PROXY": proxy_path.read_text(encoding="utf-8").strip(),
+        }
+    marker = worker_dir.parent / ".proxy-group-size"
+    if marker.is_file() and marker.read_text(encoding="utf-8").strip() == "even:0":
+        return {}
+    raise ProxyError(f"{worker_dir.name} thiếu proxy assignment; không khởi động")
 
 
 def main() -> int:

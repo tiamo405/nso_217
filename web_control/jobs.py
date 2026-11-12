@@ -149,7 +149,7 @@ class BuildJobManager:
                         self._stream_process(job, process),
                         timeout=self.manager.settings.build_timeout,
                     )
-                except TimeoutError:
+                except asyncio.TimeoutError:
                     await self._terminate_process_group(process)
                     raise ControlError(
                         f"Build vượt quá {self.manager.settings.build_timeout} giây"
@@ -216,7 +216,7 @@ class BuildJobManager:
             return
         try:
             await asyncio.wait_for(process.wait(), timeout=5)
-        except TimeoutError:
+        except asyncio.TimeoutError:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:

@@ -362,21 +362,18 @@ class ScheduleManager:
 
     async def _check_auto_ta_thu(self) -> None:
         async with self.transition_lock:
-            if (
-                not self.auto_ta_thu
-                or self.manager is None
-                or not self.manager.desired_supervisor()
-                or self.jobs.active_job() is not None
-            ):
+            if self.manager is None or self.jobs.active_job() is not None:
                 return
-            nvhn_status = await self.manager.status()
-            totals = nvhn_status.get("totals", {})
-            total_workers = totals.get("total", 0)
-            done_workers = totals.get("done", 0)
-
             if self.current_phase == "ta_thu":
-                if self.manager.ta_thu_supervisor_status()["running"]:
+                # Chỉ khôi phục khi người dùng/auto đã yêu cầu Tà Thú chạy.
+                # Nút Stop Tà Thú ghi ta_thu_desired=False nên không bị bật lại.
+                if (
+                    not self.manager.desired_ta_thu()
+                    or self.manager.ta_thu_supervisor_status()["running"]
+                ):
                     return
+                nvhn_status = await self.manager.status()
+                total_workers = nvhn_status.get("totals", {}).get("total", 0)
                 logger.warning("Tà Thú supervisor đã dừng; khởi động lại và giữ worker hiện có.")
                 worker_count = total_workers or self.worker_count
                 if await self.manager.start_ta_thu(
@@ -390,8 +387,16 @@ class ScheduleManager:
                     logger.warning("Khôi phục Auto Tà Thú supervisor thất bại.")
                 return
 
-            if self.current_phase != "nvhn":
+            if (
+                self.current_phase != "nvhn"
+                or not self.auto_ta_thu
+                or not self.manager.desired_supervisor()
+            ):
                 return
+            nvhn_status = await self.manager.status()
+            totals = nvhn_status.get("totals", {})
+            total_workers = totals.get("total", 0)
+            done_workers = totals.get("done", 0)
 
             if (
                 total_workers > 0
