@@ -24,3 +24,7 @@ python-worker/dist_py/
 optimized-runtime/run/*
 proxy-tk.txt
 gen_acc.py
+.proxy
+.proxy-group-size
+ta-thu-runtime/ta-thu-state/
+*.tmp

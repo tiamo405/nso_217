@@ -94,6 +94,9 @@ public final class AutoTaThuDaily extends Auto {
         }
 
         this.receiveAttempts = 0;
+        // State trong file là nguồn chuẩn (hook packet đã cộng questsCompleted và xóa vị trí task);
+        // đọc lại để không ghi đè bằng bản cũ trong bộ nhớ.
+        this.reloadServerConfirmedProgress();
         this.state.rememberTask(task);
         if ("receive".equals(TaThuAccountManager.getStage())) {
             TaThuAccountManager.onTestStageFinished("đã nhận TaskOrder id=" + task.taskId

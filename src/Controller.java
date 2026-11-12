@@ -2551,6 +2551,14 @@ public final class Controller {
                     break;
                 case 96:
                     TaskOrder receivedTask = new TaskOrder(fieldAB.reader().readByte(), fieldAB.reader().readInt(), fieldAB.reader().readInt(), fieldAB.reader().readUTF(), fieldAB.reader().readUTF(), fieldAB.reader().readUnsignedByte(), fieldAB.reader().readUnsignedByte());
+                    // Reconnect giữ nguyên Char cũ: server gửi lại TaskOrder -> bỏ bản cũ cùng taskId
+                    // để không còn task "ma" (0/x) sau khi server đã xóa task thật.
+                    for (int dupIndex = Char.getMyChar().taskOrders.size() - 1; dupIndex >= 0; --dupIndex) {
+                        TaskOrder oldTask = (TaskOrder) Char.getMyChar().taskOrders.elementAt(dupIndex);
+                        if (oldTask != null && oldTask.taskId == receivedTask.taskId) {
+                            Char.getMyChar().taskOrders.removeElementAt(dupIndex);
+                        }
+                    }
                     Char.getMyChar().taskOrders.addElement(receivedTask);
                     if (receivedTask.taskId == 0 && Code.fieldAB == Code.fieldAD) {
                         Code.fieldAD.onDailyTaskReceived();
