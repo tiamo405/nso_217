@@ -1,4 +1,4 @@
-# Chạy uplevel / uplevel35 / uplevel_monitor trên Windows
+# Chạy uplevel / uplevel35 / uplevel1to35 / uplevel_monitor trên Windows
 
 Mỗi script `.sh` có bản `.cmd` cùng tên, cùng tham số và cùng biến môi trường. File pid/log/home giữ
 nguyên vị trí (`workers\worker-XX\stdout.log`, `bot.pid`, `loop.pid`, `home\status.properties`) nên
@@ -49,6 +49,15 @@ uplevel35\scripts\logs-workers.cmd 1 --grep
 uplevel35\scripts\logs-workers.cmd --errors
 uplevel35\scripts\stop-workers.cmd
 uplevel35\scripts\check-patches.cmd
+
+rem ===== uplevel1to35 (lv 1 -> 35 liền mạch: As20 rồi As35, account-1to35.csv) =====
+uplevel1to35\scripts\build-workers.cmd 4
+uplevel1to35\scripts\start-workers.cmd --mode 1
+uplevel1to35\scripts\start-workers.cmd 2 --debug
+uplevel1to35\scripts\status-workers.cmd
+uplevel1to35\scripts\logs-workers.cmd 1 --grep
+uplevel1to35\scripts\logs-workers.cmd --errors
+uplevel1to35\scripts\stop-workers.cmd
 
 rem ===== web monitor =====
 uplevel_monitor\run.cmd            &rem http://127.0.0.1:8190

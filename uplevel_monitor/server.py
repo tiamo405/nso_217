@@ -1,4 +1,4 @@
-"""Web monitor (chỉ đọc) cho worker uplevel/ và uplevel35/.
+"""Web monitor (chỉ đọc) cho worker uplevel/, uplevel35/ và uplevel1to35/.
 
 Không điều khiển worker. Mỗi request đọc:
   - <runtime>/workers/worker-XX/home/status.properties  (UplevelStatus.java ghi mỗi 5 giây)
@@ -8,7 +8,7 @@ Không điều khiển worker. Mỗi request đọc:
 
 Chạy: python3 -m uplevel_monitor.server   (chỉ dùng thư viện chuẩn)
 Biến môi trường: UPLEVEL_MONITOR_HOST (mặc định 127.0.0.1), UPLEVEL_MONITOR_PORT (8090),
-UPLEVEL_WORKERS_DIR, UPLEVEL35_WORKERS_DIR.
+UPLEVEL_WORKERS_DIR, UPLEVEL35_WORKERS_DIR, UPLEVEL1TO35_WORKERS_DIR.
 """
 from __future__ import annotations
 
@@ -30,9 +30,15 @@ NUM_CPUS = os.cpu_count() or 1
 RUNTIMES: dict[str, Path] = {
     "uplevel": Path(os.environ.get("UPLEVEL_WORKERS_DIR", REPO_DIR / "uplevel" / "workers")),
     "uplevel35": Path(os.environ.get("UPLEVEL35_WORKERS_DIR", REPO_DIR / "uplevel35" / "workers")),
+    "uplevel1to35": Path(os.environ.get("UPLEVEL1TO35_WORKERS_DIR", REPO_DIR / "uplevel1to35" / "workers")),
 }
 # Tiền tố dòng STATE dùng khi worker chạy bản build cũ chưa ghi status.properties.
-STATE_PREFIX = {"uplevel": "UPLEVEL STATE ", "uplevel35": "UPLEVEL35 STATE "}
+# uplevel1to35: As20 in "UPLEVEL STATE", As35 in "UPLEVEL35 STATE" -> lấy dòng nào mới hơn.
+STATE_PREFIX: dict[str, tuple[str, ...]] = {
+    "uplevel": ("UPLEVEL STATE ",),
+    "uplevel35": ("UPLEVEL35 STATE ",),
+    "uplevel1to35": ("UPLEVEL STATE ", "UPLEVEL35 STATE "),
+}
 
 _cpu_lock = threading.Lock()
 _cpu_samples: dict[int, tuple[float, float]] = {}  # pid -> (cpu_seconds, wall_time)
@@ -135,10 +141,10 @@ def tail_bytes(path: Path, limit: int) -> bytes:
         return b""
 
 
-def last_state_line(log: Path, prefix: str) -> dict[str, str]:
+def last_state_line(log: Path, prefixes: tuple[str, ...]) -> dict[str, str]:
     """Fallback: tách key=value đơn giản của dòng STATE cuối cùng trong 256 KB cuối log."""
     text = tail_bytes(log, 256 * 1024).decode("utf-8", errors="replace")
-    idx = text.rfind(prefix)
+    idx, prefix = max((text.rfind(p), p) for p in prefixes)
     if idx < 0:
         return {}
     line = text[idx + len(prefix):].split("\n", 1)[0]

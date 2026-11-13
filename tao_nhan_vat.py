@@ -15,13 +15,26 @@ Số 0 đọc là "linh" (4 ký tự) thay vì "khong" để tên luôn nằm tr
 
 Tiền tố mặc định là "lg", đổi bằng --prefix.
 
+Mỗi tài khoản có tối đa 3 nhân vật (3 slot ở SelectCharScr). Tên nv2/nv3 lấy
+theo tên THẬT của nv1 đang có trên server, thêm "h" (nv2) hoặc "b" (nv3):
+
+    nv1 = lglinhlinhmot → nv2 = lglinhlinhmoth, nv3 = lglinhlinhmotb
+
+nv1 tên cũ dài sẵn 15 ký tự (lgkhong...) thì đổi "khong" → "linh" trước khi
+thêm chữ: lgkhongkhongmot → nv2 = lglinhlinhmoth. Không cắt cụt tên vì dễ
+trùng (lgkhongkhongbay cắt → lgkhongkhongbah = nv2 của lgkhongkhongba).
+Tên vẫn vượt 15 ký tự thì báo lỗi slot đó. Nếu tạo nv1 lỗi thì không tạo
+nv2/nv3 (tránh nv2 thành nhân vật đầu tiên của tài khoản).
+
 Protocol (đối chiếu src/Service.java createChar):
     cmd -28, byte -125, UTF name, byte gender, byte hairId
 
 Ví dụ:
-    python3 tao_nhan_vat.py accounts.csv
+    python3 tao_nhan_vat.py accounts.csv                 # tạo đủ 3 nhân vật
+    python3 tao_nhan_vat.py accounts.csv --so-nv 1       # chỉ tạo nv1 như cũ
     python3 tao_nhan_vat.py accounts.csv --gender 1 --workers 5
-    python3 tao_nhan_vat.py accounts.csv --dry-run      # chỉ in tên sẽ tạo
+    python3 tao_nhan_vat.py accounts.csv --check         # đăng nhập xem tên nv1, in tên sẽ tạo
+    python3 tao_nhan_vat.py accounts.csv --dry-run       # không đăng nhập, giả định nv1 theo số TK
 """
 
 import argparse
@@ -52,6 +65,10 @@ HAIR_IDS = {0: (11, 26, 27, 28), 1: (2, 23, 24, 25)}
 SUB_CREATE_CHAR = -125
 MIN_NAME_LENGTH = 5
 MAX_NAME_LENGTH = 15
+MAX_CHARS = 3
+# Đuôi tên theo slot: nv1 giữ nguyên, nv2 thêm "h", nv3 thêm "b".
+SLOT_SUFFIXES = ("", "h", "b")
+INGAME_COLUMNS = ("ingame", "ingame2", "ingame3")
 
 print_lock = threading.Lock()
 
@@ -75,6 +92,42 @@ def ingame_from_account(account: str, pad: int = 3) -> str:
     if not match:
         raise ValueError(f"Tài khoản '{account}' không có số ở cuối")
     return number_to_name(match.group(1), pad)
+
+
+def name_error(name: str):
+    """Trả về lý do lỗi nếu tên ngoài giới hạn độ dài, ngược lại None."""
+    if MIN_NAME_LENGTH <= len(name) <= MAX_NAME_LENGTH:
+        return None
+    return f"tên '{name}' dài {len(name)} ký tự, ngoài giới hạn {MIN_NAME_LENGTH}-{MAX_NAME_LENGTH}"
+
+
+def suffix_stem(base: str) -> str:
+    """Phần gốc để ghép h/b cho nv2/nv3.
+
+    Tên nv1 cũ dạng lgkhong... có thể dài sẵn 15 ký tự, thêm 1 chữ là quá
+    giới hạn → đổi "khong" thành "linh" như cách đặt tên mới:
+        lgkhongkhongmot → lglinhlinhmot → nv2 lglinhlinhmoth
+    """
+    if len(base) + 1 <= MAX_NAME_LENGTH:
+        return base
+    return base.replace("khong", "linh")
+
+
+def find_base_name(names: list[str]) -> str:
+    """Tên nv1 trong danh sách: tên không phải nv2/nv3 của tên khác.
+
+    Không phụ thuộc thứ tự server trả về danh sách nhân vật.
+    """
+    derived = {suffix_stem(name) + suffix for name in names for suffix in SLOT_SUFFIXES[1:]}
+    for name in names:
+        if name not in derived:
+            return name
+    return names[0]
+
+
+def planned_names(base: str, count: int) -> list[str]:
+    stem = suffix_stem(base)
+    return [base] + [stem + suffix for suffix in SLOT_SUFFIXES[1:count]]
 
 
 def read_accounts(csv_path: Path) -> list[tuple[str, str]]:
@@ -181,61 +234,127 @@ class CreateCharClient(NSOActivityClient):
                     if name in names:
                         return True, "Đã có trong danh sách nhân vật"
                     return False, f"Server trả danh sách không có tên mới: {names}"
-            # Một số server vào thẳng game sau khi tạo.
+            # Một số server vào thẳng game sau khi tạo → phải đăng nhập lại
+            # mới tạo tiếp được nhân vật khác.
             if command == self.CMD_SUB_COMMAND and data:
                 if NSOReader(data).read_byte() == -127:
+                    self.in_game = True
                     return True, "Đã vào game với nhân vật mới"
         return False, "Timeout chờ server phản hồi tạo nhân vật"
 
 
+def open_session(account, password, args):
+    """Kết nối + đăng nhập. Trả về (client, danh sách tên nhân vật)."""
+    client = CreateCharClient(args.host, args.port)
+    if not client.connect():
+        client.disconnect()
+        raise ConnectionError("không kết nối được")
+    characters = client.login_any(account, password)
+    if characters is None:
+        client.disconnect()
+        raise ConnectionError("đăng nhập thất bại")
+    return client, [c[0] for c in characters]
+
+
+def finish_result(result, notes, failed, created, index, total, account, mode=None):
+    detail = "; ".join(notes)
+    if failed:
+        prefix, icon = "lỗi", "❌"
+    elif mode:
+        prefix, icon = mode, "🔎"
+    elif created:
+        prefix, icon = "ok", "✅"
+    else:
+        prefix, icon = "bỏ qua", "⏭️ "
+    result["status"] = f"{prefix}: {detail}"
+    result["created"] = created
+    log(f"[{index}/{total}] {icon} {account}: {detail}")
+    return result
+
+
 def process_account(index, total, account, password, args):
-    result = {"account": account, "password": password, "ingame": "", "status": ""}
+    result = {"account": account, "password": password, "status": "", "created": 0}
+    result.update({column: "" for column in INGAME_COLUMNS})
     try:
-        name = args.prefix + ingame_from_account(account, args.pad)
+        default_base = args.prefix + ingame_from_account(account, args.pad)
     except ValueError as exc:
         result["status"] = f"lỗi: {exc}"
         log(f"[{index}/{total}] ❌ {exc}")
         return result
-    result["ingame"] = name
-    if not MIN_NAME_LENGTH <= len(name) <= MAX_NAME_LENGTH:
-        result["status"] = f"lỗi: tên '{name}' dài {len(name)} ký tự, ngoài giới hạn {MIN_NAME_LENGTH}-{MAX_NAME_LENGTH}"
-        log(f"[{index}/{total}] ❌ {account}: {result['status']}")
-        return result
+
+    notes, failed, created = [], False, 0
 
     if args.dry_run:
-        result["status"] = "dry-run"
-        log(f"[{index}/{total}] {account} → {name}")
-        return result
+        # Không đăng nhập nên giả định nv1 đúng tên tính từ số tài khoản.
+        # Tài khoản có nv1 tên cũ (vd lgkhong...) cần --check mới chính xác.
+        for slot, name in enumerate(planned_names(default_base, args.so_nv), start=1):
+            result[INGAME_COLUMNS[slot - 1]] = name
+            error = name_error(name)
+            failed = failed or bool(error)
+            notes.append(f"nv{slot} {name}" + (f" lỗi: {error}" if error else ""))
+        return finish_result(result, notes, failed, 0, index, total, account, mode="dry-run")
 
-    gender = args.gender if args.gender is not None else random.randint(0, 1)
-    hair = random.choice(HAIR_IDS[gender])
-
-    client = CreateCharClient(args.host, args.port)
+    client = None
     try:
-        if not client.connect():
-            result["status"] = "lỗi: không kết nối được"
-            return result
-        characters = client.login_any(account, password)
-        if characters is None:
-            result["status"] = "lỗi: đăng nhập thất bại"
-            return result
-        if characters:
-            existing = ", ".join(c[0] for c in characters)
-            result["status"] = f"bỏ qua: đã có nhân vật ({existing})"
-            log(f"[{index}/{total}] ⏭️  {account}: đã có nhân vật {existing}")
-            return result
+        client, existing = open_session(account, password, args)
+        base = find_base_name(existing) if existing else default_base
 
-        ok, detail = client.create_character(name, gender, hair)
-        result["status"] = ("ok: " if ok else "lỗi: ") + detail
-        icon = "✅" if ok else "❌"
-        log(f"[{index}/{total}] {icon} {account} → {name} ({detail})")
-        return result
+        for slot, name in enumerate(planned_names(base, args.so_nv), start=1):
+            result[INGAME_COLUMNS[slot - 1]] = name
+            if name in existing:
+                notes.append(f"nv{slot} {name} có sẵn")
+                continue
+            if len(existing) >= args.so_nv:
+                notes.append(f"nv{slot} bỏ qua: đã đủ {len(existing)} nhân vật ({', '.join(existing)})")
+                continue
+            error = name_error(name)
+            if error:
+                notes.append(f"nv{slot} lỗi: {error}")
+                failed = True
+                continue
+            if args.check:
+                notes.append(f"nv{slot} {name} sẽ tạo")
+                continue
+
+            if client is None:
+                # Lần tạo trước đã vào game hoặc mất kết nối → đăng nhập lại.
+                time.sleep(args.create_delay)
+                client, existing = open_session(account, password, args)
+                if name in existing:
+                    notes.append(f"nv{slot} {name} có sẵn")
+                    continue
+            elif created:
+                time.sleep(args.create_delay)
+
+            gender = args.gender if args.gender is not None else random.randint(0, 1)
+            hair = random.choice(HAIR_IDS[gender])
+            ok, detail = client.create_character(name, gender, hair)
+            if ok:
+                created += 1
+                notes.append(f"nv{slot} {name} tạo mới")
+                listed = [c[0] for c in (client.characters or [])]
+                existing = listed if name in listed else existing + [name]
+                if getattr(client, "in_game", False):
+                    client.disconnect()
+                    client = None
+                continue
+
+            notes.append(f"nv{slot} {name} lỗi: {detail}")
+            failed = True
+            if slot == 1:
+                # Không có nv1 thì nv2 sẽ thành nhân vật đầu → lần sau đoán sai tên gốc.
+                break
+            client.disconnect()
+            client = None
+
+        return finish_result(result, notes, failed, created, index, total, account,
+                             mode="check" if args.check else None)
     except Exception as exc:
-        result["status"] = f"lỗi: {exc}"
-        log(f"[{index}/{total}] ❌ {account}: {exc}")
-        return result
+        notes.append(str(exc))
+        return finish_result(result, notes, True, created, index, total, account)
     finally:
-        client.disconnect()
+        if client is not None:
+            client.disconnect()
         # Nghỉ trong chính luồng này, không chặn các luồng khác.
         if args.delay > 0:
             time.sleep(args.delay)
@@ -243,7 +362,8 @@ def process_account(index, total, account, password, args):
 
 def write_results(path: Path, rows):
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["account", "password", "ingame", "status"])
+        writer = csv.DictWriter(handle, fieldnames=["account", "password", *INGAME_COLUMNS, "status"],
+                                extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -265,7 +385,15 @@ def build_parser():
     parser.add_argument("--workers", type=int, default=6, help="Số tài khoản chạy song song")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                         help="Giây mỗi luồng nghỉ sau khi xong 1 tài khoản")
-    parser.add_argument("--dry-run", action="store_true", help="Chỉ in tên sẽ tạo, không đăng nhập")
+    parser.add_argument("--so-nv", type=int, choices=range(1, MAX_CHARS + 1), default=MAX_CHARS,
+                        help="Số nhân vật cần có trên mỗi tài khoản (mặc định 3: nv1, nv1+h, nv1+b)")
+    parser.add_argument("--create-delay", type=float, default=1.5,
+                        help="Giây nghỉ giữa 2 lần tạo nhân vật trên cùng tài khoản")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true",
+                      help="Không đăng nhập, giả định nv1 theo số tài khoản, chỉ in tên sẽ tạo")
+    mode.add_argument("--check", action="store_true",
+                      help="Đăng nhập đọc tên nv1 thật, in tên sẽ tạo + lỗi độ dài, không tạo")
     return parser
 
 
@@ -300,7 +428,11 @@ def main() -> int:
     created = sum(1 for row in results if row["status"].startswith("ok"))
     skipped = sum(1 for row in results if row["status"].startswith("bỏ qua"))
     failed = sum(1 for row in results if row["status"].startswith("lỗi"))
-    print(f"\n✅ Tạo mới: {created} | ⏭️ Bỏ qua: {skipped} | ❌ Lỗi: {failed}")
+    new_chars = sum(row.get("created", 0) for row in results)
+    if args.dry_run or args.check:
+        print(f"\n🔎 Kiểm tra: {len(results) - failed} TK ổn | ❌ Lỗi: {failed}")
+    else:
+        print(f"\n✅ TK có tạo mới: {created} ({new_chars} nhân vật) | ⏭️ Bỏ qua: {skipped} | ❌ Lỗi: {failed}")
     print(f"📄 Kết quả: {args.output}")
     return 0 if failed == 0 else 2
 

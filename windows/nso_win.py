@@ -1,6 +1,6 @@
-"""Bản Windows của uplevel/scripts/*.sh và uplevel35/scripts/*.sh (chỉ dùng Python stdlib, psutil tùy chọn).
+"""Bản Windows của uplevel/, uplevel35/ và uplevel1to35/ scripts/*.sh (chỉ dùng Python stdlib, psutil tùy chọn).
 
-    python windows/nso_win.py <uplevel|uplevel35> <lệnh> [tham số...]
+    python windows/nso_win.py <uplevel|uplevel35|uplevel1to35> <lệnh> [tham số...]
 
 Lệnh: build, build-workers [N], start [...], stop [số...], status [số...], logs [...], check-patches.
 Giữ nguyên tham số, biến môi trường, file pid/log/home như bản .sh để uplevel_monitor đọc được.
@@ -62,13 +62,20 @@ class Runtime:
             p = "UPLEVEL_"
             self.csv = Path(env("UPLEVEL_ACCOUNT_CSV", str(REPO_DIR / "account-as20.csv")))
             self.default_workers = 10
-            self.state_prefix = "UPLEVEL STATE "
+            self.state_prefixes = ("UPLEVEL STATE ",)
             self.tail_lines = 10
+        elif name == "uplevel1to35":
+            # As20 (nhiệm vụ 0..17) in "UPLEVEL STATE", As35 (18..23) in "UPLEVEL35 STATE".
+            p = "UPLEVEL1TO35_"
+            self.csv = Path(env("UPLEVEL1TO35_ACCOUNT_CSV", str(REPO_DIR / "account-1to35.csv")))
+            self.default_workers = 1
+            self.state_prefixes = ("UPLEVEL STATE ", "UPLEVEL35 STATE ")
+            self.tail_lines = 200
         else:
             p = "UPLEVEL35_"
             self.csv = Path(env("UPLEVEL35_ACCOUNT_CSV", str(REPO_DIR / "account-35.csv")))
             self.default_workers = 1
-            self.state_prefix = "UPLEVEL35 STATE "
+            self.state_prefixes = ("UPLEVEL35 STATE ",)
             self.tail_lines = 200
         self.prefix = p
         self.build_dir = Path(os.path.abspath(env(p + "BUILD_DIR", str(self.dir / "build"))))
@@ -96,7 +103,7 @@ class Runtime:
         """Chuỗi phải có trong cmdline của java/loop thuộc worker này (giống is_worker_pid trong .sh)."""
         if self.name == "uplevel":
             return ["OptimizedMain", str(worker_dir)]
-        return ["-Dnso.runtime=uplevel35", str(worker_dir / "home")]
+        return [f"-Dnso.runtime={self.name}", str(worker_dir / "home")]
 
     def pid(self, worker_dir: Path, kind: str) -> int | None:
         pid = winproc.read_pid(worker_dir / f"{kind}.pid")
@@ -193,7 +200,7 @@ def cmd_build_workers(rt: Runtime, args: list[str]) -> int:
     if rt.name == "uplevel":
         do_build = env("UPLEVEL_BUILD_UPLEVEL", "1") != "0"
     else:
-        do_build = env("UPLEVEL35_SKIP_BUILD", "0") != "1"
+        do_build = env(rt.prefix + "SKIP_BUILD", "0") != "1"
     if do_build:
         rc = run_bash_script(rt.scripts / "build.sh", [], {rt.prefix + "ACCOUNT_CSV": str(rt.csv)})
         if rc != 0:
@@ -275,6 +282,24 @@ def java_command(rt: Runtime, worker_dir: Path, opts: dict[str, str]) -> list[st
             ("nso.uplevel.upgrade.safe", env("UPLEVEL_UPGRADE_SAFE", "false")),
             ("nso.process.per.character", env("UPLEVEL_PROCESS_PER_CHARACTER", "true")),
         ]
+    elif rt.name == "uplevel1to35":
+        props = [
+            ("nso.runtime", "uplevel1to35"),
+            ("nso.server", env("UPLEVEL1TO35_SERVER", "180.93.114.122:14444")),
+            ("nso.as20.mode", opts["mode"]),
+            ("nso.worker.name", name),
+            ("nso.nvhn.error.dir", str(rt.dir / "run" / "errors")),
+            ("nso.uplevel.crystal", env("UPLEVEL_CRYSTAL_ID", "-1")),
+            ("nso.uplevel.all.crystals", env("UPLEVEL_ALL_CRYSTALS", "false")),
+            ("nso.uplevel.duplicate", env("UPLEVEL_UPGRADE_DUPLICATE", "false")),
+            ("nso.uplevel.duplicate.count", env("UPLEVEL_UPGRADE_DUPLICATE_COUNT", "5")),
+            ("nso.uplevel.no.split", env("UPLEVEL_NO_SPLIT", "false")),
+            ("nso.uplevel.allow.stacks", env("UPLEVEL_ALLOW_STACKS", "false")),
+            ("nso.uplevel.upgrade.safe", env("UPLEVEL_UPGRADE_SAFE", "false")),
+            ("nso.uplevel35.target", env("UPLEVEL1TO35_TARGET", "35")),
+            ("nso.uplevel35.debug", opts["debug"]),
+            ("nso.process.per.character", env("UPLEVEL1TO35_PROCESS_PER_CHARACTER", "true")),
+        ]
     else:
         props = [
             ("nso.runtime", "uplevel35"),
@@ -293,11 +318,13 @@ def java_command(rt: Runtime, worker_dir: Path, opts: dict[str, str]) -> list[st
 
 
 def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int, list[str]]:
-    usage = ("Usage: start [--mode 1..6] [--delay giây] [--no-proxy] [số_worker...]" if rt.name == "uplevel"
-             else "Usage: start [--delay giây] [--debug] [--no-proxy] [số_worker...]")
-    mode = env("UPLEVEL_MODE", "0")
+    has_mode = rt.name in ("uplevel", "uplevel1to35")
+    has_debug = rt.name in ("uplevel35", "uplevel1to35")
+    usage = ("Usage: start" + (" [--mode 1..6]" if has_mode else "") + " [--delay giây]"
+             + (" [--debug]" if has_debug else "") + " [--no-proxy] [số_worker...]")
+    mode = env(rt.prefix + "MODE", "0")
     delay = env(rt.prefix + "START_DELAY", "3")
-    debug = env("UPLEVEL35_DEBUG", "false")
+    debug = env(rt.prefix + "DEBUG", "false") if has_debug else "false"
     proxy = env(rt.prefix + "PROXY", "1")
     workers: list[str] = []
     i = 0
@@ -306,7 +333,7 @@ def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int,
         if a in ("-h", "--help"):
             print(usage)
             sys.exit(0)
-        elif a == "--delay" or (a == "--mode" and rt.name == "uplevel"):
+        elif a == "--delay" or (a == "--mode" and has_mode):
             if i + 1 >= len(args):
                 die(usage, 2)
             if a == "--delay":
@@ -317,9 +344,9 @@ def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int,
             continue
         elif a.startswith("--delay="):
             delay = a.split("=", 1)[1]
-        elif a.startswith("--mode=") and rt.name == "uplevel":
+        elif a.startswith("--mode=") and has_mode:
             mode = a.split("=", 1)[1]
-        elif a == "--debug" and rt.name == "uplevel35":
+        elif a == "--debug" and has_debug:
             debug = "true"
         elif a in ("--proxy", "--no-proxy"):
             proxy = "1" if a == "--proxy" else "0"
@@ -331,7 +358,7 @@ def parse_start_args(rt: Runtime, args: list[str]) -> tuple[dict[str, str], int,
         i += 1
     if mode == "0":
         mode = "1"
-    if rt.name == "uplevel" and not re.fullmatch(r"[1-6]", mode):
+    if has_mode and not re.fullmatch(r"[1-6]", mode):
         die("Mode phải nằm trong 1..6.")
     if not delay.isdigit():
         die("Delay phải là số nguyên không âm.")
@@ -380,8 +407,8 @@ def cmd_start(rt: Runtime, args: list[str]) -> int:
         for f in ("bot.pid", "loop.pid"):
             (wd / f).unlink(missing_ok=True)
         (wd / "home").mkdir(parents=True, exist_ok=True)
-        tag = "UPLEVEL" if rt.name == "uplevel" else "UPLEVEL35"
-        extra = f" mode={opts['mode']}" if rt.name == "uplevel" else ""
+        tag = rt.name.upper()
+        extra = f" mode={opts['mode']}" if rt.name in ("uplevel", "uplevel1to35") else ""
         banner = f"\n===== START {tag} {now_str()}{extra} =====\n".encode()
         for log in ("stdout.log", "java-errors.log"):
             with open(wd / log, "ab" if append else "wb") as fh:
@@ -484,7 +511,8 @@ def cmd_stop(rt: Runtime, args: list[str]) -> int:
     return 0
 
 
-def last_state(log: Path, prefix: str) -> str:
+def last_state(log: Path, prefixes: tuple[str, ...]) -> str:
+    """Dòng STATE mới nhất trong 256 KB cuối log (prefix nào xuất hiện sau cùng thì lấy)."""
     try:
         with open(log, "rb") as fh:
             fh.seek(0, os.SEEK_END)
@@ -492,8 +520,17 @@ def last_state(log: Path, prefix: str) -> str:
             text = fh.read().decode("utf-8", errors="replace")
     except OSError:
         return "-"
-    idx = text.rfind(prefix)
-    return text[idx + len(prefix):].split("\n", 1)[0].strip() if idx >= 0 else "-"
+    best, best_prefix = -1, ""
+    for prefix in prefixes:
+        idx = text.rfind(prefix)
+        if idx > best:
+            best, best_prefix = idx, prefix
+    if best < 0:
+        return "-"
+    line = text[best + len(best_prefix):].split("\n", 1)[0].strip()
+    if len(prefixes) > 1:
+        line = ("[as35] " if best_prefix.startswith("UPLEVEL35") else "[as20] ") + line
+    return line
 
 
 def cmd_status(rt: Runtime, args: list[str]) -> int:
@@ -510,7 +547,7 @@ def cmd_status(rt: Runtime, args: list[str]) -> int:
             status = f"RUN loop={pid} (đổi JVM)"
         else:
             status = "STOP"
-        print(f"{wd.name:<10} {status:<28} {last_state(wd / 'stdout.log', rt.state_prefix)}")
+        print(f"{wd.name:<10} {status:<28} {last_state(wd / 'stdout.log', rt.state_prefixes)}")
     return 0
 
 
@@ -528,10 +565,12 @@ def cmd_logs(rt: Runtime, args: list[str]) -> int:
     pattern = None
     rest = []
     for a in args:
-        if a == "--errors" and rt.name == "uplevel35":
+        if a == "--errors" and rt.name != "uplevel":
             name = "java-errors.log"
         elif a == "--grep" and rt.name == "uplevel35":
             pattern = re.compile(r"==>|UPLEVEL35|AUTO NVHN|AUTO LOGIN|Exception")
+        elif a == "--grep" and rt.name == "uplevel1to35":
+            pattern = re.compile(r"==>|=====|UPLEVEL|AUTO NVHN|AUTO LOGIN|AUTO AS20|Exception")
         else:
             rest.append(a)
     logs = [wd / name for wd in rt.select(rest) if (wd / name).is_file()]
@@ -605,7 +644,7 @@ COMMANDS = {
 def main(argv: list[str]) -> int:
     if argv[:1] == ["_loop"]:
         return cmd_loop(argv[1:])
-    if len(argv) < 2 or argv[0] not in ("uplevel", "uplevel35") or argv[1] not in COMMANDS:
+    if len(argv) < 2 or argv[0] not in ("uplevel", "uplevel35", "uplevel1to35") or argv[1] not in COMMANDS:
         print(__doc__)
         return 2
     return COMMANDS[argv[1]](Runtime(argv[0]), argv[2:]) or 0

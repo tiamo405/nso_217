@@ -100,6 +100,10 @@ Patch chỉ nên đụng file mà `optimized-runtime/overrides` **không** ghi �
 `UPLEVEL35_KEEP_STAGING=1 ./uplevel35/scripts/build.sh` giữ lại `build/src` đã ghép
 để xem code sau khi patch.
 
+`uplevel1to35/` (lv 1 → 35 liền mạch) dùng `uplevel35/src` nhưng KHÔNG dùng `patches/`: nội dung
+patch 001/002/003 được viết lại trong `uplevel1to35/transforms/apply.py` (ghép trên bản uplevel).
+Sửa/thêm patch ở đây thì xem có cần sửa cả file đó không.
+
 ## Mỗi nhân vật một tiến trình (JVM)
 
 Client giữ trạng thái game trong biến `static` (`Char.myChar`, `Auto.fieldAL`, `GameScr.*`...), nên chạy

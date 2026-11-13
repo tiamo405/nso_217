@@ -1,6 +1,6 @@
 # Uplevel Monitor
 
-Web chỉ xem (không điều khiển) cho worker `uplevel/workers/` và `uplevel35/workers/`. Chỉ dùng Python stdlib.
+Web chỉ xem (không điều khiển) cho worker `uplevel/workers/`, `uplevel35/workers/` và `uplevel1to35/workers/`. Chỉ dùng Python stdlib.
 
 ```bash
 ./uplevel_monitor/run.sh                 # http://0.0.0.0:8190

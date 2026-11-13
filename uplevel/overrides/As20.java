@@ -266,20 +266,32 @@ public class As20 extends As10 {
 
    /**
     * Jaian hộ tống là nhân vật (vCharInMap) tên "Jaian" do server sinh ra sau khi nói
-    * chuyện với NPC 17; NPC 17 gốc vẫn đứng nguyên. Ưu tiên bản có tên chứa tên mình.
+    * chuyện với NPC 17; NPC 17 gốc vẫn đứng nguyên. cName chỉ là "Jaian" cho mọi người
+    * chơi; Jaian của mình có charID == -myChar.charID (client dựa vào đó để vẽ dòng
+    * "do <tên> hộ tống", Char.java). Jaian của người khác bỏ qua.
     */
    private static Char findUplevelEscort(Char me) {
-      Char fallback = null;
-      String myName = lower(me.cName);
       for (int i = 0; i < GameScr.vCharInMap.size(); i++) {
          Char c = (Char)GameScr.vCharInMap.elementAt(i);
          if (c == null || c == me) continue;
-         String name = lower(c.cName);
-         if (!name.contains("jaian")) continue;
-         if (myName.length() > 0 && name.contains(myName)) return c;
-         if (fallback == null) fallback = c;
+         if (me.charID != 0 && c.charID == -me.charID) return c;
       }
-      return fallback;
+      return null;
+   }
+
+   /** Chẩn đoán: liệt kê mọi Jaian trên map, mine=true khi charID == -myChar.charID. */
+   private static String describeUplevelJaians(Char me) {
+      StringBuilder sb = new StringBuilder("myId=" + me.charID + " jaians=[");
+      int n = 0;
+      for (int i = 0; i < GameScr.vCharInMap.size(); i++) {
+         Char c = (Char)GameScr.vCharInMap.elementAt(i);
+         if (c == null || c == me || !lower(c.cName).contains("jaian")) continue;
+         if (n++ > 0) sb.append(", ");
+         sb.append(c.cName).append("#").append(c.charID).append("@").append(c.cx).append(",").append(c.cy)
+               .append(" hp=").append(c.cHP).append("/").append(c.cMaxHP)
+               .append(" mine=").append(c.charID == -me.charID);
+      }
+      return sb.append("]").toString();
    }
 
    private static Item bestUplevelPotion(Item[] items, int type, int maxLevel) {
@@ -466,7 +478,8 @@ public class As20 extends As10 {
       if (escort != null) {
          if (!this.uplevelTask17EscortSeen) {
             System.out.println("UPLEVEL TASK17 escort start name=" + escort.cName
-                  + " pos=" + escort.cx + "," + escort.cy);
+                  + "#" + escort.charID + " pos=" + escort.cx + "," + escort.cy
+                  + " picked_mine=" + (escort.charID == -me.charID) + " " + describeUplevelJaians(me));
          }
          this.uplevelTask17EscortSeen = true;
          this.uplevelTask17EscortLostAt = 0L;
@@ -568,7 +581,9 @@ public class As20 extends As10 {
                + " hpPotion=" + countUplevelPotion(me, 16)
                + " target=" + (me.mobFocus == null ? "none" : me.mobFocus.mobId + "@" + me.mobFocus.x
                + "," + me.mobFocus.y + " hp=" + me.mobFocus.hp + "/" + me.mobFocus.maxHp)
-               + " mobsNear=" + this.countUplevelMobsNear(escort));
+               + " mobsNear=" + this.countUplevelMobsNear(escort)
+               + " picked=" + escort.charID + " picked_mine=" + (escort.charID == -me.charID)
+               + " " + describeUplevelJaians(me));
       }
       this.useUplevelTask17Potions(me);
 

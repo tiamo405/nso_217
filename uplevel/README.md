@@ -2,6 +2,8 @@
 
 Runtime riêng. Mã trong `overrides/` ghi đè class nền lúc build; `src/` giữ nguyên.
 Build đọc `src/` và runtime overrides hiện có, chỉ ghi output vào `uplevel/build/`.
+Các bước vá As20/As10/Controller... nằm trong `scripts/apply-transforms.sh` (build.sh gọi nó);
+`uplevel1to35/` dùng lại đúng script này để ghép uplevel với uplevel35 (lv 1 → 35 liền mạch).
 Account build nằm trong `uplevel/build/`; log đơn nằm trong `uplevel/run/`, log worker nằm trong `uplevel/workers/`.
 
 ```bash
