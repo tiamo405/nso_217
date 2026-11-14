@@ -58,6 +58,17 @@ public class As20 extends As10 {
    private boolean uplevelTestWeaponDone;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
+   // Nhiệm vụ 14 bước 1: Khoáng thạch (212) tự xuất hiện ở map 29, nhiều bot chung khu phải chờ nhau
+   // -> khu hiện tại không còn Khoáng thạch thì chuyển sang khu kế tiếp (bỏ qua khu đầy).
+   private static final int UplevelTask14ZoneNpc = 13;
+   // Client tô đỏ khu có >= 20 người (GameScr paint danh sách khu) = khu đầy.
+   private static final int UplevelTask14ZoneFullPlayers = 20;
+   private static final long UplevelTask14ZoneEmptyWait = 2500L;
+   private static final long UplevelTask14ZoneBlockMs = 60000L;
+   private final long[] uplevelTask14ZoneBlockedUntil = new long[128];
+   private long uplevelTask14ZoneEmptySince;
+   private int uplevelTask14ZoneEmptyZone = -1;
+   private long uplevelTask14ZoneLogAt;
    private boolean uplevelTeacherHpBuyPending;
    private long uplevelTeacherHpBuySentAt;
    private long uplevelTeacherHpUseSentAt;
@@ -150,6 +161,96 @@ public class As20 extends As10 {
 
    public boolean fieldAA(Char var1) {
       return var1.ctaskId >= UplevelDoneTaskId;
+   }
+
+   /**
+    * Nhiệm vụ 14 bước 1 ở map 29: khu hiện tại không còn Khoáng thạch (212) quá
+    * UplevelTask14ZoneEmptyWait thì mở danh sách khu (NPC 13 hoặc item 35/37) và chuyển
+    * sang khu kế tiếp (zoneID + 1, vòng lại 0). Bỏ qua khu đầy (>= 20 người) và khu vừa
+    * vào không được (server từ chối, chặn 60s).
+    */
+   private void switchUplevelTask14Zone(Char me) {
+      long now = System.currentTimeMillis();
+      if (this.uplevelTask14ZoneEmptyZone != TileMap.zoneID || this.uplevelTask14ZoneEmptySince == 0L) {
+         this.uplevelTask14ZoneEmptyZone = TileMap.zoneID;
+         this.uplevelTask14ZoneEmptySince = now;
+         return;
+      }
+      if (now - this.uplevelTask14ZoneEmptySince < UplevelTask14ZoneEmptyWait) return;
+
+      int itemIndex = -1;
+      Npc zoneNpc = GameScr.fieldAI(UplevelTask14ZoneNpc);
+      if (zoneNpc == null || zoneNpc.statusMe == 15) {
+         if ((itemIndex = Char.fieldAI(37)) < 0) itemIndex = Char.fieldAI(35);
+         if (itemIndex < 0) {
+            if (now - this.uplevelTask14ZoneLogAt >= 10000L) {
+               this.uplevelTask14ZoneLogAt = now;
+               System.out.println("UPLEVEL TASK14 zone switch unavailable map=" + TileMap.mapID
+                     + " zone=" + TileMap.zoneID + " (no npc " + UplevelTask14ZoneNpc + ", no item 35/37)");
+            }
+            return;
+         }
+      } else if (Math.abs(zoneNpc.cx - me.cx) > 22 || Math.abs(zoneNpc.cy - me.cy) > 22) {
+         Char.fieldAC(zoneNpc.cx, zoneNpc.cy);
+         return;
+      }
+
+      GameScr screen = GameScr.gI();
+      int[] before = screen.zones;
+      Service.gI().openUIZone();
+      LockGame.fieldAE();
+      int[] zones = screen.zones;
+      if (zones == null || zones.length == 0 || zones == before) {
+         if (now - this.uplevelTask14ZoneLogAt >= 5000L) {
+            this.uplevelTask14ZoneLogAt = now;
+            System.out.println("UPLEVEL TASK14 zone list not received map=" + TileMap.mapID
+                  + " zone=" + TileMap.zoneID);
+         }
+         return;
+      }
+
+      int current = TileMap.zoneID;
+      int target = -1;
+      StringBuilder skipped = new StringBuilder();
+      for (int step = 1; step < zones.length; step++) {
+         int zone = (current + step) % zones.length;
+         boolean blocked = zone < this.uplevelTask14ZoneBlockedUntil.length
+               && this.uplevelTask14ZoneBlockedUntil[zone] > now;
+         if (blocked || zones[zone] >= UplevelTask14ZoneFullPlayers) {
+            skipped.append(' ').append(zone).append(blocked ? "(blocked)" : "(" + zones[zone] + ")");
+            continue;
+         }
+         target = zone;
+         break;
+      }
+      if (target < 0) {
+         screen.resetButton();
+         this.uplevelTask14ZoneEmptySince = now;
+         System.out.println("UPLEVEL TASK14 zone all full/blocked; stay zone=" + current
+               + " skipped=" + skipped.toString().trim());
+         return;
+      }
+
+      System.out.println("UPLEVEL TASK14 zone switch " + current + " -> " + target
+            + " players=" + zones[target] + "/" + zones.length + " zones"
+            + (skipped.length() > 0 ? " skipped=" + skipped.toString().trim() : "")
+            + (itemIndex >= 0 ? " item=" + itemIndex : " npc=" + UplevelTask14ZoneNpc));
+      Service.gI().requestChangeZone(target, itemIndex);
+      TileMap.fieldAF();
+
+      if (TileMap.zoneID == target) {
+         System.out.println("UPLEVEL TASK14 zone entered " + target + " map=" + TileMap.mapID);
+      } else {
+         screen.resetButton();
+         if (target < this.uplevelTask14ZoneBlockedUntil.length) {
+            this.uplevelTask14ZoneBlockedUntil[target] = System.currentTimeMillis() + UplevelTask14ZoneBlockMs;
+         }
+         System.out.println("UPLEVEL TASK14 zone refused " + target + " stay=" + TileMap.zoneID
+               + " waited=" + (System.currentTimeMillis() - now) + "ms; block "
+               + (UplevelTask14ZoneBlockMs / 1000L) + "s");
+      }
+      this.uplevelTask14ZoneEmptyZone = TileMap.zoneID;
+      this.uplevelTask14ZoneEmptySince = System.currentTimeMillis();
    }
 
    private void logUplevelTask16(Char me) {
@@ -1099,7 +1200,7 @@ public class As20 extends As10 {
       if (phase <= 0 || me.clevel < UplevelTask12Level) {
          if (TileMap.mapID == 3) {
             this.fieldAC(-1);
-            this.fieldAB(-1, 1);
+            this.uplevelFight(-1);
          } else {
             this.fieldAA(3, -1, -1, -1);
          }
@@ -1705,7 +1806,7 @@ public class As20 extends As10 {
             if (var1.nClass.classId != 0) {
                if (TileMap.mapID == 28) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                } else {
                   this.fieldAA(28, -1, -1, -1);
@@ -1767,7 +1868,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 28) {
                   this.fieldAC(-1);
-                  this.fieldAB(5, 1);
+                  this.uplevelFight(5);
                   return;
                }
 
@@ -1778,7 +1879,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 1) {
                if (TileMap.mapID == 4) {
                   this.fieldAC(-1);
-                  this.fieldAB(6, 1);
+                  this.uplevelFight(6);
                   return;
                }
 
@@ -1789,7 +1890,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 2) {
                if (TileMap.mapID == 46) {
                   this.fieldAC(-1);
-                  this.fieldAB(7, 1);
+                  this.uplevelFight(7);
                   return;
                }
 
@@ -1801,7 +1902,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 28) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -1863,7 +1964,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 3) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -1900,7 +2001,7 @@ public class As20 extends As10 {
             if (var11 == null) {
                if (TileMap.mapID == 4) {
                   this.fieldAC(var5);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -1932,7 +2033,7 @@ public class As20 extends As10 {
             if (var13 << 1 > usableUpgradeCrystal || var18 << 1 > var1.yen) {
                if (TileMap.mapID == 46) {
                   this.fieldAC(1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -2002,7 +2103,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 4) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -2102,7 +2203,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 29) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -2147,9 +2248,10 @@ public class As20 extends As10 {
                   }
 
                   if (var12 == null) {
-                     super.fieldAC = (super.fieldAC + 1) % 30;
+                     this.switchUplevelTask14Zone(var1);
                      return;
                   }
+                  this.uplevelTask14ZoneEmptySince = 0L;
 
                   if (Math.abs(var12.xEnd - var1.cx) > 22 || Math.abs(var12.yEnd - var1.cy) > 22) {
                      Char.fieldAC(var12.xEnd, var12.yEnd);
@@ -2166,13 +2268,14 @@ public class As20 extends As10 {
                   return;
                }
 
-               this.fieldAA(29, super.fieldAC, -1, -1);
+               // Chỉ đi tới map 29; chọn khu do switchUplevelTask14Zone lo khi đã đứng trong map.
+               this.fieldAA(29, -2, -1, -1);
                return;
             }
 
             if (var1.taskMaint.index == 2) {
                if (TileMap.mapID == 40) {
-                  this.fieldAB(15, 1);
+                  this.uplevelFight(15);
                   this.fieldAC(213);
                   return;
                }
@@ -2185,7 +2288,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 0) {
                if (TileMap.mapID == 8) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -2216,7 +2319,7 @@ public class As20 extends As10 {
                }
                if (TileMap.mapID == 8) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
 
@@ -2227,7 +2330,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 1) {
                if (TileMap.mapID == 63) {
                   this.fieldAC(-1);
-                  this.fieldAB(UplevelTask16ScorpionMob, 1);
+                  this.uplevelFight(UplevelTask16ScorpionMob);
                   return;
                }
 
@@ -2238,7 +2341,7 @@ public class As20 extends As10 {
             if (var1.taskMaint.index == 2) {
                if (TileMap.mapID == 47) {
                   this.fieldAC(-1);
-                  this.fieldAB(UplevelTask16SnakeMob, 1);
+                  this.uplevelFight(UplevelTask16SnakeMob);
                   return;
                }
 
@@ -2261,7 +2364,7 @@ public class As20 extends As10 {
                   && var1.clevel < UplevelTask17LevelTarget) {
                if (TileMap.mapID == UplevelTask17LevelMap) {
                   this.fieldAC(-1);
-                  this.fieldAB(-1, 1);
+                  this.uplevelFight(-1);
                   return;
                }
                this.routeUplevelTask17LevelMap(var1);

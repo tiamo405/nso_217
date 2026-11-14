@@ -5,6 +5,19 @@ public class As10 extends Auto {
         super.fieldAD();
     }
 
+    /** Cờ loại quái cho Auto.fieldAB: 1 thường | 2 tinh anh | 4 thủ lĩnh (không gồm 8 = boss thế giới). */
+    static final int UPLEVEL_MOB_MASK = 1 | 2 | 4;
+
+    /**
+     * Đánh quái mobId (-1 = mọi quái), cho phép cả tinh anh / thủ lĩnh (nhiều exp hơn).
+     * Bật Char.fieldFC ("Săn TATL") để Auto.fieldAB ưu tiên tinh anh/thủ lĩnh khi có trên map,
+     * kể cả khi RMS cài đặt cũ đang lưu false.
+     */
+    protected final void uplevelFight(int mobId) {
+        Char.fieldFC = true;
+        this.fieldAB(mobId, UPLEVEL_MOB_MASK);
+    }
+
     public boolean fieldAA(Char var1) {
         return var1.ctaskId >= 9;
     }
@@ -68,7 +81,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 1) {
                     if (TileMap.mapID == 22) {
                         this.fieldAC(-1);
-                        this.fieldAB(0, 1);
+                        this.uplevelFight(0);
                         return;
                     }
 
@@ -97,7 +110,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 2) {
                     if (TileMap.mapID == 23) {
                         this.fieldAC(-1);
-                        this.fieldAB(1, 1);
+                        this.uplevelFight(1);
                         return;
                     }
 
@@ -108,7 +121,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 3) {
                     if (TileMap.mapID == 23) {
                         this.fieldAC(-1);
-                        this.fieldAB(2, 1);
+                        this.uplevelFight(2);
                         return;
                     }
 
@@ -120,7 +133,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 0) {
                     if (TileMap.mapID == 21) {
                         this.fieldAC(-1);
-                        this.fieldAB(-1, 1);
+                        this.uplevelFight(-1);
                         return;
                     }
 
@@ -131,7 +144,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 1) {
                     if (TileMap.mapID == 21) {
                         this.fieldAC(209);
-                        this.fieldAB(3, 1);
+                        this.uplevelFight(3);
                         return;
                     }
 
@@ -142,7 +155,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 2) {
                     if (TileMap.mapID == 23) {
                         this.fieldAC(210);
-                        this.fieldAB(4, 1);
+                        this.uplevelFight(4);
                         return;
                     }
 
@@ -154,7 +167,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 0) {
                     if (TileMap.mapID == 20) {
                         this.fieldAC(-1);
-                        this.fieldAB(3, 1);
+                        this.uplevelFight(3);
                         return;
                     }
 
@@ -165,7 +178,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 1) {
                     if (TileMap.mapID == 20) {
                         this.fieldAC(211);
-                        this.fieldAB(54, 1);
+                        this.uplevelFight(54);
                         return;
                     }
 
@@ -177,7 +190,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 0) {
                     if (TileMap.mapID == 26) {
                         this.fieldAC(-1);
-                        this.fieldAB(-1, 1);
+                        this.uplevelFight(-1);
                         return;
                     }
 
@@ -207,7 +220,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 0) {
                     if (TileMap.mapID == 71) {
                         this.fieldAC(-1);
-                        this.fieldAB(-1, 1);
+                        this.uplevelFight(-1);
                         return;
                     }
 
@@ -313,7 +326,7 @@ public class As10 extends Auto {
                 if (var1.taskMaint.index == 0) {
                     if (TileMap.mapID == 26) {
                         this.fieldAC(-1);
-                        this.fieldAB(-1, 1);
+                        this.uplevelFight(-1);
                         return;
                     }
 
@@ -365,7 +378,7 @@ public class As10 extends Auto {
                             this.fieldAA(26, -1, -1, -1);
                             return;
                         }
-                        this.fieldAB(-1, 1);
+                        this.uplevelFight(-1);
                         this.fieldAC(-1);
                     } else {
                         Item weapon = var1.arrItemBody == null ? null : var1.arrItemBody[1];

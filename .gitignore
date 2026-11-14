@@ -28,3 +28,4 @@ gen_acc.py
 .proxy-group-size
 ta-thu-runtime/ta-thu-state/
 *.tmp
+.proxy-tk.txt.swp

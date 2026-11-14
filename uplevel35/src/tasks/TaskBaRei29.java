@@ -14,6 +14,11 @@ final class TaskBaRei29 extends Uplevel35Task implements As35.NpcMessageListener
     static final int NPC_MAP = 8;
     static final int NPC_FUJIWARA = 15;
     static final String AXE_NAME = "rìu";
+    /**
+     * Rìu Bạc (id 221, README). Trước đây tra id qua As35.itemIdByName("rìu"): duyệt Hashtable theo thứ tự
+     * bất kỳ nên có thể trả về món khác có chữ "rìu" -> không bao giờ nhặt đúng rìu.
+     */
+    static final int AXE_ID = Integer.getInteger("nso.uplevel35.barei29.axe", 221).intValue();
     /** Hang Inoshishi — map ẩn Fujiwara đưa vào (đã thấy trong log). */
     static final int HIDDEN_MAP = Integer.getInteger("nso.uplevel35.barei29.hidden", 74).intValue();
 
@@ -22,6 +27,8 @@ final class TaskBaRei29 extends Uplevel35Task implements As35.NpcMessageListener
     private long talkedAt;
     private int talks;
     private int lastMap = -1;
+    private long pickAt;
+    private int pickTries;
 
     boolean canLeaveMap(int mapId) {
         return mapId != this.hiddenMap;
@@ -40,6 +47,8 @@ final class TaskBaRei29 extends Uplevel35Task implements As35.NpcMessageListener
         this.talkedAt = 0L;
         this.talks = 0;
         this.lastMap = -1;
+        this.pickAt = 0L;
+        this.pickTries = 0;
     }
 
     void tick(As35 bot, Char me, Task task) {
@@ -70,10 +79,16 @@ final class TaskBaRei29 extends Uplevel35Task implements As35.NpcMessageListener
         }
 
         if (map == this.hiddenMap) {
-            int axeId = As35.itemIdByName(AXE_NAME);
-            Uplevel35.logEvery("boar-fight", 5000L, "BOAR đánh trong map ẩn " + map + " axeId=" + axeId
+            // Chỉ có 1 Thủ lĩnh heo rừng: Auto.fieldAC chỉ nhặt trong 150px và thử 1 lần, rìu rơi xa
+            // hoặc nhặt hụt là kẹt mãi -> tự đi tới rìu và nhặt lại tới khi nó biến khỏi mặt đất.
+            ItemMap axe = findAxe();
+            if (axe != null) {
+                this.pickAxe(me, axe);
+                return;
+            }
+            Uplevel35.logEvery("boar-fight", 5000L, "BOAR đánh trong map ẩn " + map + " axeId=" + AXE_ID
                     + " mobs=" + describeMobs() + " items=" + GameScr.vItemMap.size());
-            bot.pickAndFight(axeId, -1);
+            bot.pickAndFight(AXE_ID, -1);
             return;
         }
 
@@ -106,6 +121,39 @@ final class TaskBaRei29 extends Uplevel35Task implements As35.NpcMessageListener
         if (GameCanvas.menu != null && GameCanvas.menu.showMenu) {
             Uplevel35.log("BOAR menu đang mở: " + As35.describeMenu());
         }
+    }
+
+    /** Rìu trên đất: đúng id, hoặc (phòng id khác bản server) tên chứa "rìu". */
+    private static ItemMap findAxe() {
+        for (int i = 0; i < GameScr.vItemMap.size(); i++) {
+            ItemMap item = (ItemMap) GameScr.vItemMap.elementAt(i);
+            if (item == null || item.template == null) {
+                continue;
+            }
+            String name = item.template.name == null ? "" : item.template.name.toLowerCase();
+            if (item.template.id == AXE_ID || name.indexOf(AXE_NAME) >= 0) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    private void pickAxe(Char me, ItemMap item) {
+        if (Math.abs(me.cx - item.xEnd) > 24 || Math.abs(me.cy - item.yEnd) > 24) {
+            Uplevel35.logEvery("boar-pick-walk", 5000L, "BOAR PICK đi tới " + item.template.name + " @"
+                    + item.xEnd + "," + item.yEnd + " từ " + me.cx + "," + me.cy);
+            Char.fieldAC(item.xEnd, item.yEnd);
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - this.pickAt < 1500L) {
+            return;
+        }
+        this.pickAt = now;
+        ++this.pickTries;
+        Uplevel35.log("BOAR PICK nhặt " + item.template.name + " id=" + item.template.id + " itemMapID="
+                + item.itemMapID + " lần=" + this.pickTries + " pos=" + me.cx + "," + me.cy);
+        Service.gI().pickItem(item.itemMapID);
     }
 
     public void onNpcMessage(As35 bot, int npcId, String text) {

@@ -71,7 +71,7 @@ uplevel35/
 Buff chung (As35 mỗi tick): Nấm linh chi (hiệu ứng type 18) và thức ăn (type 0) chạy song song; học sách võ công trong túi khi đủ level và chưa có skill (so tên sách với tên skill bỏ "Chiêu "), sau đó chọn lại skill đánh cao nhất (theo id, không dùng `Char.gameAA(template)` vì so tham chiếu) để Code.java cộng điểm kỹ năng vào skill đó.
 
 Đã chạy thật trên acctest1: 18, 19, 20 hoàn thành; tiếp theo `ctaskId` 21 (npc 23, map 48, chưa có logic).
-`pickAndFight` dùng cờ `MOB_ANY` để đánh cả tinh anh/thủ lĩnh; `grind` chỉ đánh quái thường.
+`pickAndFight` dùng cờ `MOB_ANY` (thường + tinh anh + thủ lĩnh + boss); `grind` dùng `MOB_GRIND` (thường + tinh anh + thủ lĩnh, không boss). Cả hai bật `Char.fieldFC` ("Săn TATL") để ưu tiên tinh anh/thủ lĩnh khi có trên map. Map ẩn Bà Rei (task 20) nhặt Rìu Bạc id 221 (`-Dnso.uplevel35.barei29.axe`), tự đi tới rìu nếu rơi xa.
 
 ## Thêm nhiệm vụ mới
 

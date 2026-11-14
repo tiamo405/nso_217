@@ -375,7 +375,7 @@ public class As35 extends Auto {
         GameCanvas.currentDialog = null;
     }
 
-    /** Đi tới map (tự chọn khu) rồi đánh quái mobId (-1 = mọi quái), nhặt pickItemId. */
+    /** Đi tới map (tự chọn khu) rồi đánh quái mobId (-1 = mọi quái, ưu tiên tinh anh/thủ lĩnh), nhặt pickItemId. */
     void grind(int mapId, int mobId, int pickItemId) {
         if (TileMap.mapID != mapId) {
             Uplevel35.logEvery("grind-route", 10000L, "ROUTE map " + TileMap.mapID + " -> " + mapId
@@ -386,7 +386,7 @@ public class As35 extends Auto {
             return;
         }
         this.fieldAC(pickItemId);
-        this.fieldAB(mobId, 1);
+        this.fight(mobId, MOB_GRIND);
     }
 
     /**
@@ -403,12 +403,23 @@ public class As35 extends Auto {
 
     /** Cờ loại quái cho Auto.fieldAB: 1 thường, 2 tinh anh, 4 thủ lĩnh, 8 boss. */
     static final int MOB_NORMAL = 1;
+    /** Cày level: thường + tinh anh + thủ lĩnh (nhiều exp hơn), không đánh boss thế giới. */
+    static final int MOB_GRIND = 1 | 2 | 4;
     static final int MOB_ANY = 1 | 2 | 4 | 8;
+
+    /**
+     * Auto.fieldAB chỉ ưu tiên tinh anh/thủ lĩnh khi Char.fieldFC ("Săn TATL") bật; giá trị này đọc từ RMS
+     * nên có thể là false -> luôn bật lại trước khi đánh.
+     */
+    void fight(int mobId, int mobMask) {
+        Char.fieldFC = true;
+        this.fieldAB(mobId, mobMask);
+    }
 
     /** Đánh quái mobId (-1 = mọi quái, mọi loại kể cả thủ lĩnh) và nhặt pickItemId trên map hiện tại. */
     void pickAndFight(int pickItemId, int mobId) {
         this.fieldAC(pickItemId);
-        this.fieldAB(mobId, MOB_ANY);
+        this.fight(mobId, MOB_ANY);
     }
 
     /** Liệt kê caption menu đang mở (Menu.menuItems là private -> reflection, chỉ để log). */
