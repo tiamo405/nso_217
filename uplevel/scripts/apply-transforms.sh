@@ -239,6 +239,8 @@ replacement = '''   private static boolean uplevelGiftStarted;
    private static boolean uplevelGiftSlotFreed;
    private static boolean uplevelGiftSlotFreePending;
    private static final int[] uplevelGiftItems = new int[]{215, 229};
+   // Số lần gửi mua cùng 1 món túi mà hành trang vẫn chưa có (không đủ tiền/server từ chối) -> bỏ qua món đó.
+   private static int uplevelGiftBuyAttempts;
    // Túi vải 215/229: mỗi túi +6 ô hành trang (30 -> 36 -> 42). Đủ ô thì coi như đã dùng, không mua lại.
    private static final int UplevelGiftBagBaseSize = 30;
    private static final int UplevelGiftBagStep = 6;
@@ -528,10 +530,30 @@ replacement = '''   private static boolean uplevelGiftStarted;
          }
          if (uplevelGiftPurchaseTarget == target
                  && System.currentTimeMillis() - uplevelGiftItemLastAction < 8000L) return true;
+         if (uplevelGiftPurchaseTarget != target) uplevelGiftBuyAttempts = 0;
+         boolean free = offer.buyCoin <= 0 && offer.buyCoinLock <= 0 && offer.buyGold <= 0;
+         boolean afford = free || (offer.buyCoin > 0 && me.xu >= offer.buyCoin)
+                 || (offer.buyCoinLock > 0 && me.yen >= offer.buyCoinLock)
+                 || (offer.buyGold > 0 && me.luong >= offer.buyGold);
+         if (!afford || uplevelGiftBuyAttempts >= 3) {
+            System.out.println("UPLEVEL GIFT skip item=" + target + " price xu=" + offer.buyCoin
+                    + " yen=" + offer.buyCoinLock + " luong=" + offer.buyGold + " have xu=" + me.xu
+                    + " yen=" + me.yen + " luong=" + me.luong + " attempts=" + uplevelGiftBuyAttempts
+                    + (afford ? " (mua không vào hành trang)" : " (không đủ tiền)"));
+            uplevelGiftItemStage = (uplevelGiftItemStage / 2 + 1) * 2;
+            uplevelGiftShopRequested = false;
+            uplevelGiftPurchaseTarget = -1;
+            uplevelGiftBuyAttempts = 0;
+            uplevelGiftItemLastAction = System.currentTimeMillis();
+            return true;
+         }
          Service.gI().buyItem(offer.typeUI, offer.indexUI, 1);
          uplevelGiftPurchaseTarget = target;
+         uplevelGiftBuyAttempts++;
          uplevelGiftItemLastAction = System.currentTimeMillis();
-         System.out.println("UPLEVEL GIFT buy item=" + target + " shopIndex=" + offer.indexUI);
+         System.out.println("UPLEVEL GIFT buy item=" + target + " shopIndex=" + offer.indexUI
+                 + " price xu=" + offer.buyCoin + " yen=" + offer.buyCoinLock + " luong=" + offer.buyGold
+                 + " try=" + uplevelGiftBuyAttempts);
          return true;
       }
 

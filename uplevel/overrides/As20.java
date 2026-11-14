@@ -47,6 +47,8 @@ public class As20 extends As10 {
    private int uplevelTask12UpgradeFrom = -1;
    private Item uplevelTask12UpgradeItem;
    private Item[] uplevelTask12UpgradeStones;
+   // Lúc server báo "Hãy chọn đá nâng cấp!" (đá gửi lên là đá ma) -> xoá đá ma ngay, không đợi timeout.
+   private static volatile long uplevelTask12NoStoneAt;
    private long uplevelTask12HangLogAt;
    private int uplevelTask12Tries;
    private static long uplevelTask12MessageUntil;
@@ -128,6 +130,11 @@ public class As20 extends As10 {
    private long uplevelExpLockSentAt;
    private int uplevelExpLockTries;
    private long uplevelExpLockRetryAt;
+   // Exp (cEXP) đứng yên quá lâu sau NV12 mà JVM này chưa biết chắc đã tắt khoá -> nghi đang khoá (mất file đánh dấu).
+   private static final long UplevelExpStallMs = Long.getLong("uplevel.expStallMs", 5L * 60L * 1000L);
+   private long uplevelExpWatchValue = -1L;
+   private long uplevelExpWatchAt;
+   private boolean uplevelExpStallLogged;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
    // Nhiệm vụ 14 bước 1: Khoáng thạch (212) tự xuất hiện ở map 29, nhiều bot chung khu phải chờ nhau
@@ -1212,6 +1219,9 @@ public class As20 extends As10 {
       if (message != null && System.currentTimeMillis() < uplevelTask12MessageUntil) {
          System.out.println("UPLEVEL TASK12 server=[" + message + "]");
       }
+      if (message != null && message.toLowerCase().indexOf("chọn đá nâng cấp") >= 0) {
+         uplevelTask12NoStoneAt = System.currentTimeMillis();
+      }
    }
 
    static void uplevelExpLockMessage(String message) {
@@ -1268,7 +1278,8 @@ public class As20 extends As10 {
          return false;
       }
       if (this.uplevelExpLockSentAt > 0L) {
-         if (uplevelExpLockStateAt >= this.uplevelExpLockSentAt) {
+         // '>' chứ không '>=': trả lời của lần bấm trước tới cùng mili-giây với lần bấm mới -> tưởng nhầm là đã trả lời.
+         if (uplevelExpLockStateAt > this.uplevelExpLockSentAt) {
             this.uplevelExpLockSentAt = 0L; // server trả trạng thái ngược: bấm lại
          } else if (now - this.uplevelExpLockSentAt < UplevelTask12WaitMs) {
             return true;
@@ -1311,12 +1322,28 @@ public class As20 extends As10 {
    // Sau nhiệm vụ 12: nếu bot đã khoá exp (file đánh dấu) thì về Tajima tắt khoá. true = đang xử lý.
    private boolean uplevelExpUnlockAfterTask12(Char me) {
       if (me.ctaskId <= 12) {
+         this.uplevelExpWatchValue = -1L;
          return false;
+      }
+      long now = System.currentTimeMillis();
+      if (me.cEXP != this.uplevelExpWatchValue) {
+         this.uplevelExpWatchValue = me.cEXP;
+         this.uplevelExpWatchAt = now;
+      }
+      // Lưới an toàn cho mọi trường hợp còn sót (vd. đang khoá, mất file, restart khi đã sang NV14+):
+      // exp không đổi suốt UplevelExpStallMs thì về Tajima đưa về "tắt" (bấm tới khi server báo "Đã tắt").
+      boolean stalled = uplevelExpLockState != 0 && now - this.uplevelExpWatchAt >= UplevelExpStallMs;
+      if (stalled && !this.uplevelExpStallLogged) {
+         this.uplevelExpStallLogged = true;
+         System.out.println("UPLEVEL EXPLOCK exp đứng yên " + (now - this.uplevelExpWatchAt) / 1000L + "s ở NV"
+               + me.ctaskId + " (exp=" + me.cEXP + ", state=" + uplevelExpLockState + "); nghi đang khoá -> về Tajima tắt");
       }
       // Dự phòng mất file đánh dấu (build-workers xoá workers/): vừa sang nhiệm vụ 13 mà chưa biết trạng thái
       // trong JVM này thì ghé Tajima kiểm tra một lần (bấm để đọc trạng thái, sai thì bấm lại).
       boolean verify = me.ctaskId == 13 && uplevelExpLockState < 0 && this.uplevelTask12Mode != 0 && me.xu == 0;
-      if (!verify && !uplevelExpLockFile(me).exists()) {
+      // Bấm kiểm tra là bấm bật/tắt mù: nếu đang tắt thì lần bấm đó BẬT khoá (state=1) mà chưa có file đánh dấu
+      // -> vẫn phải bấm lại để tắt. Sau NV12 thì state=1 lúc nào cũng phải đưa về 0.
+      if (!verify && !stalled && uplevelExpLockState != 1 && !uplevelExpLockFile(me).exists()) {
          return false;
       }
       return this.uplevelEnsureExpLock(me, false);
@@ -1563,7 +1590,9 @@ public class As20 extends As10 {
       GameScr.arrItemUpGrade = put;
       this.uplevelTask12UpgradeItem = item;
       this.uplevelTask12UpgradeFrom = item.upgrade;
-      this.uplevelTask12UpgradeStones = put;
+      // Bản sao: Controller cmd 21 gán null từng phần tử của arrItemUpGrade (cùng mảng put) -> mất dấu đá đã gửi.
+      this.uplevelTask12UpgradeStones = (Item[])put.clone();
+      uplevelTask12NoStoneAt = 0L;
       this.uplevelTask12Tries++;
       Service.gI().upgradeItem(item, put, false);
       this.uplevelTask12Act("upgrade phase=" + phase + " id=" + targetId + " +" + item.upgrade
@@ -1574,7 +1603,9 @@ public class As20 extends As10 {
    private void uplevelTask12CheckUpgrade(Char me) {
       Item item = this.uplevelTask12UpgradeItem;
       boolean answered = GameScr.arrItemUpGrade == null || GameScr.arrItemUpGrade[0] == null;
-      if (!answered && System.currentTimeMillis() - this.uplevelTask12ActionAt < UplevelTask12WaitMs) {
+      // Server từ chối vì đá không còn (đá ma): không có cmd 21 nhưng vẫn phải gỡ đá đã gửi khỏi hành trang.
+      boolean rejected = !answered && uplevelTask12NoStoneAt >= this.uplevelTask12ActionAt;
+      if (!answered && !rejected && System.currentTimeMillis() - this.uplevelTask12ActionAt < UplevelTask12WaitMs) {
          return;
       }
       Item[] usedStones = this.uplevelTask12UpgradeStones;
@@ -1586,7 +1617,7 @@ public class As20 extends As10 {
       // khỏi arrItemBag → đá "ma" còn lại, gửi lại thì server báo "Hãy chọn đá nâng cấp!" lặp vô hạn.
       // Xoá đá đã gửi khỏi hành trang sau mỗi kết quả (sau 1 lần thất bại có thể còn 1 lượt bị từ chối,
       // không tốn yên, lượt đó sẽ xoá nốt đá ma rồi bot tách đá mới).
-      if (answered && usedStones != null) {
+      if ((answered || rejected) && usedStones != null) {
          for (int i = 0; i < usedStones.length; i++) {
             Item stone = usedStones[i];
             if (stone == null) {
@@ -1604,6 +1635,12 @@ public class As20 extends As10 {
                me.arrItemBag[stone.indexUI] = null;
             }
          }
+      }
+      if (rejected) {
+         uplevelTask12NoStoneAt = 0L;
+         this.uplevelTask12Tries = Math.max(0, this.uplevelTask12Tries - 1);
+         System.out.println("UPLEVEL TASK12 upgrade rejected (đá ma) id=" + item.template.id + "; gỡ đá, tách đá mới");
+         return;
       }
       if (!answered) {
          System.out.println("UPLEVEL TASK12 upgrade no response id=" + item.template.id + "; retry");
@@ -2150,7 +2187,9 @@ public class As20 extends As10 {
       GameScr.arrItemUpGrade = put;
       this.uplevelTask12UpgradeItem = item;
       this.uplevelTask12UpgradeFrom = item.upgrade;
-      this.uplevelTask12UpgradeStones = put;
+      // Bản sao: Controller cmd 21 gán null từng phần tử của arrItemUpGrade (cùng mảng put) -> mất dấu đá đã gửi.
+      this.uplevelTask12UpgradeStones = (Item[])put.clone();
+      uplevelTask12NoStoneAt = 0L;
       this.uplevelTask12Tries++;
       Service.gI().upgradeItem(item, put, true);
       this.uplevelTask12Act("FARM upgrade careful phase=" + phase + " id=" + targetId + " +" + item.upgrade
