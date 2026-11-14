@@ -56,6 +56,78 @@ public class As20 extends As10 {
    // Món cần đập khi test: 1 = vũ khí, 2 = trang sức 174, 3 = y phục 124/125.
    private static final int UplevelTestPhase = Integer.getInteger("uplevel.testPhase", 1);
    private boolean uplevelTestWeaponDone;
+   // Nhiệm vụ 12 chế độ FARM (nhân vật 0 xu): đánh quái map 39 nhặt trang sức 174, giày 124/125 và đá cấp 2
+   // (id 1); đủ 2 món thì nhận quà thăng cấp 10 ở Okanechan (10 đá cấp 2); về Tone nâng CẨN THẬN
+   // (vũ khí 4 viên, trang sức/giày 3 viên, mỗi viên một ô riêng). Có xu thì giữ chế độ SHOP như cũ.
+   // -Duplevel.task12Mode=auto|farm|shop (auto: xu == 0 -> farm).
+   private static final String UplevelTask12ModeProp = System.getProperty("uplevel.task12Mode", "auto");
+   private static final int UplevelTask12FarmMap = 39;
+   private static final int UplevelTask12FarmStoneId = 1;
+   // Okanechan = NPC 24, đứng ở làng (Tone trước) — xem nhanexp_and_doiyenquaxu.py.
+   private static final int[] UplevelTask12OkaneMaps = {22, 10, 17, 32, 38, 43, 48, 1, 27, 72};
+   private static int uplevelOkaneNpc = Integer.getInteger("uplevel.okaneNpc", 24);
+   private static int uplevelOkaneMap = Integer.getInteger("uplevel.okaneMap", -1);
+   private static String uplevelTask12RewardDoneFor;
+   // TEST: -Duplevel.testOkane=true -> nhận quà thăng cấp 10 ngay (mọi nhiệm vụ), một lần.
+   private static final boolean UplevelTestOkane = Boolean.getBoolean("uplevel.testOkane");
+   private int uplevelTask12SplitSinglesBefore = -1;
+   // TEST: -Duplevel.testCareful=true -> đập cẩn thận vũ khí 1 lần bằng 4 đá cấp 2 (không bấm menu NPC 6).
+   private static final boolean UplevelTestCareful = Boolean.getBoolean("uplevel.testCareful");
+   private boolean uplevelTestCarefulDone;
+   // TEST: -Duplevel.testShopOnce=true -> đập vũ khí 1 lần theo đường SHOP (đá cấp 6, thường), mọi nhiệm vụ.
+   private static final boolean UplevelTestShopOnce = Boolean.getBoolean("uplevel.testShopOnce");
+   private boolean uplevelTestShopDone;
+   private int uplevelTestShopTarget = -1;
+   private int uplevelOkaneStep; // 0 chưa mở, 1 chờ menu NPC, 2 chờ menu "Cấp 10", 3 chờ đá
+   private int uplevelOkaneMenuSeq;
+   private static volatile int uplevelServerMenuSeq;
+   private static volatile String[] uplevelServerMenuEntries;
+   private static volatile int[] uplevelServerMenuActions;
+   private static volatile Object[] uplevelServerMenuParams;
+
+   // Gọi từ Controller khi server gửi menu NPC (cmd 40) hoặc menu động (cmd 63).
+   static void uplevelServerMenu(int cmd, MyVector items) {
+      int n = items == null ? 0 : items.size();
+      String[] entries = new String[n];
+      int[] actions = new int[n];
+      Object[] params = new Object[n];
+      StringBuilder sb = new StringBuilder();
+      for (int i = 0; i < n; i++) {
+         Command c = (Command)items.elementAt(i);
+         entries[i] = c == null ? "" : c.caption;
+         actions[i] = c == null ? 0 : c.idAction;
+         params[i] = c == null ? null : c.p;
+         sb.append(i == 0 ? "" : " | ").append(i).append(':').append(entries[i]);
+      }
+      uplevelServerMenuEntries = entries;
+      uplevelServerMenuActions = actions;
+      uplevelServerMenuParams = params;
+      uplevelServerMenuSeq++;
+      Npc focus = Char.getMyChar() == null ? null : Char.getMyChar().npcFocus;
+      System.out.println("UPLEVEL MENU cmd=" + cmd + " npc=" + (focus == null ? -1 : focus.template.npcTemplateId)
+            + " [" + sb + "]");
+   }
+   private int uplevelTask12Mode = -1; // -1 chưa chọn, 0 SHOP, 1 FARM
+   private int uplevelOkaneSearchIndex;
+   private int uplevelOkaneSeenMap = -1;
+   private long uplevelOkaneSeenAt;
+   private long uplevelTask12RewardSentAt;
+   private int uplevelTask12RewardStonesBefore;
+   private int uplevelTask12RewardAttempts;
+   private int uplevelTask12FarmPending = -1;
+   private long uplevelTask12FarmPendingAt;
+   private long uplevelTask12FarmLogAt;
+   // Khoá exp khi farm đồ nhiệm vụ 12: lên lv16 mà chưa đủ đồ thì về Tone, Tajima (NPC 12) menu 6 bật
+   // "Không nhận kinh nghiệm" (quái không rơi đồ khi chênh cấp). Xong nhiệm vụ 12 thì tắt lại.
+   // Menu là nút bật/tắt, server chỉ báo trạng thái sau khi bấm (thông báo -26).
+   private static final int UplevelTajimaNpc = 12;
+   private static final int UplevelTajimaMenu = 6;
+   private static final int UplevelTask12ExpLockLevel = Integer.getInteger("uplevel.task12ExpLockLevel", 16);
+   private static int uplevelExpLockState = -1; // -1 chưa biết, 0 tắt (nhận exp), 1 bật (không nhận exp)
+   private static long uplevelExpLockStateAt;
+   private long uplevelExpLockSentAt;
+   private int uplevelExpLockTries;
+   private long uplevelExpLockRetryAt;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
    // Nhiệm vụ 14 bước 1: Khoáng thạch (212) tự xuất hiện ở map 29, nhiều bot chung khu phải chờ nhau
@@ -913,9 +985,10 @@ public class As20 extends As10 {
 
       Item mushroom = this.findUplevelItem(me.arrItemBag, UplevelMushroomItemId);
       if (mushroom == null) {
-         if (me.luong < UplevelMushroomPrice) {
+         int luongReserve = this.uplevelTask12LuongReserve(me);
+         if (me.luong < UplevelMushroomPrice + luongReserve) {
             System.out.println("UPLEVEL MUSHROOM not enough luong=" + me.luong
-                  + " need=" + UplevelMushroomPrice + "; retry after 10 minutes");
+                  + " need=" + UplevelMushroomPrice + " reserveTask12=" + luongReserve + "; retry after 10 minutes");
             this.uplevelMushroomRetryAt = now + UplevelMushroomRetryDelay;
             return true;
          }
@@ -943,9 +1016,10 @@ public class As20 extends As10 {
             return true;
          }
          int price = offer.buyGold > 0 ? offer.buyGold : UplevelMushroomPrice;
-         if (me.luong < price) {
+         if (me.luong < price + this.uplevelTask12LuongReserve(me)) {
             System.out.println("UPLEVEL MUSHROOM not enough luong=" + me.luong
-                  + " price=" + price + "; retry after 10 minutes");
+                  + " price=" + price + " reserveTask12=" + this.uplevelTask12LuongReserve(me)
+                  + "; retry after 10 minutes");
             this.uplevelMushroomRetryAt = now + UplevelMushroomRetryDelay;
             return true;
          }
@@ -1134,9 +1208,118 @@ public class As20 extends As10 {
 
    // Ghi lại thông báo server trong lúc bot đang thao tác ở nhiệm vụ 12 (gọi từ hook thông báo server).
    static void uplevelTask12Message(String message) {
+      uplevelExpLockMessage(message);
       if (message != null && System.currentTimeMillis() < uplevelTask12MessageUntil) {
          System.out.println("UPLEVEL TASK12 server=[" + message + "]");
       }
+   }
+
+   static void uplevelExpLockMessage(String message) {
+      if (message == null) {
+         return;
+      }
+      String t = message.toLowerCase();
+      if (t.indexOf("không nhận kinh nghiệm") < 0 && t.indexOf("khong nhan kinh nghiem") < 0) {
+         return;
+      }
+      int state = -1;
+      if (t.indexOf("bật") >= 0 || t.indexOf("bat]") >= 0 || t.indexOf("da bat") >= 0 || t.indexOf("dang bat") >= 0) {
+         state = 1;
+      } else if (t.indexOf("tắt") >= 0 || t.indexOf("tat]") >= 0 || t.indexOf("da tat") >= 0 || t.indexOf("dang tat") >= 0) {
+         state = 0;
+      }
+      System.out.println("UPLEVEL EXPLOCK server=[" + message + "] state=" + state);
+      if (state >= 0) {
+         uplevelExpLockState = state;
+         uplevelExpLockStateAt = System.currentTimeMillis();
+      }
+   }
+
+   private static java.io.File uplevelExpLockFile(Char me) {
+      return new java.io.File(System.getProperty("user.home", "."), "uplevel-explock-" + me.cName);
+   }
+
+   // Đưa trạng thái "Không nhận kinh nghiệm" về wantLocked. true = đang xử lý (đi Tone / chờ server).
+   private boolean uplevelEnsureExpLock(Char me, boolean wantLocked) {
+      int want = wantLocked ? 1 : 0;
+      long now = System.currentTimeMillis();
+      if (uplevelExpLockState == want) {
+         if (this.uplevelExpLockTries > 0) {
+            System.out.println("UPLEVEL EXPLOCK done name=" + me.cName + " level=" + me.clevel + " state="
+                  + (wantLocked ? "bật (không nhận exp)" : "tắt (nhận exp)") + " tries=" + this.uplevelExpLockTries);
+         }
+         this.uplevelExpLockTries = 0;
+         this.uplevelExpLockSentAt = 0L;
+         java.io.File marker = uplevelExpLockFile(me);
+         try {
+            if (wantLocked) {
+               if (!marker.exists()) {
+                  marker.createNewFile();
+               }
+            } else if (marker.exists()) {
+               marker.delete();
+            }
+         } catch (Exception e) {
+            System.out.println("UPLEVEL EXPLOCK marker error " + e);
+         }
+         return false;
+      }
+      if (now < this.uplevelExpLockRetryAt) {
+         return false;
+      }
+      if (this.uplevelExpLockSentAt > 0L) {
+         if (uplevelExpLockStateAt >= this.uplevelExpLockSentAt) {
+            this.uplevelExpLockSentAt = 0L; // server trả trạng thái ngược: bấm lại
+         } else if (now - this.uplevelExpLockSentAt < UplevelTask12WaitMs) {
+            return true;
+         } else {
+            System.out.println("UPLEVEL EXPLOCK no response from Tajima; retry");
+            this.uplevelExpLockSentAt = 0L;
+         }
+      }
+      if (this.uplevelExpLockTries >= 6) {
+         System.out.println("UPLEVEL EXPLOCK không chuyển được trạng thái sau " + this.uplevelExpLockTries
+               + " lần (state=" + uplevelExpLockState + " want=" + want + "); thử lại sau 10 phút");
+         this.uplevelExpLockTries = 0;
+         this.uplevelExpLockRetryAt = now + 10L * 60L * 1000L;
+         return false;
+      }
+      if (TileMap.mapID != UplevelTask12UpgradeMap) {
+         this.fieldAA(UplevelTask12UpgradeMap, -2, -1, -1);
+         return true;
+      }
+      Npc npc = GameScr.fieldAI(UplevelTajimaNpc);
+      if (npc == null) {
+         this.uplevelTask12Hang(me, "không thấy Tajima (NPC " + UplevelTajimaNpc + ") ở map " + TileMap.mapID);
+         return true;
+      }
+      if (Math.abs(npc.cx - me.cx) > 22 || Math.abs(npc.cy - me.cy) > 22) {
+         Char.fieldAC(npc.cx, npc.cy);
+         return true;
+      }
+      String label = npc.template.menu != null && npc.template.menu.length > UplevelTajimaMenu
+            && npc.template.menu[UplevelTajimaMenu] != null && npc.template.menu[UplevelTajimaMenu].length > 0
+            ? npc.template.menu[UplevelTajimaMenu][0] : "?";
+      this.uplevelExpLockTries++;
+      this.uplevelExpLockSentAt = now;
+      GameScr.fieldAB(UplevelTajimaNpc, UplevelTajimaMenu, 0);
+      this.uplevelTask12Act("EXPLOCK toggle npc=" + UplevelTajimaNpc + " menu=" + UplevelTajimaMenu + " [" + label
+            + "] state=" + uplevelExpLockState + " want=" + want + " level=" + me.clevel + " try=" + this.uplevelExpLockTries);
+      return true;
+   }
+
+   // Sau nhiệm vụ 12: nếu bot đã khoá exp (file đánh dấu) thì về Tajima tắt khoá. true = đang xử lý.
+   private boolean uplevelExpUnlockAfterTask12(Char me) {
+      if (me.ctaskId <= 12) {
+         return false;
+      }
+      // Dự phòng mất file đánh dấu (build-workers xoá workers/): vừa sang nhiệm vụ 13 mà chưa biết trạng thái
+      // trong JVM này thì ghé Tajima kiểm tra một lần (bấm để đọc trạng thái, sai thì bấm lại).
+      boolean verify = me.ctaskId == 13 && uplevelExpLockState < 0 && this.uplevelTask12Mode != 0 && me.xu == 0;
+      if (!verify && !uplevelExpLockFile(me).exists()) {
+         return false;
+      }
+      return this.uplevelEnsureExpLock(me, false);
    }
 
    private static int uplevelTask12TargetId(Char me, int phase) {
@@ -1185,7 +1368,7 @@ public class As20 extends As10 {
       if (uplevelTask12Body(me, templateId) != null) {
          return false;
       }
-      Item item = Char.fieldAF(templateId);
+      Item item = uplevelBestBagItem(me, templateId);
       if (item == null) {
          return false;
       }
@@ -1211,6 +1394,18 @@ public class As20 extends As10 {
       }
       if (this.uplevelTask12UpgradeItem != null) {
          this.uplevelTask12CheckUpgrade(me);
+         return;
+      }
+      if (this.uplevelTask12Mode < 0) {
+         this.uplevelTask12Mode = "farm".equals(UplevelTask12ModeProp) ? 1
+               : ("shop".equals(UplevelTask12ModeProp) ? 0 : (me.xu == 0 ? 1 : 0));
+         System.out.println("UPLEVEL TASK12 mode=" + (this.uplevelTask12Mode == 1 ? "farm" : "shop")
+               + " prop=" + UplevelTask12ModeProp + " phase=" + phase + " xu=" + me.xu + " yen=" + me.yen
+               + " luong=" + me.luong + " stone2=" + this.countUplevelItem(me, UplevelTask12FarmStoneId)
+               + " stone6=" + this.countUplevelItem(me, UplevelTask12StoneId));
+      }
+      if (this.uplevelTask12Mode == 1) {
+         this.doUplevelTask12Farm(me, phase);
          return;
       }
       // Mặc lần lượt đồ đã nâng ở các phase trước (phòng khi mất kết nối ngay sau khi nâng).
@@ -1241,7 +1436,7 @@ public class As20 extends As10 {
          }
       }
 
-      Item item = Char.fieldAF(targetId);
+      Item item = uplevelBestBagItem(me, targetId);
       if (item == null) {
          this.uplevelTask12Hang(me, "không có đồ id=" + targetId + " trên người/hành trang");
          return;
@@ -1264,7 +1459,7 @@ public class As20 extends As10 {
       }
       int targetId = uplevelTask12TargetId(me, UplevelTestPhase);
       Item worn = uplevelTask12Body(me, targetId);
-      Item item = worn != null ? worn : Char.fieldAF(targetId);
+      Item item = worn != null ? worn : uplevelBestBagItem(me, targetId);
       if (this.countUplevelItem(me, UplevelTask12StoneId) <= 0) {
          System.out.println("UPLEVEL TEST hết đá; dừng test id=" + targetId);
          this.uplevelTestWeaponDone = true;
@@ -1342,6 +1537,10 @@ public class As20 extends As10 {
          if (uplevelCrystalSplitBusy()) {
             return;
          }
+         if (Char.fieldBF() <= 0) {
+            this.uplevelTask12Hang(me, "hành trang đầy, không tách được đá (id=" + targetId + ")");
+            return;
+         }
          uplevelCrystalSplitStart(stack);
          Service.gI().inputNumSplit(stack.indexUI, 1);
          this.uplevelTask12Act("split stone slot=" + stack.indexUI + " quantity=" + stack.quantity
@@ -1349,7 +1548,17 @@ public class As20 extends As10 {
          return;
       }
 
-      GameScr.fieldAB(UplevelTask12UpgradeNpc, 0, 0);
+      // Không bấm menu NPC 6 (index template cũ, xem uplevelTask12UpgradeCareful): đứng sát NPC rồi gửi upgradeItem.
+      Npc upgradeNpc = GameScr.fieldAI(UplevelTask12UpgradeNpc);
+      if (upgradeNpc == null) {
+         this.uplevelTask12Hang(me, "không thấy NPC " + UplevelTask12UpgradeNpc + " ở map " + TileMap.mapID);
+         return;
+      }
+      if (Math.abs(upgradeNpc.cx - me.cx) > 22 || Math.abs(upgradeNpc.cy - me.cy) > 22) {
+         Char.fieldAC(upgradeNpc.cx, upgradeNpc.cy);
+         return;
+      }
+      me.npcFocus = upgradeNpc;
       GameScr.itemUpGrade = item;
       GameScr.arrItemUpGrade = put;
       this.uplevelTask12UpgradeItem = item;
@@ -1383,8 +1592,15 @@ public class As20 extends As10 {
             if (stone == null) {
                continue;
             }
-            if (me.arrItemBag != null && stone.indexUI >= 0 && stone.indexUI < me.arrItemBag.length
-                  && me.arrItemBag[stone.indexUI] == stone) {
+            // So theo ô + id (không so object): server có thể gửi lại hành trang sau khi tách đá -> object mới.
+            Item slot = me.arrItemBag != null && stone.indexUI >= 0 && stone.indexUI < me.arrItemBag.length
+                  ? me.arrItemBag[stone.indexUI] : null;
+            boolean remove = slot != null && slot.template != null && stone.template != null
+                  && slot.template.id == stone.template.id && slot.quantity <= 1;
+            System.out.println("UPLEVEL TASK12 ghost-stone slot=" + stone.indexUI + " sent=" + stone.template.id
+                  + "x" + stone.quantity + " now=" + (slot == null ? "null" : slot.template.id + "x" + slot.quantity
+                  + (slot == stone ? " same" : " new")) + " remove=" + remove);
+            if (remove) {
                me.arrItemBag[stone.indexUI] = null;
             }
          }
@@ -1395,7 +1611,10 @@ public class As20 extends As10 {
       }
       if (item.upgrade > this.uplevelTask12UpgradeFrom) {
          this.uplevelTask12Tries = 0;
-         Item bagItem = Char.fieldAF(item.template.id);
+         // Mặc đúng món vừa nâng (trùng id thì Char.fieldAF có thể trả món khác).
+         Item bagItem = item.indexUI >= 0 && item.indexUI < me.arrItemBag.length && me.arrItemBag[item.indexUI] != null
+               && me.arrItemBag[item.indexUI].template.id == item.template.id
+               ? me.arrItemBag[item.indexUI] : uplevelBestBagItem(me, item.template.id);
          if (bagItem != null) {
             Service.gI().useItem(bagItem.indexUI);
          }
@@ -1406,6 +1625,536 @@ public class As20 extends As10 {
          this.uplevelTask12Act("upgrade fail id=" + item.template.id + " +" + this.uplevelTask12UpgradeFrom
                + " -> +" + item.upgrade + "; retry");
       }
+   }
+
+   // Lượng giữ lại cho nâng cẩn thận ở nhiệm vụ 12 (nhân vật 0 xu): các phase còn lại × goldUps[0].
+   private int uplevelTask12LuongReserve(Char me) {
+      if (me == null || me.ctaskId > 12 || me.xu != 0 || "shop".equals(UplevelTask12ModeProp)
+            || this.uplevelTask12Mode == 0 || GameScr.goldUps == null || GameScr.goldUps.length == 0) {
+         return 0;
+      }
+      int phase = me.ctaskId == 12 && me.taskMaint != null ? Math.max(1, me.taskMaint.index) : 1;
+      return Math.max(0, 4 - phase) * GameScr.goldUps[0];
+   }
+
+   private static boolean uplevelTask12Has(Char me, int templateId) {
+      return uplevelTask12Body(me, templateId) != null || Char.fieldAF(templateId) != null;
+   }
+
+   private void uplevelTask12FarmLog(Char me, String reason) {
+      long now = System.currentTimeMillis();
+      if (now - this.uplevelTask12FarmLogAt >= 30000L) {
+         this.uplevelTask12FarmLogAt = now;
+         System.out.println("UPLEVEL TASK12 FARM name=" + me.cName + " level=" + me.clevel
+               + " phase=" + me.taskMaint.index + " map=" + TileMap.mapID + " zone=" + TileMap.zoneID
+               + " stone2=" + this.countUplevelItem(me, UplevelTask12FarmStoneId) + " yen=" + me.yen
+               + " luong=" + me.luong + " freeBag=" + Char.fieldBF() + ": " + reason);
+      }
+   }
+
+   private void doUplevelTask12Farm(Char me, int phase) {
+      // Mặc lại đồ đã nâng ở phase trước.
+      for (int done = 1; done < phase; done++) {
+         if (this.uplevelTask12Equip(me, uplevelTask12TargetId(me, done))) {
+            return;
+         }
+      }
+      int targetId = uplevelTask12TargetId(me, phase);
+      int clotheId = uplevelTask12TargetId(me, 3);
+      boolean needAdorn = phase <= 2 && !uplevelTask12Has(me, UplevelTask12AdornId);
+      boolean needClothe = !uplevelTask12Has(me, clotheId);
+      int needStones = phase == 1 ? 4 : 3;
+
+      // 1. Thiếu trang sức / giày: đánh quái map 39, nhặt đồ + đá cấp 2.
+      if (needAdorn || needClothe) {
+         if (this.uplevelTask12Equip(me, targetId)) {
+            return;
+         }
+         this.uplevelTask12Farm(me, needAdorn, needClothe ? clotheId : -1,
+               "thiếu" + (needAdorn ? " trang sức 174" : "") + (needClothe ? " giày " + clotheId : ""));
+         return;
+      }
+      // 2. Đủ 2 món: nhận quà thăng cấp 10 ở Okanechan (một lần).
+      if (!me.cName.equals(uplevelTask12RewardDoneFor)) {
+         this.uplevelTask12Reward(me);
+         return;
+      }
+
+      Item worn = uplevelTask12Body(me, targetId);
+      Item bagItem = uplevelBestBagItem(me, targetId);
+      Item item = worn != null ? worn : bagItem;
+      if (item == null) {
+         this.uplevelTask12Hang(me, "FARM không có đồ id=" + targetId + " trên người/hành trang");
+         return;
+      }
+      int coin = item.isTypeWeapon() ? GameScr.coinUpWeapons[item.upgrade]
+            : (item.isTypeAdorn() ? GameScr.coinUpAdorns[item.upgrade] : GameScr.coinUpClothes[item.upgrade]);
+      int gold = GameScr.goldUps != null && item.upgrade < GameScr.goldUps.length ? GameScr.goldUps[item.upgrade] : 0;
+      int stones = this.countUplevelItem(me, UplevelTask12FarmStoneId);
+      // 3. Thiếu đá cấp 2 hoặc yên: mặc đồ lại rồi đi farm.
+      if (stones < needStones || me.xu + me.yen < coin) {
+         if (worn == null && this.uplevelTask12Equip(me, targetId)) {
+            return;
+         }
+         this.uplevelTask12Farm(me, false, -1, "thiếu đá cấp 2 " + stones + "/" + needStones
+               + " hoặc yên " + (me.xu + me.yen) + "/" + coin + " (id=" + targetId + " +" + item.upgrade + ")");
+         return;
+      }
+      // 4. Nâng cẩn thận tốn lượng: thiếu thì treo + log.
+      if (me.luong < gold) {
+         this.uplevelTask12Hang(me, "không đủ lượng nâng cẩn thận " + me.luong + "/" + gold + " (id="
+               + targetId + " +" + item.upgrade + ")");
+         return;
+      }
+      if (TileMap.mapID != UplevelTask12UpgradeMap) {
+         this.fieldAA(UplevelTask12UpgradeMap, -2, -1, -1);
+         return;
+      }
+      if (worn != null) {
+         Service.gI().itemBodyToBag((int)worn.template.type);
+         this.uplevelTask12Act("FARM unequip phase=" + phase + " id=" + targetId + " upgrade=" + worn.upgrade);
+         return;
+      }
+      this.uplevelTask12UpgradeCareful(me, bagItem, phase, targetId, needStones);
+   }
+
+   // Đánh quái map 39; ưu tiên nhặt trang sức 174 (nếu cần), giày clotheId (>= 0 nếu cần) và đá cấp 2.
+   private void uplevelTask12Farm(Char me, boolean wantAdorn, int clotheId, String reason) {
+      // Lên lv16 mà vẫn thiếu đồ: khoá exp để không vượt cấp quái (quái chênh cấp không rơi đồ).
+      if ((wantAdorn || clotheId >= 0) && me.clevel >= UplevelTask12ExpLockLevel
+            && this.uplevelEnsureExpLock(me, true)) {
+         return;
+      }
+      // Chưa tới ngưỡng mà còn khoá (bot khoá từ trước, vd. đổi ngưỡng): mở khoá để lên cấp tiếp.
+      if (me.clevel < UplevelTask12ExpLockLevel && uplevelExpLockFile(me).exists()
+            && this.uplevelEnsureExpLock(me, false)) {
+         return;
+      }
+      if (TileMap.mapID != UplevelTask12FarmMap) {
+         this.uplevelTask12FarmLog(me, reason + " -> đi map " + UplevelTask12FarmMap);
+         this.uplevelTask12FarmPending = -1;
+         this.fieldAA(UplevelTask12FarmMap, -1, -1, -1);
+         return;
+      }
+      this.uplevelTask12FarmLog(me, reason);
+      long now = System.currentTimeMillis();
+      if (this.uplevelTask12FarmPending >= 0) {
+         ItemMap pending = null;
+         for (int i = 0; i < GameScr.vItemMap.size(); i++) {
+            ItemMap candidate = (ItemMap)GameScr.vItemMap.elementAt(i);
+            if (candidate != null && candidate.itemMapID == this.uplevelTask12FarmPending) {
+               pending = candidate;
+               break;
+            }
+         }
+         if (pending != null && now - this.uplevelTask12FarmPendingAt < 3000L) {
+            return;
+         }
+         if (pending != null) {
+            // Nhặt không được (đồ người khác / hành trang đầy): bỏ qua món này.
+            System.out.println("UPLEVEL TASK12 FARM pick skip id=" + pending.template.id + " itemMap="
+                  + pending.itemMapID);
+         }
+         this.uplevelTask12FarmPending = -1;
+      }
+      boolean bagFull = Char.fieldBF() <= 0;
+      ItemMap best = null;
+      int bestDist = -1;
+      for (int i = 0; i < GameScr.vItemMap.size(); i++) {
+         ItemMap drop = (ItemMap)GameScr.vItemMap.elementAt(i);
+         if (drop == null || drop.template == null || drop.fieldAK || drop.status == 2) {
+            continue;
+         }
+         int id = drop.template.id;
+         boolean want = id == UplevelTask12FarmStoneId ? (!bagFull || Char.fieldAJ(id))
+               : ((id == UplevelTask12AdornId && wantAdorn) || (id == clotheId && clotheId >= 0)) && !bagFull;
+         if (!want) {
+            continue;
+         }
+         int dx = drop.xEnd - me.cx;
+         int dy = drop.yEnd - me.cy;
+         int dist = dx * dx + dy * dy;
+         if (bestDist < 0 || dist < bestDist) {
+            bestDist = dist;
+            best = drop;
+         }
+      }
+      if (best != null) {
+         if (Math.abs(best.xEnd - me.cx) > 22 || Math.abs(best.yEnd - me.cy) > 22) {
+            Char.fieldAC(best.xEnd, best.yEnd);
+            return;
+         }
+         this.uplevelTask12FarmPending = best.itemMapID;
+         this.uplevelTask12FarmPendingAt = now;
+         Service.gI().pickItem(best.itemMapID);
+         best.fieldAK = true;
+         System.out.println("UPLEVEL TASK12 FARM pick id=" + best.template.id + " name=" + best.template.name
+               + " itemMap=" + best.itemMapID);
+         return;
+      }
+      if (bagFull) {
+         this.uplevelTask12Hang(me, "FARM hành trang đầy, không nhặt được đồ/đá");
+      }
+      this.fieldAC(-1);
+      this.uplevelFight(-1);
+   }
+
+   private static int uplevelOkaneNpcId() {
+      if (uplevelOkaneNpc == -2 && Npc.arrNpcTemplate != null) {
+         uplevelOkaneNpc = -1;
+         for (int i = 0; i < Npc.arrNpcTemplate.length; i++) {
+            NpcTemplate t = Npc.arrNpcTemplate[i];
+            if (t != null && t.name != null && t.name.toLowerCase().indexOf("okane") >= 0) {
+               uplevelOkaneNpc = t.npcTemplateId;
+               break;
+            }
+         }
+         System.out.println("UPLEVEL TASK12 OKANE template=" + uplevelOkaneNpc);
+      }
+      return uplevelOkaneNpc;
+   }
+
+   // Okanechan: Nhận thưởng thăng cấp -> Cấp 10 (10 đá cấp 2). Tự dò map trường/làng có NPC.
+   private void uplevelTask12Reward(Char me) {
+      long now = System.currentTimeMillis();
+      int stones = this.countUplevelItem(me, UplevelTask12FarmStoneId);
+      if (this.uplevelTask12RewardSentAt > 0L) {
+         if (stones > this.uplevelTask12RewardStonesBefore) {
+            System.out.println("UPLEVEL TASK12 OKANE reward ok stone2 " + this.uplevelTask12RewardStonesBefore
+                  + " -> " + stones);
+            uplevelTask12RewardDoneFor = me.cName;
+            this.uplevelTask12RewardSentAt = 0L;
+            this.uplevelOkaneStep = 0;
+            GameCanvas.menu.showMenu = false;
+            return;
+         }
+         if (this.uplevelOkaneStep == 1 || this.uplevelOkaneStep == 2) {
+            if (this.uplevelOkaneStepMenu(me, stones)) {
+               return;
+            }
+         }
+         if (now - this.uplevelTask12RewardSentAt < UplevelTask12WaitMs) {
+            return;
+         }
+         System.out.println("UPLEVEL TASK12 OKANE timeout step=" + this.uplevelOkaneStep + " stone2=" + stones);
+         this.uplevelTask12RewardSentAt = 0L;
+         this.uplevelOkaneStep = 0;
+         GameCanvas.menu.showMenu = false;
+         if (this.uplevelTask12RewardAttempts >= 2) {
+            System.out.println("UPLEVEL TASK12 OKANE reward không nhận được sau " + this.uplevelTask12RewardAttempts
+                  + " lần (có thể đã nhận); bỏ qua, farm đá ở map " + UplevelTask12FarmMap);
+            uplevelTask12RewardDoneFor = me.cName;
+            return;
+         }
+      }
+      int npcId = uplevelOkaneNpcId();
+      if (npcId < 0) {
+         System.out.println("UPLEVEL TASK12 OKANE không có template NPC Okanechan; bỏ qua quà");
+         uplevelTask12RewardDoneFor = me.cName;
+         return;
+      }
+      Npc npc = GameScr.fieldAI(npcId);
+      if (npc == null) {
+         int map = uplevelOkaneMap;
+         if (map < 0) {
+            if (this.uplevelOkaneSearchIndex >= UplevelTask12OkaneMaps.length) {
+               System.out.println("UPLEVEL TASK12 OKANE không tìm thấy NPC " + npcId + " ở các map trường/làng; bỏ qua quà");
+               uplevelTask12RewardDoneFor = me.cName;
+               return;
+            }
+            map = UplevelTask12OkaneMaps[this.uplevelOkaneSearchIndex];
+         } else if (TileMap.mapID == map && now - this.uplevelOkaneSeenAt > 5000L
+               && this.uplevelOkaneSeenMap == map) {
+            System.out.println("UPLEVEL TASK12 OKANE map=" + map + " không thấy NPC " + npcId + "; dò lại");
+            uplevelOkaneMap = -1;
+            return;
+         }
+         if (TileMap.mapID != map) {
+            this.fieldAA(map, -2, -1, -1);
+            return;
+         }
+         if (this.uplevelOkaneSeenMap != map) {
+            this.uplevelOkaneSeenMap = map;
+            this.uplevelOkaneSeenAt = now;
+            return;
+         }
+         if (uplevelOkaneMap < 0 && now - this.uplevelOkaneSeenAt > 2500L) {
+            System.out.println("UPLEVEL TASK12 OKANE map=" + map + " không có NPC " + npcId);
+            this.uplevelOkaneSearchIndex++;
+         }
+         return;
+      }
+      if (uplevelOkaneMap != TileMap.mapID) {
+         uplevelOkaneMap = TileMap.mapID;
+         System.out.println("UPLEVEL TASK12 OKANE found npc=" + npcId + " map=" + TileMap.mapID
+               + " x=" + npc.cx + " y=" + npc.cy);
+      }
+      if (Math.abs(npc.cx - me.cx) > 22 || Math.abs(npc.cy - me.cy) > 22) {
+         Char.fieldAC(npc.cx, npc.cy);
+         return;
+      }
+      // Menu NPC trong client (template) đã cũ, KHÔNG khớp index server (bấm mù hàng 3 từng làm mất 500 lượng).
+      // Mở NPC (cmd 40) -> chọn mục có chữ "thăng cấp" theo menu server trả về -> chọn "Cấp 10".
+      this.uplevelTask12RewardAttempts++;
+      this.uplevelTask12RewardStonesBefore = stones;
+      this.uplevelTask12RewardSentAt = now;
+      this.uplevelOkaneStep = 1;
+      this.uplevelOkaneMenuSeq = uplevelServerMenuSeq;
+      GameCanvas.menu.showMenu = false;
+      GameScr.fieldAH(npcId);
+      this.uplevelTask12Act("OKANE open npc=" + npcId + " stone2=" + stones + " try=" + this.uplevelTask12RewardAttempts);
+   }
+
+   // Món id templateId (hành trang) có cấp cao nhất; trùng id thì Char.fieldAF chỉ trả món đầu tiên.
+   private static Item uplevelBestBagItem(Char me, int templateId) {
+      Item best = null;
+      for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
+         Item item = me.arrItemBag[i];
+         if (item != null && item.template != null && item.template.id == templateId
+               && (best == null || item.upgrade > best.upgrade)) {
+            best = item;
+         }
+      }
+      return best;
+   }
+
+   // Sau test: mặc lại bản cấp cao nhất của vũ khí rồi đứng yên (không chạy tiếp nhiệm vụ). true = đã xử lý.
+   private boolean uplevelTestIdleEquipBest(Char me, int targetId) {
+      if (this.uplevelTask12Busy()) {
+         return true;
+      }
+      Item worn = uplevelTask12Body(me, targetId);
+      Item best = uplevelBestBagItem(me, targetId);
+      if (best != null && (worn == null || best.upgrade > worn.upgrade)) {
+         Service.gI().useItem(best.indexUI);
+         this.uplevelTask12Act("TEST equip best id=" + targetId + " +" + best.upgrade + " slot=" + best.indexUI
+               + " (đang mặc " + (worn == null ? "không" : "+" + worn.upgrade) + ")");
+      }
+      return true;
+   }
+
+   private boolean doUplevelTestShopOnce(Char me) {
+      boolean dry = Boolean.getBoolean("uplevel.testShopDry");
+      if (!UplevelTestShopOnce && !dry) {
+         return false;
+      }
+      if (this.uplevelTestShopTarget < 0) {
+         Item weapon = me.arrItemBody != null ? me.arrItemBody[1] : null;
+         this.uplevelTestShopTarget = weapon != null && weapon.template != null ? weapon.template.id
+               : uplevelTask12TargetId(me, 1);
+         StringBuilder copies = new StringBuilder();
+         for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
+            Item item = me.arrItemBag[i];
+            if (item != null && item.template != null && item.template.id == this.uplevelTestShopTarget) {
+               copies.append(" bag[").append(i).append("]+").append(item.upgrade);
+            }
+         }
+         System.out.println("UPLEVEL TEST shop target id=" + this.uplevelTestShopTarget + " worn="
+               + (weapon == null ? "none" : "+" + weapon.upgrade) + copies + " level=" + me.clevel
+               + " task=" + me.ctaskId + " yen=" + me.yen + " xu=" + me.xu + " luong=" + me.luong
+               + " stone6=" + this.countUplevelItem(me, UplevelTask12StoneId) + (dry ? " (dry)" : ""));
+         if (dry) {
+            this.uplevelTestShopDone = true;
+         }
+      }
+      int targetId = this.uplevelTestShopTarget;
+      if (this.uplevelTestShopDone) {
+         return this.uplevelTestIdleEquipBest(me, targetId);
+      }
+      if (this.uplevelTask12Busy()) {
+         return true;
+      }
+      if (this.uplevelTask12UpgradeItem != null) {
+         this.uplevelTask12CheckUpgrade(me);
+         if (this.uplevelTask12UpgradeItem == null) {
+            this.uplevelTestShopDone = true;
+            System.out.println("UPLEVEL TEST shop xong yen=" + me.yen + " stone6="
+                  + this.countUplevelItem(me, UplevelTask12StoneId));
+         }
+         return true;
+      }
+      if (this.uplevelTask12Tries > 0) {
+         this.uplevelTestShopDone = true;
+         System.out.println("UPLEVEL TEST shop dừng sau " + this.uplevelTask12Tries + " lần gửi");
+         return true;
+      }
+      if (this.countUplevelItem(me, UplevelTask12StoneId) <= 0) {
+         System.out.println("UPLEVEL TEST shop không có đá cấp 6; dừng test");
+         this.uplevelTestShopDone = true;
+         return true;
+      }
+      if (TileMap.mapID != UplevelTask12UpgradeMap) {
+         this.fieldAA(UplevelTask12UpgradeMap, -2, -1, -1);
+         return true;
+      }
+      Item worn = uplevelTask12Body(me, targetId);
+      if (worn != null) {
+         Service.gI().itemBodyToBag((int)worn.template.type);
+         this.uplevelTask12Act("TEST shop unequip id=" + targetId + " upgrade=" + worn.upgrade);
+         return true;
+      }
+      Item bagItem = uplevelBestBagItem(me, targetId);
+      if (bagItem == null) {
+         System.out.println("UPLEVEL TEST shop không có vũ khí id=" + targetId);
+         this.uplevelTestShopDone = true;
+         return true;
+      }
+      this.uplevelTask12Upgrade(me, bagItem, 0, targetId);
+      return true;
+   }
+
+   private boolean doUplevelTestCareful(Char me) {
+      if (!UplevelTestCareful) {
+         return false;
+      }
+      int targetId = uplevelTask12TargetId(me, 1);
+      if (this.uplevelTestCarefulDone) {
+         return !this.uplevelTask12Busy() && this.uplevelTask12Equip(me, targetId);
+      }
+      if (this.uplevelTask12Busy()) {
+         return true;
+      }
+      if (this.uplevelTask12UpgradeItem != null) {
+         this.uplevelTask12CheckUpgrade(me);
+         if (this.uplevelTask12UpgradeItem == null) {
+            this.uplevelTestCarefulDone = true;
+            System.out.println("UPLEVEL TEST careful xong luong=" + me.luong + " stone2="
+                  + this.countUplevelItem(me, UplevelTask12FarmStoneId));
+         }
+         return true;
+      }
+      if (TileMap.mapID != UplevelTask12UpgradeMap) {
+         this.fieldAA(UplevelTask12UpgradeMap, -2, -1, -1);
+         return true;
+      }
+      Item worn = uplevelTask12Body(me, targetId);
+      if (worn != null) {
+         Service.gI().itemBodyToBag((int)worn.template.type);
+         this.uplevelTask12Act("TEST careful unequip id=" + targetId + " upgrade=" + worn.upgrade);
+         return true;
+      }
+      Item bagItem = uplevelBestBagItem(me, targetId);
+      if (bagItem == null) {
+         System.out.println("UPLEVEL TEST careful không có vũ khí id=" + targetId);
+         this.uplevelTestCarefulDone = true;
+         return false;
+      }
+      this.uplevelTask12UpgradeCareful(me, bagItem, 0, targetId, 4);
+      return true;
+   }
+
+   // Bước chọn menu Okanechan. true = đã xử lý tick này.
+   private boolean uplevelOkaneStepMenu(Char me, int stones) {
+      if (uplevelServerMenuSeq == this.uplevelOkaneMenuSeq) {
+         return false; // chờ menu server (để nhánh timeout xử lý)
+      }
+      String[] entries = uplevelServerMenuEntries;
+      Object[] params = uplevelServerMenuParams;
+      int[] actions = uplevelServerMenuActions;
+      this.uplevelOkaneMenuSeq = uplevelServerMenuSeq;
+      String want = this.uplevelOkaneStep == 1 ? "thăng cấp" : "10";
+      int idx = -1;
+      for (int i = 0; entries != null && i < entries.length; i++) {
+         String c = entries[i] == null ? "" : entries[i].toLowerCase();
+         if (this.uplevelOkaneStep == 1 ? c.indexOf(want) >= 0 : (c.indexOf("cấp 10") >= 0 || c.trim().equals("10"))) {
+            idx = i;
+            break;
+         }
+      }
+      if (idx < 0) {
+         System.out.println("UPLEVEL TASK12 OKANE step=" + this.uplevelOkaneStep + " menu không có \"" + want
+               + "\"; bỏ qua lượt này");
+         GameCanvas.menu.showMenu = false;
+         this.uplevelOkaneStep = 3;
+         return true;
+      }
+      int npcId = uplevelOkaneNpcId();
+      GameCanvas.menu.showMenu = false;
+      if (this.uplevelOkaneStep == 1 && actions != null && actions[idx] == 88820 && params[idx] instanceof String[]
+            && ((String[])params[idx]).length > 1) {
+         // Mục template có menu con: gửi luôn (hàng idx, mục con "Cấp 10").
+         String[] sub = (String[])params[idx];
+         int option = 0;
+         for (int j = 1; j < sub.length; j++) {
+            if (sub[j] != null && sub[j].indexOf("10") >= 0) {
+               option = j - 1;
+               break;
+            }
+         }
+         Service.gI().menu((byte)0, npcId, idx, option);
+         this.uplevelOkaneStep = 3;
+         this.uplevelTask12Act("OKANE choose row=" + idx + " [" + entries[idx] + "] sub=" + option + " [" + sub[option + 1] + "]");
+         return true;
+      }
+      Service.gI().menu((byte)0, npcId, idx, 0);
+      this.uplevelTask12Act("OKANE choose step=" + this.uplevelOkaneStep + " idx=" + idx + " [" + entries[idx] + "]");
+      this.uplevelOkaneStep = this.uplevelOkaneStep == 1 ? 2 : 3;
+      return true;
+   }
+
+   // Nâng cẩn thận ở NPC 6: đúng needStones viên đá cấp 2, mỗi viên một ô riêng (ô chồng chỉ tính 1 viên).
+   private void uplevelTask12UpgradeCareful(Char me, Item item, int phase, int targetId, int needStones) {
+      Item[] put = new Item[18];
+      int count = 0;
+      Item stack = null;
+      for (int i = 0; i < me.arrItemBag.length; i++) {
+         Item stone = me.arrItemBag[i];
+         if (stone == null || stone.template == null || stone.template.id != UplevelTask12FarmStoneId) {
+            continue;
+         }
+         if (stone.quantity <= 1) {
+            if (count < needStones) {
+               put[count++] = stone;
+            }
+         } else if (stack == null) {
+            stack = stone;
+         }
+      }
+      // Tách xong khi số ô lẻ tăng (hook tách đá của client không phải lúc nào cũng báo).
+      if (this.uplevelTask12SplitSinglesBefore >= 0 && count > this.uplevelTask12SplitSinglesBefore) {
+         this.uplevelTask12SplitSinglesBefore = -1;
+         uplevelCrystalSplitDone();
+      }
+      if (count < needStones) {
+         if (stack == null) {
+            this.uplevelTask12Hang(me, "FARM đá cấp 2 không đủ: lẻ " + count + "/" + needStones);
+            return;
+         }
+         if (uplevelCrystalSplitBusy()) {
+            return;
+         }
+         if (Char.fieldBF() <= 0) {
+            this.uplevelTask12Hang(me, "FARM hành trang đầy, không tách được đá cấp 2");
+            return;
+         }
+         uplevelCrystalSplitStart(stack);
+         this.uplevelTask12SplitSinglesBefore = count;
+         Service.gI().inputNumSplit(stack.indexUI, 1);
+         this.uplevelTask12Act("FARM split stone2 slot=" + stack.indexUI + " quantity=" + stack.quantity
+               + " single=" + count + "/" + needStones);
+         return;
+      }
+      // KHÔNG bấm menu NPC 6: index menu template đã cũ, fieldAB(6, 0, 1) từng mở nhầm menu đổi lượng (mất
+      // 500 lượng do transform tự chọn mục đầu menu động của NPC 6). Cờ cẩn thận nằm trong gói upgradeItem.
+      Npc upgradeNpc = GameScr.fieldAI(UplevelTask12UpgradeNpc);
+      if (upgradeNpc == null) {
+         this.uplevelTask12Hang(me, "không thấy NPC " + UplevelTask12UpgradeNpc + " ở map " + TileMap.mapID);
+         return;
+      }
+      if (Math.abs(upgradeNpc.cx - me.cx) > 22 || Math.abs(upgradeNpc.cy - me.cy) > 22) {
+         Char.fieldAC(upgradeNpc.cx, upgradeNpc.cy);
+         return;
+      }
+      me.npcFocus = upgradeNpc;
+      GameScr.itemUpGrade = item;
+      GameScr.arrItemUpGrade = put;
+      this.uplevelTask12UpgradeItem = item;
+      this.uplevelTask12UpgradeFrom = item.upgrade;
+      this.uplevelTask12UpgradeStones = put;
+      this.uplevelTask12Tries++;
+      Service.gI().upgradeItem(item, put, true);
+      this.uplevelTask12Act("FARM upgrade careful phase=" + phase + " id=" + targetId + " +" + item.upgrade
+            + " stones=" + count + " yen=" + me.yen + " luong=" + me.luong + " try=" + this.uplevelTask12Tries);
    }
 
    private Item findUplevelItem(Item[] items, int templateId) {
@@ -1776,6 +2525,9 @@ public class As20 extends As10 {
          super.fieldAA(var1, var2, var3);
          return;
       }
+      if (var1.cHP > 0 && this.doUplevelTestShopOnce(var1)) {
+         return;
+      }
       if (var1.cHP > 0 && var1.ctaskId >= 9 && !this.ensureUplevelMushroom(var1)) {
          return;
       }
@@ -1786,6 +2538,18 @@ public class As20 extends As10 {
          return;
       }
       if (var1.cHP > 0 && this.doUplevelTestWeapon(var1)) {
+         return;
+      }
+      if (var1.cHP > 0 && !this.uplevelTask12Busy() && this.uplevelExpUnlockAfterTask12(var1)) {
+         return;
+      }
+      if (var1.cHP > 0 && this.doUplevelTestCareful(var1)) {
+         return;
+      }
+      if (UplevelTestOkane && var1.cHP > 0 && !var1.cName.equals(uplevelTask12RewardDoneFor)) {
+         if (!this.uplevelTask12Busy()) {
+            this.uplevelTask12Reward(var1);
+         }
          return;
       }
       if (var1.ctaskId < 9) {

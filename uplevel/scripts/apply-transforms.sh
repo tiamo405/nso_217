@@ -233,6 +233,8 @@ replacement = '''   private static boolean uplevelGiftStarted;
    private static boolean uplevelGiftMailReceived;
    private static boolean uplevelGiftDone;
    private static int uplevelGiftMailId = -1;
+   // Giftcode đã dùng / không có thư: hộp thư trống liên tiếp N lần thì bỏ qua giftcode.
+   private static int uplevelGiftMailEmptyCount;
    private static long uplevelGiftLastAction;
    private static boolean uplevelGiftSlotFreed;
    private static boolean uplevelGiftSlotFreePending;
@@ -609,9 +611,15 @@ replacement = '''   private static boolean uplevelGiftStarted;
 
    static void uplevelGiftServerMessage(String message) {
       uplevelTask12Message(message);
-      if (uplevelGiftStarted && uplevelGiftCodeSent && uplevelGiftMessage(message)) {
-         uplevelGiftMessageSeen = true;
-         System.out.println("UPLEVEL GIFT server=[" + message + "]");
+      if (uplevelGiftStarted && uplevelGiftCodeSent && !uplevelGiftDone) {
+         boolean match = uplevelGiftMessage(message);
+         if (match) uplevelGiftMessageSeen = true;
+         System.out.println("UPLEVEL GIFT server=[" + message + "] match=" + match);
+         String lower = message == null ? "" : message.toLowerCase();
+         if (lower.indexOf("chỉ được sử dụng") >= 0 || lower.indexOf("chi duoc su dung") >= 0) {
+            uplevelGiftDone = true;
+            System.out.println("UPLEVEL GIFT giftcode đã dùng trước đó; bỏ qua giftcode");
+         }
       }
    }
 
@@ -646,9 +654,15 @@ replacement = '''   private static boolean uplevelGiftStarted;
             selectedReceived = fallbackReceived;
          }
          if (selectedId < 0) {
-            System.out.println("UPLEVEL GIFT mail not found count=" + count);
+            uplevelGiftMailEmptyCount++;
+            System.out.println("UPLEVEL GIFT mail not found count=" + count + " empty=" + uplevelGiftMailEmptyCount);
             uplevelGiftMailListRequested = false;
             uplevelGiftLastAction = System.currentTimeMillis();
+            if (uplevelGiftMailEmptyCount >= 10) {
+               uplevelGiftDone = true;
+               System.out.println("UPLEVEL GIFT giftcode không có thư sau " + uplevelGiftMailEmptyCount
+                       + " lần (code đã dùng/hết hạn?); bỏ qua giftcode");
+            }
             return;
          }
          uplevelGiftMailId = selectedId;
@@ -1045,6 +1059,29 @@ replacement = needle + "                    if (Code.fieldAB instanceof As20) As
 if source.count(needle) != 1:
     raise SystemExit("expected Controller server message -26")
 path.write_text(source.replace(needle, replacement, 1))
+UPLEVELPY
+# Menu động của server (cmd 63) và menu NPC (cmd 40): báo As20 để chọn mục theo chữ (menu template đã cũ).
+python3 - "$WORK_SRC_DIR/Controller.java" <<'UPLEVELPY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text()
+needle63 = """                        } catch (Exception var179) {
+"""
+repl63 = needle63 + """                            if (Code.fieldAB instanceof As20) As20.uplevelServerMenu(63, var195);
+"""
+needle40 = """                        if (Char.getMyChar().npcFocus.charID == 25) {
+                            GameScr.fieldGH = var195.size();
+                        }
+"""
+repl40 = """                        if (Code.fieldAB instanceof As20) As20.uplevelServerMenu(40, var195);
+""" + needle40
+for needle, repl in ((needle63, repl63), (needle40, repl40)):
+    if source.count(needle) != 1:
+        raise SystemExit("expected Controller server menu hook: " + needle[:50])
+    source = source.replace(needle, repl, 1)
+path.write_text(source)
 UPLEVELPY
 python3 - "$WORK_SRC_DIR/Controller.java" <<'UPLEVELPY'
 import pathlib
