@@ -13,7 +13,9 @@ public class As20 extends As10 {
    private static final int UplevelNoelHatMaleId = 351;
    private static final int UplevelNoelHatFemaleId = 352;
    private static final int UplevelTeacherHpId = 14;
-   private static final int UplevelTeacherHpQuantity = 10000;
+   // Mua thử số lượng giảm dần: server im lặng (không đủ yên...) thì hạ bậc; hết bậc thì đánh thầy không bình.
+   private static final int[] UplevelTeacherHpQuantities = {10000, 1000, 200, 50, 10};
+   private static final long UplevelTeacherHpSkipMs = 10L * 60L * 1000L;
    private static final int UplevelFoodType = 18;
    private static final int UplevelFoodNpc = 4;
    private static final int UplevelFoodStock = 2;
@@ -134,6 +136,7 @@ public class As20 extends As10 {
    private static final long UplevelExpStallMs = Long.getLong("uplevel.expStallMs", 5L * 60L * 1000L);
    private long uplevelExpWatchValue = -1L;
    private long uplevelExpWatchAt;
+   private long uplevelExpLockNoPathLogAt;
    private boolean uplevelExpStallLogged;
    private int uplevelTask14PendingItem = -1;
    private long uplevelTask14PickSentAt;
@@ -151,6 +154,8 @@ public class As20 extends As10 {
    private boolean uplevelTeacherHpBuyPending;
    private long uplevelTeacherHpBuySentAt;
    private long uplevelTeacherHpUseSentAt;
+   private int uplevelTeacherHpStep;
+   private long uplevelTeacherHpSkipUntil;
    private int uplevelFoodLevel = -1;
    private boolean uplevelFoodBoxRequested;
    private boolean uplevelFoodBoxChecked;
@@ -1296,7 +1301,22 @@ public class As20 extends As10 {
          return false;
       }
       if (TileMap.mapID != UplevelTask12UpgradeMap) {
+         // Phòng riêng (đánh thầy map 56/73...) không có đường về Tajima: đi không được thì đừng chặn nhiệm vụ,
+         // làm xong nhiệm vụ ra map thường rồi tắt sau (không thì treo mãi trong phòng).
+         if (!TileMap.fieldAK(UplevelTask12UpgradeMap)) {
+            if (now - this.uplevelExpLockNoPathLogAt >= 60000L) {
+               this.uplevelExpLockNoPathLogAt = now;
+               System.out.println("UPLEVEL EXPLOCK không có đường từ map " + TileMap.mapID + " về Tajima (map "
+                     + UplevelTask12UpgradeMap + "), state=" + uplevelExpLockState + " want=" + want + "; làm nhiệm vụ trước");
+            }
+            return false;
+         }
          this.fieldAA(UplevelTask12UpgradeMap, -2, -1, -1);
+         return true;
+      }
+      // Chờ hết nhịp nghỉ giữa 2 lần bấm (thay cho guard Busy ở chỗ gọi, để nhiệm vụ không chạy chen giữa
+      // lúc đang bấm bật/tắt và kéo nhân vật vào phòng riêng).
+      if (this.uplevelTask12Busy()) {
          return true;
       }
       Npc npc = GameScr.fieldAI(UplevelTajimaNpc);
@@ -2261,9 +2281,10 @@ public class As20 extends As10 {
       int count = this.countUplevelItem(me, UplevelTeacherHpId);
       if (count > 0) {
          if (this.uplevelTeacherHpBuyPending) {
-            System.out.println("UPLEVEL TEACHER HP ready id=" + UplevelTeacherHpId + " count=" + count);
+            System.out.println("UPLEVEL TEACHER HP ready id=" + UplevelTeacherHpId + " count=" + count + " yen=" + me.yen);
             this.uplevelTeacherHpBuyPending = false;
          }
+         this.uplevelTeacherHpStep = 0;
          return true;
       }
 
@@ -2272,17 +2293,31 @@ public class As20 extends As10 {
          if (now - this.uplevelTeacherHpBuySentAt < 8000L) {
             return false;
          }
-         System.out.println("UPLEVEL TEACHER HP buy timeout id=" + UplevelTeacherHpId + "; continue task");
          this.uplevelTeacherHpBuyPending = false;
+         int failedQty = UplevelTeacherHpQuantities[this.uplevelTeacherHpStep];
+         this.uplevelTeacherHpStep++;
+         if (this.uplevelTeacherHpStep >= UplevelTeacherHpQuantities.length) {
+            this.uplevelTeacherHpStep = 0;
+            this.uplevelTeacherHpSkipUntil = now + UplevelTeacherHpSkipMs;
+            System.out.println("UPLEVEL TEACHER HP buy failed quantity=" + failedQty + " yen=" + me.yen
+                  + "; skip potions " + UplevelTeacherHpSkipMs / 1000L + "s, fight teacher without id=" + UplevelTeacherHpId);
+            return true;
+         }
+         System.out.println("UPLEVEL TEACHER HP buy timeout id=" + UplevelTeacherHpId + " quantity=" + failedQty
+               + " yen=" + me.yen + "; retry quantity=" + UplevelTeacherHpQuantities[this.uplevelTeacherHpStep]);
+         return false;
+      }
+      if (now < this.uplevelTeacherHpSkipUntil) {
          return true;
       }
 
+      int quantity = UplevelTeacherHpQuantities[this.uplevelTeacherHpStep];
       System.out.println("UPLEVEL TEACHER HP buy id=" + UplevelTeacherHpId
-            + " quantity=" + UplevelTeacherHpQuantity + " npc=3 shop=7 index=1");
+            + " quantity=" + quantity + " yen=" + me.yen + " npc=3 shop=7 index=1");
       this.uplevelTeacherHpBuyPending = true;
       this.uplevelTeacherHpBuySentAt = now;
       GameScr.fieldAB(3, 0, 0);
-      Service.gI().buyItem(7, 1, UplevelTeacherHpQuantity);
+      Service.gI().buyItem(7, 1, quantity);
       LockGame.fieldAG();
       return false;
    }
@@ -2579,7 +2614,7 @@ public class As20 extends As10 {
       if (var1.cHP > 0 && this.doUplevelTestWeapon(var1)) {
          return;
       }
-      if (var1.cHP > 0 && !this.uplevelTask12Busy() && this.uplevelExpUnlockAfterTask12(var1)) {
+      if (var1.cHP > 0 && this.uplevelExpUnlockAfterTask12(var1)) {
          return;
       }
       if (var1.cHP > 0 && this.doUplevelTestCareful(var1)) {
@@ -2952,7 +2987,8 @@ public class As20 extends As10 {
                return;
             }
 
-            if (var1.taskMaint.index != 1 && var1.cHP < var1.cMaxHP / 2 && var1.cHP > 0) {
+            if ((var1.taskMaint.index != 1 || this.countUplevelItem(var1, UplevelTeacherHpId) <= 0)
+                  && var1.cHP < var1.cMaxHP / 2 && var1.cHP > 0) {
                var1.gameAE(16);
             }
 
