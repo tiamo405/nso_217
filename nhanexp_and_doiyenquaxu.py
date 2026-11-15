@@ -13,7 +13,7 @@ Quy tắc trạng thái:
   - level < 42:  [Đang tắt] Không nhận kinh nghiệm
 
 Cách dùng :
-python nhanexp_and_doiyenquaxu.py [--host HOST] [--port PORT] [--character-index INDEX | --character-name NAME]
+python nhanexp_and_doiyenquaxu.py --luong N [--host HOST] [--port PORT] [--character-index INDEX | --character-name NAME]
   --host HOST: địa chỉ server (mặc định 180.93.114.122)
   --port PORT: cổng server (mặc định 14444)
   --character-index INDEX: chỉ xử lý nhân vật index này (0-based)
@@ -26,7 +26,7 @@ python nhanexp_and_doiyenquaxu.py [--host HOST] [--port PORT] [--character-index
   --account-delay SECONDS: chờ sau khi xử lý mỗi tài khoản (mặc định 11.0)
   --nhan-exp: bật nhận EXP Offline (mặc định)
   --bo-qua-exp: bỏ qua toàn bộ bước EXP Offline, chỉ đổi Yên qua Xu
-  --luong N: số tài khoản chạy song song (mặc định 1)
+  --luong N: BẮT BUỘC, số tài khoản chạy song song (vd --luong 10)
   --retry-attempts N: số lần retry sau lần chạy đầu cho mỗi tài khoản (mặc định 2)
   --retry-delay SECONDS: chờ giữa các lần retry tài khoản (mặc định 5.0)
   --failed-csv PATH: lưu tài khoản còn lỗi sau retry; mặc định thêm -failed vào tên CSV input
@@ -50,6 +50,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import hoatdong
 from hoatdong import NSOActivityClient, NSOMessage, NSOReader
 from map_graph import MAP_GRAPH, find_map_path
 
@@ -188,7 +189,13 @@ def normalize_text(value: str) -> str:
 
 
 def read_accounts(csv_path: Path):
+    """Đọc CSV username,password; bỏ tài khoản trùng (giữ dòng đầu tiên).
+
+    Trùng tài khoản khi chạy nhiều luồng sẽ làm 2 luồng đăng nhập cùng lúc
+    và server đá phiên của nhau, nên lọc ngay từ đây.
+    """
     accounts = []
+    seen = {}
     with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         for line_number, row in enumerate(csv.reader(handle), start=1):
             if not row or not any(cell.strip() for cell in row):
@@ -198,8 +205,15 @@ def read_accounts(csv_path: Path):
             username, password = row[0].strip(), row[1].strip()
             if username.casefold() == "username" and password.casefold() == "password":
                 continue
-            if username and password:
-                accounts.append((username, password))
+            if not (username and password):
+                continue
+            key = username.casefold()
+            if key in seen:
+                log(f"⚠️ Bỏ tài khoản trùng {username} ở dòng {line_number} "
+                    f"(đã có ở dòng {seen[key]})")
+                continue
+            seen[key] = line_number
+            accounts.append((username, password))
     return accounts
 
 
@@ -726,8 +740,8 @@ def build_parser():
     )
     parser.set_defaults(receive_exp=True)
     parser.add_argument(
-        "--luong", type=int, default=10,
-        help="Số tài khoản chạy song song (mặc định 1)",
+        "--luong", type=int, required=True,
+        help="BẮT BUỘC: số tài khoản chạy song song (vd --luong 10)",
     )
     parser.add_argument(
         "--retry-attempts", type=int, default=DEFAULT_RETRY_ATTEMPTS,
@@ -1116,6 +1130,9 @@ def run_account_lane(args, lane_accounts, total_accounts, lane_number, log_dir):
 
 def main():
     args = build_parser().parse_args()
+    # hoatdong.py dùng print() trực tiếp cho lỗi kết nối/đăng nhập/chọn nhân
+    # vật; chuyển qua log() để có lock và ghi vào luongN.log của từng luồng.
+    hoatdong.print = log
     failed_csv = args.failed_csv or args.csv_file.with_name(
         f"{args.csv_file.stem}-failed{args.csv_file.suffix}"
     )
