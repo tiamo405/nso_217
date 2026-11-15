@@ -21,6 +21,15 @@ Nguồn dữ liệu: `home/status.properties` do `uplevel/overrides/UplevelStatu
 cùng file này). Worker chạy bản build cũ chưa có file này thì monitor đọc dòng `STATE` cuối trong log
 (cột trạng thái ghi "từ log", thiếu hành trang/lượng/xu/yên) — build lại để có đủ.
 
+Bấm một dòng (hoặc nút **Thông tin** / **Log** ở cột cuối) để mở ngăn chi tiết cố định bên phải màn hình
+(phím `J`/`K` đổi worker, `Esc` đóng; URL giữ `#w=<runtime>/<worker>&tab=info|log` để tải lại trang vẫn mở đúng):
+
+- **Thông tin worker**: số liệu nhân vật đang chơi + bảng mọi tài khoản trong `account.csv` (Xong / Đang chạy /
+  Dừng giữa chừng / Chờ) kèm từng nhân vật và level. Nguồn: `home/roster.properties` do `UplevelStatus.java`
+  ghi khi vào game (danh sách nhân vật + level server gửi lúc chọn nhân vật; nhân vật đang chơi lấy level trực
+  tiếp). Build cũ chưa có file này thì lấy dòng `STATUS` cuối của từng nhân vật trong log (ghi "từ log").
+- **Log**: `stdout.log` / `java-errors.log`, 400 dòng cuối, tự làm mới 3 giây.
+
 Bot cũng in mỗi 60 giây (hoặc khi lên cấp / đổi nhiệm vụ) một dòng có mốc thời gian:
 
 ```

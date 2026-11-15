@@ -34,7 +34,7 @@ td.num, th.num { text-align: right; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--panel-2); }
 tbody tr.selected { background: #1a2b40; }
-.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+.pill { display: inline-block; white-space: nowrap; padding: 2px 8px; border-radius: 999px; font-size: .75rem; font-weight: 700; }
 .s-running { background: #133a30; color: var(--accent); }
 .s-switching { background: #1b2d45; color: var(--info); }
 .s-done { background: #2a2540; color: #b9a8ff; }
@@ -45,11 +45,64 @@ tbody tr.selected { background: #1a2b40; }
 .bar > i { display: block; height: 100%; background: var(--accent); }
 .sub { color: var(--muted); font-size: .74rem; }
 .empty { padding: 30px; text-align: center; color: var(--muted); }
-.log-panel { margin-top: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
-.log-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-pre { margin: 0; max-height: 460px; overflow: auto; background: #070b11; border-radius: 8px; padding: 10px; font-size: .78rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all; }
 .legend { margin-top: 8px; font-size: .78rem; }
-@media (max-width: 640px) { .shell { width: calc(100% - 32px); } h1 { font-size: 1.3rem; } }
+td.act { padding: 4px 8px; }
+.act button { padding: .25rem .55rem; font-size: .76rem; border-radius: 6px; }
+.act button + button { margin-left: 4px; }
+.act button:hover, .icon-btn:hover { border-color: var(--accent); }
+
+/* Ngăn chi tiết: cố định bên phải màn hình, bảng vẫn bấm được để đổi worker. */
+body.drawer-open .shell { padding-right: min(820px, 52vw); }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(800px, 50vw); z-index: 20;
+  background: var(--panel); border-left: 1px solid var(--line); box-shadow: -18px 0 40px rgba(0,0,0,.45);
+  display: flex; flex-direction: column; }
+.drawer[hidden] { display: none; }
+.dr-head { padding: 14px 16px 0; border-bottom: 1px solid var(--line); }
+.dr-title { display: flex; align-items: center; gap: 10px; }
+.dr-title h2 { margin: 0; font-size: 1.15rem; letter-spacing: -.01em; }
+.dr-title .spacer { flex: 1; }
+.icon-btn { padding: .3rem .6rem; min-width: 34px; }
+.dr-sub { margin: 4px 0 10px; font-size: .8rem; }
+.tabs { display: flex; gap: 2px; }
+.tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: .55rem .9rem; color: var(--muted); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.dr-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 18px; }
+.dr-body.log-mode { display: flex; flex-direction: column; overflow: hidden; }
+.dr-body[hidden] { display: none; }
+.log-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+pre { margin: 0; flex: 1; min-height: 0; overflow: auto; background: #070b11; border-radius: 8px; padding: 10px; font-size: .78rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 8px; margin-bottom: 18px; }
+.stat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; min-width: 0; }
+.stat > span { color: var(--muted); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; display: block; margin-bottom: 2px; }
+.stat > b { font-size: 1rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 0 0 8px; }
+.sec-head h3 { margin: 0; font-size: .95rem; }
+.acc-table { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.acc-table table { font-size: .84rem; }
+.acc-table th { position: static; cursor: default; background: transparent; }
+.acc-table td { white-space: normal; vertical-align: top; }
+.acc-table tbody tr { cursor: default; }
+.acc-table tbody tr:hover { background: transparent; }
+.acc-table tr.cur { background: #15283a; }
+.acc-table tr:last-child td { border-bottom: 0; }
+.chars { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: #0d141f; border: 1px solid var(--line); font-size: .8rem; }
+.chip .lv { font-weight: 800; font-variant-numeric: tabular-nums; }
+.chip .lv.max { color: var(--accent); }
+.chip.playing { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(87,215,162,.25) inset; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.a-done { background: #2a2540; color: #b9a8ff; }
+.a-current { background: #133a30; color: var(--accent); }
+.a-paused { background: #3a2c12; color: var(--warning); }
+.a-pending { background: #1b2433; color: var(--muted); }
+.a-removed { background: #2a1b1f; color: #ffabb2; }
+.note { margin-top: 10px; padding: 9px 11px; border-radius: 8px; border: 1px dashed var(--line); font-size: .78rem; color: var(--muted); }
+kbd { font: inherit; font-size: .72rem; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); }
+@media (max-width: 1100px) {
+  body.drawer-open .shell { padding-right: 0; }
+  .drawer { width: 100%; }
+}
+@media (max-width: 640px) { .shell { width: calc(100% - 32px); } h1 { font-size: 1.3rem; } .dr-head, .dr-body { padding-left: 12px; padding-right: 12px; } }
 </style>
 </head>
 <body>
@@ -98,38 +151,59 @@ pre { margin: 0; max-height: 460px; overflow: auto; background: #070b11; border-
           <th data-sort="log_mtime">Log cuối</th>
           <th data-sort="updated_at">Heartbeat</th>
           <th data-sort="progress_at">Tiến triển</th>
+          <th>Xem</th>
         </tr>
       </thead>
-      <tbody id="rows"><tr><td colspan="16" class="empty">Đang tải…</td></tr></tbody>
+      <tbody id="rows"><tr><td colspan="17" class="empty">Đang tải…</td></tr></tbody>
     </table>
   </div>
   <p class="legend muted">
     <b>Log cuối</b>: lần cuối stdout.log được ghi ·
     <b>Heartbeat</b>: lần cuối bot ghi status.properties (5 giây/lần; trễ = JVM treo hoặc đã chết) ·
     <b>Tiến triển</b>: lần cuối exp/level/nhiệm vụ/map thay đổi (trễ = bot sống nhưng đứng yên).
-    CPU tính theo % của một core. Bấm một dòng để xem log.
+    CPU tính theo % của một core. Bấm một dòng (hoặc nút <b>Thông tin</b> / <b>Log</b>) để mở chi tiết worker bên phải;
+    phím <kbd>J</kbd>/<kbd>K</kbd> đổi worker, <kbd>Esc</kbd> đóng.
   </p>
 
-  <section class="log-panel" id="log-panel" hidden>
-    <div class="log-head">
-      <strong id="log-title"></strong>
-      <div class="controls">
-        <select id="log-kind"><option value="stdout">stdout.log</option><option value="error">java-errors.log</option></select>
-        <input id="log-filter" placeholder="Lọc (vd STATUS)" size="16">
-        <label class="muted"><input type="checkbox" id="log-follow" checked> Tự cuộn</label>
-        <button id="log-close">Đóng</button>
-      </div>
+</main>
+
+<aside class="drawer" id="drawer" hidden aria-label="Chi tiết worker">
+  <div class="dr-head">
+    <div class="dr-title">
+      <h2 id="dr-name"></h2>
+      <span id="dr-state"></span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="dr-prev" title="Worker trước (K)">‹</button>
+      <button class="icon-btn" id="dr-next" title="Worker sau (J)">›</button>
+      <button class="icon-btn" id="dr-close" title="Đóng (Esc)">✕</button>
+    </div>
+    <p class="dr-sub muted" id="dr-sub"></p>
+    <nav class="tabs">
+      <button data-tab="info">Thông tin worker</button>
+      <button data-tab="log">Log</button>
+    </nav>
+  </div>
+  <div class="dr-body" id="dr-info"></div>
+  <div class="dr-body log-mode" id="dr-log" hidden>
+    <div class="log-tools">
+      <select id="log-kind"><option value="stdout">stdout.log</option><option value="error">java-errors.log</option></select>
+      <input id="log-filter" placeholder="Lọc (vd STATUS)" size="16">
+      <label class="muted"><input type="checkbox" id="log-follow" checked> Tự cuộn</label>
+      <span id="log-info" class="muted"></span>
     </div>
     <pre id="log-body"></pre>
-  </section>
-</main>
+  </div>
+</aside>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let runtimeFilter = localGet("rt") || "all";
 let sortKey = "worker", sortDir = 1;
-let selected = null;
+let selected = null;          // "runtime/worker" đang mở trong ngăn chi tiết
+let tab = localGet("tab") === "log" ? "log" : "info";
 let lastData = null;
+let lastRows = [];            // thứ tự đang hiển thị, dùng cho J/K
+let detail = null;            // dữ liệu /api/worker của worker đang mở
 
 function localGet(k) { try { return localStorage.getItem("uplevel-monitor." + k); } catch { return null; } }
 function localSet(k, v) { try { localStorage.setItem("uplevel-monitor." + k, v); } catch {} }
@@ -197,9 +271,11 @@ function render() {
   ].map(([k, v]) => `<div class="card"><span>${k}</span><strong class="${k.startsWith("Nghi") && v > 0 ? "bad" : ""}">${v}</strong></div>`).join("");
 
   if (!rows.length) {
-    $("rows").innerHTML = `<tr><td colspan="16" class="empty">Chưa có worker nào trong uplevel/workers hoặc uplevel35/workers.</td></tr>`;
+    lastRows = [];
+    $("rows").innerHTML = `<tr><td colspan="17" class="empty">Chưa có worker nào trong uplevel/workers hoặc uplevel35/workers.</td></tr>`;
     return;
   }
+  lastRows = rows.map((w) => w.runtime + "/" + w.worker);
   $("rows").innerHTML = rows.map((w) => {
     const key = w.runtime + "/" + w.worker;
     const live = w.state === "running";
@@ -229,6 +305,7 @@ function render() {
       <td>${ageCell(w.log_mtime, now, live, staleSec)}</td>
       <td>${ageCell(w.updated_at, now, live, staleSec)}</td>
       <td>${ageCell(w.progress_at, now, live, staleSec)}</td>
+      <td class="act"><button data-open="info" title="Tài khoản, nhân vật, level">Thông tin</button><button data-open="log">Log</button></td>
     </tr>`;
   }).join("");
 }
@@ -238,27 +315,145 @@ async function refresh() {
     const res = await fetch("/api/workers", {cache: "no-store"});
     lastData = await res.json();
     $("refresh-info").textContent = "Cập nhật " + new Date().toLocaleTimeString("vi-VN", {hour12: false});
-    render();
+    render(); renderHead();
   } catch (e) {
     $("refresh-info").innerHTML = `<span class="bad">Mất kết nối monitor</span>`;
   }
 }
 
-async function loadLog() {
+// ---------------------------------------------------------------- ngăn chi tiết worker
+
+const ACC_LABEL = {done: "Xong", current: "Đang chạy", paused: "Dừng giữa chừng", pending: "Chờ", removed: "Không còn trong account.csv"};
+const MAX_LV = {uplevel35: 35, uplevel1to35: 35};
+
+function openWorker(key, which) {
+  if (which) { tab = which; localSet("tab", tab); }
+  const changed = selected !== key;
+  selected = key;
+  if (changed) { detail = null; $("dr-info").innerHTML = `<p class="muted">Đang tải…</p>`; $("log-body").textContent = ""; }
+  document.body.classList.add("drawer-open");
+  $("drawer").hidden = false;
+  syncHash(); showTab(); render(); renderHead();
+  loadDetail(); if (tab === "log") loadLog();
+  document.querySelector(`tr[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({block: "nearest"});
+}
+function closeWorker() {
+  selected = null; detail = null;
+  $("drawer").hidden = true; document.body.classList.remove("drawer-open");
+  syncHash(); render();
+}
+function stepWorker(d) {
+  if (!lastRows.length) return;
+  const i = lastRows.indexOf(selected);
+  openWorker(lastRows[(i < 0 ? 0 : (i + d + lastRows.length) % lastRows.length)]);
+}
+function showTab() {
+  document.querySelectorAll(".tabs [data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  $("dr-info").hidden = tab !== "info";
+  $("dr-log").hidden = tab !== "log";
+}
+function syncHash() {
+  const h = selected ? `#w=${encodeURIComponent(selected)}&tab=${tab}` : " ";
+  try { history.replaceState(null, "", h === " " ? location.pathname + location.search : h); } catch {}
+}
+
+/** Tiêu đề ngăn: lấy từ bảng (cập nhật 3 giây/lần) nên luôn khớp dòng đang chọn. */
+function renderHead() {
   if (!selected) return;
   const [runtime, worker] = selected.split("/");
+  const w = lastData?.workers.find((x) => x.runtime === runtime && x.worker === worker);
+  $("dr-name").textContent = worker;
+  $("dr-state").innerHTML = w ? `<span class="pill s-${w.state}">${STATE_LABEL[w.state] || w.state}</span>` : "";
+  $("dr-sub").textContent = runtime + (w && w.pid ? ` · PID ${w.pid}` : "")
+    + (w && w.account_total ? ` · ${w.account_total} tài khoản` : "");
+}
+
+function renderInfo() {
+  if (!detail || tab !== "info") return;
+  const w = detail.worker, now = detail.now, staleSec = Number($("stale-sec").value);
+  const live = w.state === "running";
+  const maxLv = MAX_LV[w.runtime] || 0;
+  const pct = w.exp_need > 0 && w.exp >= 0 ? Math.min(100, w.exp / w.exp_need * 100) : null;
+  const stat = (k, v, sub = "") => `<div class="stat"><span>${k}</span><b>${v}</b>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+  const stats = [
+    stat("Đang chơi", w.name && w.name !== "-" ? esc(w.name) : "—",
+      w.account !== "-" ? esc(w.account) + (w.account_total ? ` · TK ${w.account_index ?? "?"}/${w.account_total}` : "") : ""),
+    stat("Level", w.level ?? "—", pct === null ? "" : `${pct.toFixed(1)}% exp<div class="bar" style="width:100%"><i style="width:${pct}%"></i></div>`),
+    stat("Map · Task", esc(w.map) + (w.map_name && w.map_name !== "-" ? ` <span class="sub">${esc(w.map_name)}</span>` : ""), "task " + esc(w.task)),
+    stat("HP · Ô trống", esc(w.hp), w.bag_total > 0 ? `hành trang trống ${w.bag_free}/${w.bag_total}` : ""),
+    stat("Lượng · Xu", num(w.luong) + " · " + num(w.xu), "yên " + num(w.yen)),
+    stat("CPU · RAM", (w.cpu === null ? "—" : w.cpu.toFixed(1) + "%") + " · " + (w.rss_mb === null ? "—" : Math.round(w.rss_mb) + " MB")),
+    stat("Heartbeat", ageCell(w.updated_at, now, live, staleSec)),
+    stat("Tiến triển", ageCell(w.progress_at, now, live, staleSec)),
+  ].join("");
+
+  const accs = detail.accounts;
+  const allChars = accs.flatMap((a) => a.characters);
+  const lvs = allChars.map((c) => c.level).filter((v) => v !== null && v >= 0);
+  const doneCnt = accs.filter((a) => a.state === "done").length;
+  const head = `<div class="sec-head"><h3>Tài khoản (${accs.length})</h3><span class="sub">`
+    + `${doneCnt}/${accs.length} xong · ${allChars.length} nhân vật`
+    + (lvs.length ? ` · Lv ${Math.min(...lvs)}–${Math.max(...lvs)}` : "")
+    + (maxLv && lvs.length ? ` · ${lvs.filter((v) => v >= maxLv).length} đạt ${maxLv}` : "") + `</span></div>`;
+
+  const rowsHtml = accs.map((a) => {
+    const chars = a.characters.length ? a.characters.map((c) => {
+      const lv = c.level === null || c.level < 0 ? "?" : c.level;
+      const title = [c.phai, c.at ? "cập nhật " + ago(c.at, now).text : "", c.playing ? "đang chơi" : ""].filter(Boolean).join(" · ");
+      return `<span class="chip${c.playing ? " playing" : ""}" title="${esc(title)}">${c.playing ? `<i class="dot"></i>` : ""}`
+        + `${esc(c.name)} <span class="lv${maxLv && c.level >= maxLv ? " max" : ""}">Lv ${lv}</span>`
+        + `${c.phai ? `<span class="sub">${esc(c.phai)}</span>` : ""}</span>`;
+    }).join("") : `<span class="sub">${a.state === "pending" ? "chưa đăng nhập" : "chưa có dữ liệu nhân vật"}</span>`;
+    return `<tr class="${a.account === w.account ? "cur" : ""}">
+      <td class="num sub">${a.index ?? "—"}</td>
+      <td><b>${esc(a.account)}</b>${a.source === "log" ? `<div class="sub warn" title="Lấy từ dòng STATUS trong log (build cũ chưa ghi roster.properties)">từ log</div>` : ""}</td>
+      <td><span class="pill a-${a.state}">${ACC_LABEL[a.state] || a.state}</span></td>
+      <td><div class="chars">${chars}</div></td>
+    </tr>`;
+  }).join("");
+  const table = accs.length
+    ? `<div class="acc-table"><table><thead><tr><th class="num">#</th><th>Tài khoản</th><th>Trạng thái</th><th>Nhân vật · Level</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+    : `<div class="empty">Worker không có account.csv.</div>`;
+  const note = detail.has_roster ? "" : `<div class="note">Worker đang chạy build cũ chưa ghi <code>home/roster.properties</code>:
+    chỉ thấy nhân vật đã từng in dòng STATUS trong log hiện tại. Build lại worker để thấy đủ mọi nhân vật và level của từng tài khoản.</div>`;
+  const keep = $("dr-info").scrollTop;
+  $("dr-info").innerHTML = `<div class="stats">${stats}</div>${head}${table}${note}`;
+  $("dr-info").scrollTop = keep;
+}
+
+async function loadDetail() {
+  if (!selected || tab !== "info") return;
+  const key = selected;
+  const [runtime, worker] = key.split("/");
+  try {
+    const res = await fetch(`/api/worker?runtime=${encodeURIComponent(runtime)}&worker=${encodeURIComponent(worker)}`, {cache: "no-store"});
+    const data = await res.json();
+    if (key !== selected) return;
+    if (!res.ok) { $("dr-info").innerHTML = `<p class="bad">${esc(data.detail || res.status)}</p>`; return; }
+    detail = data; renderInfo();
+  } catch {}
+}
+
+async function loadLog() {
+  if (!selected || tab !== "log") return;
+  const key = selected;
+  const [runtime, worker] = key.split("/");
   const kind = $("log-kind").value;
   try {
-    const res = await fetch(`/api/log?runtime=${runtime}&worker=${worker}&kind=${kind}&lines=400`, {cache: "no-store"});
+    const res = await fetch(`/api/log?runtime=${encodeURIComponent(runtime)}&worker=${encodeURIComponent(worker)}&kind=${kind}&lines=400`, {cache: "no-store"});
     const data = await res.json();
+    if (key !== selected) return;
     const f = $("log-filter").value.trim().toLowerCase();
     let text = data.content || "";
     if (f) text = text.split("\n").filter((l) => l.toLowerCase().includes(f)).join("\n");
     const pre = $("log-body");
     pre.textContent = text || "(trống)";
+    $("log-info").textContent = "400 dòng cuối · " + new Date().toLocaleTimeString("vi-VN", {hour12: false});
     if ($("log-follow").checked) pre.scrollTop = pre.scrollHeight;
   } catch {}
 }
+
+// ---------------------------------------------------------------- sự kiện
 
 document.querySelectorAll("[data-rt]").forEach((b) => {
   b.classList.toggle("active", b.dataset.rt === runtimeFilter);
@@ -275,17 +470,34 @@ document.querySelectorAll("th[data-sort]").forEach((th) => th.onclick = () => {
 $("rows").onclick = (e) => {
   const tr = e.target.closest("tr[data-key]");
   if (!tr) return;
-  selected = tr.dataset.key;
-  $("log-panel").hidden = false;
-  $("log-title").textContent = "Log " + selected;
-  render(); loadLog();
+  openWorker(tr.dataset.key, e.target.closest("[data-open]")?.dataset.open);
 };
-$("log-close").onclick = () => { selected = null; $("log-panel").hidden = true; render(); };
+document.querySelectorAll(".tabs [data-tab]").forEach((b) => b.onclick = () => {
+  tab = b.dataset.tab; localSet("tab", tab); syncHash(); showTab();
+  if (tab === "info") { renderInfo(); loadDetail(); } else loadLog();
+});
+$("dr-close").onclick = closeWorker;
+$("dr-prev").onclick = () => stepWorker(-1);
+$("dr-next").onclick = () => stepWorker(1);
+document.addEventListener("keydown", (e) => {
+  if (e.target.matches("input, select, textarea") || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "Escape" && selected) closeWorker();
+  else if ((e.key === "j" || e.key === "J") && selected) stepWorker(1);
+  else if ((e.key === "k" || e.key === "K") && selected) stepWorker(-1);
+});
 $("log-kind").onchange = loadLog;
 $("log-filter").oninput = loadLog;
-$("stale-sec").onchange = render;
+$("stale-sec").onchange = () => { render(); renderInfo(); };
 
-refresh(); setInterval(refresh, 3000); setInterval(loadLog, 3000);
+// Mở lại worker đang xem sau khi tải lại trang (#w=uplevel35/worker-07&tab=log).
+(() => {
+  const m = new URLSearchParams(location.hash.slice(1));
+  if (m.get("w")) openWorker(m.get("w"), m.get("tab") === "log" ? "log" : "info");
+})();
+
+refresh();
+setInterval(refresh, 3000);
+setInterval(() => { loadDetail(); loadLog(); }, 3000);
 </script>
 </body>
 </html>

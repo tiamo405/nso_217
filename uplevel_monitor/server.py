@@ -5,6 +5,8 @@ Không điều khiển worker. Mỗi request đọc:
   - bot.pid / loop.pid + /proc  (tiến trình còn sống, CPU, RAM)
   - stdout.log                  (mtime; fallback dòng STATE khi chưa có status.properties)
   - account.csv + home/uplevel-progress.properties (tài khoản thứ mấy / tổng)
+  - home/roster.properties (UplevelStatus.java ghi: mọi nhân vật + level của từng tài khoản)
+    -> chỉ đọc ở /api/worker (chi tiết một worker), fallback dòng STATUS trong log.
 
 Chạy: python3 -m uplevel_monitor.server   (chỉ dùng thư viện chuẩn)
 Biến môi trường: UPLEVEL_MONITOR_HOST (mặc định 127.0.0.1), UPLEVEL_MONITOR_PORT (8090),
@@ -264,9 +266,113 @@ def collect() -> dict[str, object]:
     return {"now": now, "cpus": NUM_CPUS, "workers": workers}
 
 
-def read_log(runtime: str, worker: str, kind: str, lines: int) -> str:
+def _worker_dir(runtime: str, worker: str) -> Path:
     if runtime not in RUNTIMES or not WORKER_RE.match(worker):
         raise ValueError("runtime/worker không hợp lệ")
+    return RUNTIMES[runtime] / worker
+
+
+STATUS_LINE_RE = re.compile(
+    r"STATUS ts=(\S+ \S+) acc=(\S+) name=(\S+) level=(-?\d+)")
+
+
+def parse_roster(text: str | None) -> dict[str, dict[str, object]]:
+    """roster.properties -> {account: {"at": giây, "chars": [{name, level, phai}]}}."""
+    props = parse_properties(text)
+    out: dict[str, dict[str, object]] = {}
+    for key, value in props.items():
+        if not key.startswith("acc."):
+            continue
+        acc = key[4:]
+        chars = []
+        for item in value.split("|"):
+            parts = item.split(":")
+            if not parts[0]:
+                continue
+            chars.append({"name": parts[0], "level": _to_int(parts[1] if len(parts) > 1 else None),
+                          "phai": parts[2] if len(parts) > 2 else ""})
+        at = _to_int(props.get("at." + acc))
+        out[acc] = {"at": at / 1000 if at else None, "chars": chars}
+    return out
+
+
+def roster_from_log(log: Path) -> dict[str, dict[str, dict[str, object]]]:
+    """Fallback cho build cũ: dòng STATUS cuối của mỗi (account, nhân vật) trong 4 MB cuối log."""
+    text = tail_bytes(log, 4 * 1024 * 1024).decode("utf-8", errors="replace")
+    out: dict[str, dict[str, dict[str, object]]] = {}
+    for ts, acc, name, level in STATUS_LINE_RE.findall(text):
+        if name == "-" or acc == "-":
+            continue
+        try:
+            at = time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
+        except ValueError:
+            at = None
+        out.setdefault(acc, {})[name] = {"level": int(level), "at": at}
+    return out
+
+
+def worker_detail(runtime: str, worker: str) -> dict[str, object]:
+    """Snapshot + danh sách tài khoản của worker, mỗi tài khoản kèm nhân vật và level."""
+    worker_dir = _worker_dir(runtime, worker)
+    if not worker_dir.is_dir():
+        raise ValueError("không có worker này")
+    snap = worker_snapshot(runtime, worker_dir)
+    home = worker_dir / "home"
+    roster = parse_roster(_read(home / "roster.properties"))
+    from_log = roster_from_log(worker_dir / "stdout.log")
+    progress = parse_properties(_read(home / "uplevel-progress.properties"))
+    names = account_names(worker_dir / "account.csv") or []
+    done_all = (home / "worker.done").exists()
+    cur_acc = snap["account"]
+    cur_idx = (snap["account_index"] - 1) if snap["account_index"] else None
+    live = snap["state"] in ("running", "switching")
+
+    # Tài khoản trong roster/log nhưng không có trong account.csv (csv đã đổi) vẫn hiển thị ở cuối.
+    order = list(names) + [a for a in list(roster) + list(from_log) if a not in names]
+    order = list(dict.fromkeys(order))
+    accounts = []
+    for i, acc in enumerate(order):
+        chars: dict[str, dict[str, object]] = {}
+        rost = roster.get(acc)
+        source = "roster" if rost else None
+        for c in (rost or {}).get("chars", []):
+            chars[c["name"]] = {**c, "at": rost["at"]}
+        if acc == progress.get("account"):
+            for k in range(_to_int(progress.get("characterCount")) or 0):
+                n = progress.get(f"character.{k}", "")
+                if n and n not in chars:
+                    chars[n] = {"name": n, "level": None, "phai": "", "at": None}
+        for n, info in from_log.get(acc, {}).items():
+            c = chars.setdefault(n, {"name": n, "level": None, "phai": "", "at": None})
+            if c["at"] is None or (info["at"] and info["at"] > c["at"]):
+                c["level"], c["at"] = info["level"], info["at"]
+                source = source or "log"
+        playing = None
+        if acc == cur_acc and snap["name"] not in (None, "-"):
+            playing = snap["name"]
+            c = chars.setdefault(playing, {"name": playing, "level": None, "phai": "", "at": None})
+            if snap["level"] is not None:
+                c["level"], c["at"] = snap["level"], snap["updated_at"]
+        if done_all or (cur_idx is not None and i < cur_idx and acc in names):
+            acc_state = "done"
+        elif acc == cur_acc:
+            acc_state = "current" if live else "paused"
+        else:
+            acc_state = "pending" if acc in names else "removed"
+        accounts.append({
+            "index": i + 1 if acc in names else None,
+            "account": acc,
+            "state": acc_state,
+            "source": source,
+            "playing": playing,
+            "characters": [{**c, "playing": c["name"] == playing} for c in chars.values()],
+        })
+    return {"now": time.time(), "worker": snap, "accounts": accounts,
+            "has_roster": bool(roster)}
+
+
+def read_log(runtime: str, worker: str, kind: str, lines: int) -> str:
+    _worker_dir(runtime, worker)
     name = "java-errors.log" if kind == "error" else "stdout.log"
     data = tail_bytes(RUNTIMES[runtime] / worker / name, 512 * 1024).decode("utf-8", errors="replace")
     return "\n".join(data.splitlines()[-max(1, min(lines, 2000)):])
@@ -299,6 +405,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, (STATIC_DIR / "index.html").read_bytes(), "text/html; charset=utf-8")
             elif url.path == "/api/workers":
                 self._json(collect())
+            elif url.path == "/api/worker":
+                self._json(worker_detail(query.get("runtime", ""), query.get("worker", "")))
             elif url.path == "/api/log":
                 text = read_log(query.get("runtime", ""), query.get("worker", ""),
                                 query.get("kind", "stdout"), int(query.get("lines", "300")))

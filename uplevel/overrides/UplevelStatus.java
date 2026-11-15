@@ -123,7 +123,10 @@ public final class UplevelStatus {
         prop(p, "mapName", inGame && TileMap.mapName != null ? TileMap.mapName : "-");
         prop(p, "zone", inGame ? String.valueOf(TileMap.zoneID) : "-");
         prop(p, "task", task);
-        writeAtomic(p.toString());
+        writeAtomic("status.properties", p.toString());
+        if (inGame) {
+            updateRoster(account, me, now);
+        }
 
         String logKey = name + "|" + level + "|" + (inGame ? String.valueOf(me.ctaskId) : "-");
         if (!logKey.equals(lastLogKey) || now - lastLogAt >= LOG_INTERVAL_MS) {
@@ -160,10 +163,86 @@ public final class UplevelStatus {
         out.append(key).append('=').append(v).append('\n');
     }
 
-    private static void writeAtomic(String content) throws Exception {
+    private static String lastRosterKey = "";
+
+    /**
+     * {@code ${user.home}/roster.properties}: mọi nhân vật của từng tài khoản worker đã đăng nhập
+     * ({@code acc.<user>=tên:level:phái|...}, {@code at.<user>=ms}). Danh sách + level lấy từ gói chọn
+     * nhân vật của server (SelectCharScr), level nhân vật đang chơi lấy trực tiếp. Mỗi nhân vật một JVM
+     * nên phải đọc file cũ rồi gộp; chỉ ghi khi nội dung đổi.
+     */
+    private static void updateRoster(String account, Char me, long now) throws Exception {
+        if (account == null || account.length() == 0 || "-".equals(account)) {
+            return;
+        }
+        SelectCharScr sel = SelectCharScr.gameAF();
+        String[] names = sel.name;
+        int[] levels = sel.level;
+        String[] phai = sel.phai;
+        StringBuilder chars = new StringBuilder();
+        boolean hasMe = false;
+        for (int i = 0; names != null && i < names.length; i++) {
+            if (names[i] == null || names[i].length() == 0) {
+                continue;
+            }
+            int lv = levels != null && i < levels.length ? levels[i] : -1;
+            if (names[i].equals(me.cName)) {
+                lv = me.clevel;
+                hasMe = true;
+            }
+            rosterEntry(chars, names[i], lv, phai != null && i < phai.length ? phai[i] : "");
+        }
+        if (!hasMe) {
+            rosterEntry(chars, me.cName, me.clevel, "");
+        }
+        String key = account + "=" + chars;
+        if (key.equals(lastRosterKey)) {
+            return;
+        }
+        File file = new File(System.getProperty("user.home", "."), "roster.properties");
+        java.util.LinkedHashMap old = new java.util.LinkedHashMap();
+        if (file.isFile()) {
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream(file), "UTF-8"));
+            try {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    int eq = line.indexOf('=');
+                    if (eq > 0 && !line.startsWith("#")) {
+                        old.put(line.substring(0, eq), line.substring(eq + 1));
+                    }
+                }
+            } finally {
+                r.close();
+            }
+        }
+        old.put("acc." + account, chars.toString());
+        old.put("at." + account, String.valueOf(now));
+        StringBuilder out = new StringBuilder(256);
+        java.util.Iterator it = old.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry e = (java.util.Map.Entry) it.next();
+            prop(out, (String) e.getKey(), (String) e.getValue());
+        }
+        writeAtomic("roster.properties", out.toString());
+        lastRosterKey = key;
+    }
+
+    private static void rosterEntry(StringBuilder out, String name, int level, String phai) {
+        if (out.length() > 0) {
+            out.append('|');
+        }
+        out.append(clean(name)).append(':').append(level).append(':').append(clean(phai));
+    }
+
+    private static String clean(String s) {
+        return s == null ? "" : s.replace('|', ' ').replace(':', ' ').replace('=', ' ').trim();
+    }
+
+    private static void writeAtomic(String fileName, String content) throws Exception {
         File dir = new File(System.getProperty("user.home", "."));
-        File target = new File(dir, "status.properties");
-        File tmp = new File(dir, "status.properties.tmp");
+        File target = new File(dir, fileName);
+        File tmp = new File(dir, fileName + ".tmp");
         Writer w = new OutputStreamWriter(new FileOutputStream(tmp), "UTF-8");
         try {
             w.write(content);
