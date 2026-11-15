@@ -139,6 +139,8 @@ tr.problem td:nth-child(2) { box-shadow: inset 3px 0 0 var(--danger); }
 .bar.big { height: 22px; border-radius: 8px; }
 .bar.big i { border-radius: 8px; }
 .bar.big b { position: relative; display: block; text-align: center; font-size: .78rem; line-height: 22px; text-shadow: 0 1px 2px #000; }
+.money { display: flex; flex-direction: column; font-size: .78rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.money small { font-size: .7rem; }
 .res { display: flex; flex-direction: column; font-size: .76rem; white-space: nowrap; }
 .result { display: flex; gap: 8px; font-weight: 700; white-space: nowrap; }
 .event { display: flex; flex-direction: column; gap: 2px; max-width: 420px; cursor: pointer; }
@@ -197,6 +199,39 @@ tr.problem td:nth-child(2) { box-shadow: inset 3px 0 0 var(--danger); }
 .log-empty { color: var(--muted); padding: 20px; text-align: center; font-family: inherit; }
 .jump { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #07130f; border: 0; border-radius: 999px; padding: 6px 14px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px #000a; }
 .build-output { flex: 1; margin: 0; overflow: auto; background: #05080c; border: 1px solid var(--line); border-radius: 9px; padding: 12px; white-space: pre-wrap; word-break: break-word; color: #bfe7d7; font-family: var(--mono); font-size: .78rem; }
+
+/* ---------- tab Thông tin (tài khoản + nhân vật) ---------- */
+#workers-body tr[data-worker] { cursor: pointer; }
+#workers-body tr[data-worker]:hover td { background: #101a28; }
+.info-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 12px; }
+.istats { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.istat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 11px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.istat > span { color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
+.istat > b { font-size: .98rem; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.istat > small { color: var(--muted); font-size: .75rem; overflow-wrap: anywhere; }
+.lv { font-weight: 800; color: var(--info); font-variant-numeric: tabular-nums; }
+.info-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.info-head h3 { margin: 0; font-size: .95rem; }
+.acc-table { border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; background: var(--panel); flex-shrink: 0; }
+.acc-table table { font-size: .82rem; }
+.acc-table tr:first-child th { border-top: 0; }
+.acc-table tr.cur td { background: #12243a; }
+.acc-table td:last-child { min-width: 260px; }
+.astate, .cstate { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: .7rem; font-weight: 800; white-space: nowrap; }
+.as-done, .cs-done { background: var(--info-dark); color: var(--info); }
+.as-current, .cs-playing { background: var(--accent-dark); color: #6ee7b7; }
+.as-paused, .cs-stopped { background: var(--warning-dark); color: var(--warning); }
+.as-pending, .cs-pending { background: #1b2433; color: var(--muted); }
+.as-removed, .cs-skipped { background: #2a1b1f; color: #ffabb2; }
+.char { padding: 6px 0; border-bottom: 1px dashed var(--line); display: flex; flex-direction: column; gap: 2px; }
+.char:first-child { padding-top: 0; }
+.char:last-child { border-bottom: 0; padding-bottom: 0; }
+.char-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.char-line { font-size: .76rem; overflow-wrap: anywhere; }
+.char.c-pending .char-head b { color: var(--muted); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px #57d7a233; }
+.info-note { margin: 0; padding: 9px 11px; border-radius: 8px; border: 1px dashed var(--line); font-size: .78rem; color: var(--muted); }
+#pane-info .log-controls select { min-width: 140px; }
 
 /* ---------- toasts & dialog ---------- */
 .toasts { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 40; width: min(520px, calc(100vw - 32px)); }

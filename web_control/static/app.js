@@ -149,6 +149,7 @@ async function refreshStatus() {
     renderWorkers();
     applyControlState();
     if ($("#log-drawer").classList.contains("open")) renderLogInfo();
+    if (infoVisible()) { renderInfo(); loadInfo(); }
     $("#last-refresh").textContent = `cập nhật ${new Date().toLocaleTimeString("vi-VN")}`;
     const job = state.data.active_job;
     if (job && !buildStream) watchBuild(job, false);
@@ -357,8 +358,8 @@ async function saveSettings(event) {
 // Workers table (cập nhật theo dòng, không vẽ lại cả bảng mỗi 5s)
 // ====================================================================
 const COLUMNS = {
-  nvhn: ["", "Worker", "Trạng thái", "Nhân vật", "Tiến độ", "Tài nguyên", "Sự kiện cuối", ""],
-  ta_thu: ["", "Worker", "Trạng thái", "Nhân vật", "Boss", "HP / MP", "Kết quả", "Tài nguyên", "Sự kiện cuối", ""],
+  nvhn: ["", "Worker", "Trạng thái", "Nhân vật", "Tiến độ", "Yên · Xu · Lượng", "Tài nguyên", "Sự kiện cuối", ""],
+  ta_thu: ["", "Worker", "Trạng thái", "Nhân vật", "Boss", "HP / MP", "Kết quả", "Yên · Xu · Lượng", "Tài nguyên", "Sự kiện cuối", ""],
 };
 const STATE_LABEL = {
   RUNNING: "Đang chạy", STOPPED: "Dừng", PAUSED: "Tạm dừng", DONE: "Xong", STALE_PID: "PID cũ", ERROR: "Lỗi",
@@ -409,6 +410,23 @@ function eventCell(worker) {
       <span class="age ${stale ? "stale" : ""}" title="stdout.log cập nhật ${esc(formatTimestamp(worker.last_log_at))}">${esc(formatAge(age))}${ev?.ts ? ` · ${esc(ev.ts)}` : ""}</span>
       <span class="msg" title="${esc(msg)}">${esc(msg)}</span>
     </div>`;
+}
+
+// "6219346(+466)" -> {n: 6219346, delta: "+466"}
+function money(value) {
+  const m = String(value ?? "").match(/^(-?\d+)(?:\(([+-]?\d+)\))?/);
+  return m ? { n: Number(m[1]), delta: m[2] || "" } : null;
+}
+
+function moneyCell(worker) {
+  const src = state.tab === "ta_thu" ? worker.fight : worker.nvhn_status;
+  const items = [["yen", "yên"], ["xu", "xu"], ["luong", "lượng"]]
+    .map(([key, label]) => [label, money(src?.[key])]).filter(([, v]) => v);
+  if (!items.length) return `<span class="muted">—</span>`;
+  return `<div class="money">${items.map(([label, v]) =>
+    `<span title="${label} ${v.n.toLocaleString("vi-VN")}${v.delta ? ` (${v.delta} trong 30s)` : ""}">` +
+    `<b>${compact(v.n)}</b> <span class="muted">${label}</span>` +
+    (v.delta ? ` <small class="${v.delta.startsWith("-") ? "bad" : "ok"}">${esc(v.delta)}</small>` : "") + `</span>`).join("")}</div>`;
 }
 
 function resourceCell(worker) {
@@ -477,6 +495,7 @@ function actionsFor(worker) {
 function actionsCell(worker) {
   const buttons = actionsFor(worker).map(([action, icon, title]) =>
     `<button class="btn icon ${action === "stop" ? "danger" : ""}" data-action="${action}" title="${title}" ${state.buildActive ? "disabled" : ""}>${icon}</button>`);
+  buttons.push(`<button class="btn icon ghost" data-action="info" title="Thông tin tài khoản & nhân vật">ℹ️</button>`);
   buttons.push(`<button class="btn icon ghost" data-action="log" title="Xem log">📜</button>`);
   return `<div class="row-actions">${buttons.join("")}</div>`;
 }
@@ -500,9 +519,9 @@ function rowCells(worker) {
   const sel = `<input type="checkbox" data-select ${state.selected.has(worker.name) ? "checked" : ""} aria-label="Chọn ${esc(worker.name)}">`;
   const charHtml = esc(worker.char_name || "—");
   if (state.tab === "ta_thu") {
-    return [sel, nameHtml, stateHtml, charHtml, bossCell(worker), hpCell(worker), resultCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
+    return [sel, nameHtml, stateHtml, charHtml, bossCell(worker), hpCell(worker), resultCell(worker), moneyCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
   }
-  return [sel, nameHtml, stateHtml, charHtml, progressCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
+  return [sel, nameHtml, stateHtml, charHtml, progressCell(worker), moneyCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
 }
 
 function renderWorkers() {
@@ -731,9 +750,15 @@ function closeDrawer() {
 
 function showPane(pane) {
   for (const tab of $$(".drawer-tabs .tab")) tab.classList.toggle("active", tab.dataset.pane === pane);
+  $("#pane-info").classList.toggle("hidden", pane !== "info");
   $("#pane-log").classList.toggle("hidden", pane !== "log");
   $("#pane-build").classList.toggle("hidden", pane !== "build");
   if (pane === "build") $("#build-badge").classList.add("hidden");
+  if (pane === "info") {
+    if (!info.worker) { info.worker = log.worker || infoWorkers()[0]?.name || null; info.runtime = log.worker ? log.runtime : info.runtime; }
+    renderInfo();
+    loadInfo();
+  }
 }
 
 function setSeg(id, value) {
@@ -975,6 +1000,163 @@ function renderFight() {
     </div>`;
 }
 
+// ====================================================================
+// Tab Thông tin: mọi tài khoản của worker + từng nhân vật (level, map, NV, yên...)
+// ====================================================================
+const info = { worker: null, runtime: "nvhn", detail: null, error: null, seq: 0 };
+const ACC_LABEL = { done: "Xong", current: "Đang chạy", paused: "Dừng giữa chừng", pending: "Chờ", removed: "Không còn trong CSV" };
+const CHAR_LABEL = { playing: "Đang chơi", done: "Xong", skipped: "Bỏ qua", stopped: "Dừng dở", pending: "Chưa chạy" };
+
+function infoWorkers(runtime = info.runtime) {
+  return runtime === "ta_thu" ? (state.data?.ta_thu_runtime?.workers || []) : (state.data?.workers || []);
+}
+
+function infoVisible() {
+  return $("#log-drawer").classList.contains("open") && !$("#pane-info").classList.contains("hidden");
+}
+
+function openInfo(worker, runtime) {
+  if (info.worker !== worker || info.runtime !== runtime) info.detail = null;
+  info.worker = worker;
+  info.runtime = runtime;
+  openDrawer("info");
+}
+
+function stepInfoWorker(delta) {
+  const names = infoWorkers().map((w) => w.name);
+  if (!names.length) return;
+  const index = names.indexOf(info.worker);
+  const next = names[(index < 0 ? 0 : index + delta + names.length) % names.length];
+  openInfo(next, info.runtime);
+}
+
+async function loadInfo() {
+  if (!info.worker || !infoVisible()) return;
+  const seq = ++info.seq;
+  try {
+    const data = await api(`/api/workers/${encodeURIComponent(info.worker)}/detail?runtime=${info.runtime}`);
+    if (seq !== info.seq) return;
+    info.detail = data;
+    info.error = null;
+  } catch (error) {
+    if (seq !== info.seq) return;
+    info.error = error.message;
+  }
+  renderInfo();
+}
+
+function num(value) {
+  if (value == null || value === "") return "—";
+  const n = Number(value);
+  return Number.isFinite(n) ? compact(n) : esc(value);
+}
+
+function charLine(c, runtime) {
+  const parts = [];
+  if (runtime === "ta_thu") {
+    parts.push(`<span class="ok" title="Mình kết liễu">✔ ${c.kills}</span> <span class="warn" title="Người khác kết liễu">✖ ${c.lost}</span> <span class="bad" title="Số lần chết">☠ ${c.deaths}</span>`);
+    if (c.task_total) parts.push(`task ${c.task_done}/${c.task_total}`);
+  } else if (c.nvhn_max) {
+    parts.push(`NV <b>${c.nvhn}/${c.nvhn_max}</b>` + (c.progress_max ? ` · mục tiêu ${c.progress}/${c.progress_max}` : ""));
+  }
+  if (c.map) parts.push(`map ${esc(c.map)}`);
+  if (c.hp_max) parts.push(`HP ${c.hp}/${c.hp_max}`);
+  if (c.yen != null) parts.push(`yên ${num(c.yen)} · xu ${num(c.xu)} · lượng ${num(c.luong)}`);
+  return parts.join(" · ");
+}
+
+function charHtml(c, runtime) {
+  const lv = c.level == null ? "?" : c.level;
+  const line = charLine(c, runtime);
+  const extra = [c.state === "playing" && c.activity ? esc(c.activity) : "", c.note ? esc(c.note) : "",
+    c.at ? `cập nhật ${esc(c.at)}` : ""].filter(Boolean).join(" · ");
+  return `<div class="char c-${c.state}">
+      <div class="char-head">${c.state === "playing" ? `<i class="live-dot"></i>` : ""}<b>${esc(c.name)}</b>
+        <span class="lv">Lv ${lv}</span>${c.phai ? `<span class="muted small">${esc(c.phai)}</span>` : ""}
+        <span class="cstate cs-${c.state}">${CHAR_LABEL[c.state] || esc(c.state)}</span></div>
+      ${line ? `<div class="char-line">${line}</div>` : ""}
+      ${extra ? `<div class="char-line muted">${extra}</div>` : ""}
+    </div>`;
+}
+
+function infoStat(label, value, sub = "") {
+  return `<div class="istat"><span>${label}</span><b>${value}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
+}
+
+function renderInfo() {
+  if (!infoVisible()) return;
+  const list = infoWorkers();
+  const select = $("#info-worker");
+  const names = list.map((w) => w.name);
+  if (info.worker && !names.includes(info.worker)) names.unshift(info.worker);
+  const options = names.map((name) => {
+    const w = list.find((x) => x.name === name);
+    return `<option value="${esc(name)}">${esc(name)}${w?.char_name ? ` · ${esc(w.char_name)}` : ""}</option>`;
+  }).join("") || `<option value="">(chưa có worker)</option>`;
+  if (select.dataset.html !== options) { select.innerHTML = options; select.dataset.html = options; }
+  select.value = info.worker || "";
+  setSeg("#info-runtime", info.runtime);
+
+  const body = $("#info-body");
+  if (!info.worker) { body.innerHTML = `<p class="muted small">Chưa có worker.</p>`; return; }
+  if (info.error && !info.detail) { body.innerHTML = `<p class="bad small">${esc(info.error)}</p>`; return; }
+  const d = info.detail;
+  if (!d || d.worker !== info.worker || d.runtime !== info.runtime) {
+    body.innerHTML = `<p class="muted small">Đang tải…</p>`;
+    return;
+  }
+  const w = list.find((x) => x.name === info.worker) || {};
+  const runtime = info.runtime;
+  const accs = d.accounts || [];
+  const playing = accs.flatMap((a) => a.characters).find((c) => c.state === "playing");
+  const curAcc = accs.find((a) => a.account === d.current_account);
+  const accIndex = w.state === "DONE" ? accs.length : (curAcc?.index ?? w.account?.index);
+
+  const stats = [
+    infoStat("Trạng thái", `<span class="state st-${(w.state || "").toLowerCase()}">${esc(STATE_LABEL[w.state] || w.state || "—")}</span>`,
+      w.pid ? `PID ${w.pid} · ${esc(w.elapsed || "")}` : ""),
+    infoStat("Tài khoản", `${accIndex ?? "?"}/${accs.length || w.accounts || "?"}`, esc(d.current_account || "")),
+    infoStat("Đang chơi", playing ? `${esc(playing.name)} <span class="lv">Lv ${playing.level ?? "?"}</span>` : "—",
+      playing?.activity ? esc(playing.activity) : ""),
+  ];
+  if (runtime === "ta_thu") {
+    stats.push(infoStat("Kết quả phiên", `<span class="ok">✔ ${w.kills ?? 0}</span> <span class="warn">✖ ${w.lost ?? 0}</span> <span class="bad">☠ ${w.deaths ?? 0}</span>`,
+      w.fight?.task_max ? `task ${w.fight.task}/${w.fight.task_max}` : ""));
+  } else {
+    stats.push(infoStat("NVHN", playing?.nvhn_max ? `${playing.nvhn}/${playing.nvhn_max}` : "—",
+      playing?.progress_max ? `mục tiêu ${playing.progress}/${playing.progress_max}` : ""));
+  }
+  stats.push(
+    infoStat("Map · HP", playing?.map ? esc(playing.map) : "—", playing?.hp_max ? `HP ${playing.hp}/${playing.hp_max}` : ""),
+    infoStat("Yên · Xu · Lượng", playing?.yen != null ? `${num(playing.yen)} · ${num(playing.xu)} · ${num(playing.luong)}` : "—"),
+    infoStat("CPU · RAM", w.pid ? `${w.cpu_percent ?? "—"}% · ${w.rss_mb ?? "—"} MB` : "—"),
+    infoStat("Log cuối", esc(formatAge(w.last_log_age_seconds)), esc(formatTimestamp(w.last_log_at))),
+  );
+
+  const chars = accs.flatMap((a) => a.characters);
+  const lvs = chars.map((c) => c.level).filter((v) => v != null);
+  const doneAcc = accs.filter((a) => a.state === "done").length;
+  const doneChar = chars.filter((c) => c.state === "done").length;
+  const head = `<div class="info-head"><h3>Tài khoản (${accs.length})</h3><span class="muted small">` +
+    `${doneAcc}/${accs.length} xong · ${chars.length} nhân vật (${doneChar} xong)` +
+    (lvs.length ? ` · Lv ${Math.min(...lvs)}–${Math.max(...lvs)}` : "") + `</span></div>`;
+  const rows = accs.map((a) => `<tr class="${a.account === d.current_account ? "cur" : ""}">
+      <td class="muted">${a.index ?? "—"}</td>
+      <td><b>${esc(a.account)}</b>${a.at ? `<div class="muted small">đăng nhập ${esc(a.at)}</div>` : ""}</td>
+      <td><span class="astate as-${a.state}">${ACC_LABEL[a.state] || esc(a.state)}</span></td>
+      <td>${a.characters.length ? a.characters.map((c) => charHtml(c, runtime)).join("")
+        : `<span class="muted small">${a.state === "pending" ? "chưa đăng nhập" : "chưa có dữ liệu nhân vật trong log"}</span>`}</td>
+    </tr>`).join("");
+  const table = accs.length
+    ? `<div class="acc-table"><table><thead><tr><th>#</th><th>Tài khoản</th><th>Trạng thái</th><th>Nhân vật</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : `<p class="muted small">Worker không có account.csv.</p>`;
+  const note = d.has_roster ? "" : `<p class="info-note">Log chưa có dòng <code>AUTO ROSTER</code> (bản build cũ): chỉ thấy nhân vật đã chạy trong log.
+    Build lại để thấy đủ mọi nhân vật và level của từng tài khoản ngay khi đăng nhập.</p>`;
+  const keep = body.scrollTop;
+  body.innerHTML = `<div class="istats">${stats.join("")}</div>${head}${table}${note}`;
+  body.scrollTop = keep;
+}
+
 function copyVisibleLog() {
   const text = log.rows.filter((r) => rowVisible(r.entry))
     .map((r) => `${r.entry.ts ? `${r.entry.ts} ` : ""}${r.entry.msg}${r.count > 1 ? ` (×${r.count})` : ""}`).join("\n");
@@ -1074,10 +1256,12 @@ function wire() {
     const button = event.target.closest("button[data-action]");
     if (button) {
       if (button.dataset.action === "log") openLog(name, state.tab);
+      else if (button.dataset.action === "info") openInfo(name, state.tab);
       else workerAction(name, button.dataset.action, button);
       return;
     }
     if (event.target.closest(".event")) openLog(name, state.tab);
+    else if (!event.target.closest("a, input, select, button")) openInfo(name, state.tab);
   });
   for (const button of $$("#bulk-bar [data-bulk]")) {
     button.addEventListener("click", () => {
@@ -1092,6 +1276,23 @@ function wire() {
     if (e.key === "Escape" && $("#log-drawer").classList.contains("open") && !$("#confirm-dialog").open) closeDrawer();
   });
   for (const tab of $$(".drawer-tabs .tab")) tab.addEventListener("click", () => showPane(tab.dataset.pane));
+  $("#info-worker").addEventListener("change", (e) => openInfo(e.target.value, info.runtime));
+  $("#info-prev").addEventListener("click", () => stepInfoWorker(-1));
+  $("#info-next").addEventListener("click", () => stepInfoWorker(1));
+  $("#info-open-log").addEventListener("click", () => { if (info.worker) openLog(info.worker, info.runtime); });
+  for (const button of $$("#info-runtime button")) {
+    button.addEventListener("click", () => {
+      const runtime = button.dataset.value;
+      const list = infoWorkers(runtime);
+      const worker = list.some((w) => w.name === info.worker) ? info.worker : (list[0]?.name || info.worker);
+      openInfo(worker, runtime);
+    });
+  }
+  document.addEventListener("keydown", (e) => {
+    if (!infoVisible() || e.ctrlKey || e.metaKey || e.altKey || e.target.closest("input, select, textarea")) return;
+    if (e.key === "j" || e.key === "J") stepInfoWorker(1);
+    else if (e.key === "k" || e.key === "K") stepInfoWorker(-1);
+  });
   $("#log-worker").addEventListener("change", (e) => { log.worker = e.target.value; connectLog(); });
   for (const button of $$("#log-runtime button")) {
     button.addEventListener("click", () => {

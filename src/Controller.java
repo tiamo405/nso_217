@@ -3392,6 +3392,16 @@ public final class Controller {
                             }
                         }
 
+                        // Web control đọc dòng này để hiện mọi nhân vật + level của tài khoản (kể cả chưa chơi).
+                        StringBuffer rosterLog = new StringBuffer("AUTO ROSTER: chars=");
+                        for (byte rosterIdx = 0; rosterIdx < var36; ++rosterIdx) {
+                            if (rosterIdx > 0) {
+                                rosterLog.append('|');
+                            }
+                            rosterLog.append(var49.name[rosterIdx]).append(':').append(var49.level[rosterIdx])
+                                    .append(':').append(var49.phai[rosterIdx] == null ? "" : var49.phai[rosterIdx]);
+                        }
+                        System.out.println(rosterLog.toString());
                         AccountAutoManager.onCharacterList(var49.name);
                         SelectCharScr.gameAF().update();
                         GameCanvas.gameAJ();

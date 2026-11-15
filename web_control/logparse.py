@@ -158,6 +158,8 @@ def parse_fight(msg: str) -> dict[str, Any]:
             data["task_max"] = maximum
         elif key == "sk":
             data["skill"] = value
+        elif key in ("yen", "xu", "luong"):
+            data[key] = value
     return data
 
 

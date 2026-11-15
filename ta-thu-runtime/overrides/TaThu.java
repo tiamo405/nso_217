@@ -601,7 +601,8 @@ public final class TaThu extends Auto {
               + " atk=" + this.missionAttackCount + "(" + formatAgoSeconds(attackAgo) + ")"
               + " ack=" + this.serverAttackAckCount + "(" + formatAgoSeconds(ackAgo) + "," + ackDetail + ")"
               + " state=" + skillState
-              + " task=" + taskStr);
+              + " task=" + taskStr
+              + " yen=" + me.yen + " xu=" + me.xu + " luong=" + me.luong);
    }
 
    /** Được Auto gọi đúng tại thời điểm gửi packet đánh mob. */

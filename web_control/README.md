@@ -77,11 +77,30 @@ Không còn "Restart worker định kỳ" riêng (mặc định 0): việc chạ
 - Tick nhiều worker để **Start / Restart / Stop hàng loạt**.
 - Cột Worker hiện **TK i/n · username**: worker đang chạy tài khoản thứ i trên n tài
   khoản của nó (lấy từ dòng "đăng nhập tài khoản/account" trong log).
+- Cột **Yên · Xu · Lượng** của nhân vật đang chơi (NVHN lấy từ dòng `AUTO NVHN STATUS`, kèm mức
+  tăng/giảm trong 30 giây; Tà Thú lấy từ `yen= xu= luong=` cuối dòng `AUTO TA THU FIGHT`, cần build lại
+  Tà Thú). Rê chuột để xem số đầy đủ.
 - NVHN: tiến độ `NV x/20`, mục tiêu, map. Tà Thú: thanh máu boss, map/khu (🔒 đã
   khoá, 🔎 đang tìm), HP/MP, kết quả ✔ kết liễu / ✖ bị cướp / ☠ chết (tính trong
   phiên chạy hiện tại).
 - **Sự kiện cuối** là dòng log có ý nghĩa gần nhất (bỏ qua dòng kỹ thuật), có màu
   theo mức độ và thời gian "x giây trước". Bấm vào để mở log.
+
+### Tab Thông tin (tài khoản & nhân vật)
+
+Bấm một dòng worker (hoặc nút ℹ️) để mở tab **Thông tin** ở khung bên phải (◀ ▶ hoặc phím `J`/`K`
+đổi worker, chọn NVHN / Tà Thú, nút 📜 Log mở log worker đó):
+
+- Thẻ tóm tắt: trạng thái, tài khoản thứ i/n, nhân vật đang chơi + level, NV x/20 (NVHN) hoặc
+  ✔/✖/☠ + task (Tà Thú), map, HP, yên/xu/lượng, CPU/RAM, log cuối.
+- Bảng mọi tài khoản trong `account.csv` của worker (Xong / Đang chạy / Dừng giữa chừng / Chờ),
+  mỗi tài khoản liệt kê từng nhân vật: level, phái, trạng thái (Đang chơi / Xong / Bỏ qua / Dừng dở /
+  Chưa chạy), NV, mục tiêu, map, HP, yên/xu/lượng, lý do bỏ qua, giờ cập nhật cuối.
+
+Nguồn: `GET /api/workers/{worker}/detail?runtime=nvhn|ta_thu` (`web_control/workerdetail.py`) đọc 4 MB
+cuối `stdout.log` — dòng đăng nhập tài khoản, `chọn nhân vật`, `AUTO NVHN STATUS`, kết quả Tà Thú — và
+dòng `AUTO ROSTER: chars=ten:level:phai|...` do `src/Controller.java` in khi server gửi danh sách nhân
+vật. Worker chạy bản build cũ chưa có dòng ROSTER thì chỉ thấy nhân vật đã chạy; build lại để thấy đủ.
 
 `Stop` tại một worker tạo marker `.paused`, dừng Java và giữ supervisor chạy cho
 các worker còn lại; `Start` xoá marker và chạy lại. Áp dụng cho cả NVHN và Tà Thú.
@@ -139,7 +158,7 @@ Không nên chạy hai supervisor cùng lúc. Dashboard nhận diện supervisor
 ## Kiểm thử
 
 ```bash
-python3 -m unittest -v tests.test_web_control tests.test_logparse
+python3 -m unittest -v tests.test_web_control tests.test_logparse tests.test_workerdetail
 bash -n optimized-runtime/scripts/*.sh
 python3 -m compileall -q web_control tests
 ```

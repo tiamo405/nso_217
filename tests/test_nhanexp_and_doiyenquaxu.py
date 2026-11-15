@@ -93,6 +93,7 @@ class NhanExpTest(unittest.TestCase):
             argv = [
                 "nhanexp_and_doiyenquaxu.py",
                 str(input_csv),
+                "--luong", "1",
                 "--retry-attempts", "1",
                 "--retry-delay", "0",
                 "--failed-csv", str(failed_csv),
@@ -261,9 +262,9 @@ class NhanExpTest(unittest.TestCase):
         )
 
     def test_exp_flag_defaults_on_and_can_be_disabled(self):
-        with patch.object(sys, "argv", ["nhanexp_and_doiyenquaxu.py"]):
+        with patch.object(sys, "argv", ["nhanexp_and_doiyenquaxu.py", "--luong", "1"]):
             self.assertTrue(target.build_parser().parse_args().receive_exp)
-        with patch.object(sys, "argv", ["nhanexp_and_doiyenquaxu.py", "--bo-qua-exp"]):
+        with patch.object(sys, "argv", ["nhanexp_and_doiyenquaxu.py", "--luong", "1", "--bo-qua-exp"]):
             self.assertFalse(target.build_parser().parse_args().receive_exp)
 
 

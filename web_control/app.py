@@ -23,6 +23,7 @@ from .logparse import (
 )
 from .manager import RUNTIMES, ControlError, HeadlessManager
 from .scheduler import ScheduleManager
+from .workerdetail import worker_detail
 
 Runtime = Literal["nvhn", "ta_thu"]
 LogKind = Literal["stdout", "error", "supervisor"]
@@ -439,6 +440,16 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/api/workers/{worker_name}/detail")
+    async def worker_info(worker_name: str, runtime: Runtime = "nvhn") -> dict[str, object]:
+        """Tab Thông tin: mọi tài khoản của worker, từng nhân vật kèm level/map/NV/yên (từ stdout.log)."""
+        stdout_log = manager.log_path(worker_name, "stdout", runtime=runtime)
+        data = await (manager.ta_thu_status() if runtime == "ta_thu" else manager.status())
+        worker = next((w for w in data.get("workers") or [] if w.get("name") == worker_name), None)
+        detail = await asyncio.to_thread(worker_detail, worker, stdout_log.parent, stdout_log)
+        detail["runtime"] = runtime
+        return detail
 
     @app.get("/api/workers/{worker_name}/logs")
     async def worker_logs(

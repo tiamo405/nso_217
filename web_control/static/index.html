@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NSO Worker Control</title>
-  <link rel="stylesheet" href="/static/style.css?v=13">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
   <main class="shell">
@@ -134,10 +134,24 @@
   <aside id="log-drawer" class="drawer" aria-hidden="true">
     <div class="drawer-head">
       <div class="drawer-tabs">
+        <button class="tab" data-pane="info">Thông tin</button>
         <button class="tab active" data-pane="log">Log worker</button>
         <button class="tab" data-pane="build">Build <span id="build-badge" class="dot hidden"></span></button>
       </div>
       <button id="drawer-close" class="btn ghost sm" title="Đóng (Esc)">✕</button>
+    </div>
+
+    <div class="pane hidden" id="pane-info">
+      <div class="log-controls">
+        <button id="info-prev" class="btn ghost sm" title="Worker trước (K)">◀</button>
+        <select id="info-worker" aria-label="Worker"></select>
+        <button id="info-next" class="btn ghost sm" title="Worker sau (J)">▶</button>
+        <div class="seg" id="info-runtime">
+          <button data-value="nvhn">NVHN</button><button data-value="ta_thu">Tà Thú</button>
+        </div>
+        <button id="info-open-log" class="btn ghost sm">📜 Log</button>
+      </div>
+      <div id="info-body" class="info-body"><p class="muted small">Chọn một worker.</p></div>
     </div>
 
     <div class="pane" id="pane-log">
@@ -197,6 +211,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=14" defer></script>
+  <script src="/static/app.js?v=16" defer></script>
 </body>
 </html>
