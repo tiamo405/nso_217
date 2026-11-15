@@ -19,16 +19,27 @@ final class M35HpPotions {
     static final int HP_REGEN_EFFECT = 21;
     private static final long BUY_RETRY_MS = 30000L;
     private static final int MAX_BUY_FAILS = 3;
+    /** Lỗi đủ MAX_BUY_FAILS lần thì đánh luôn bằng số bình đang có, lâu sau mới quay lại shop. */
+    private static final long GIVE_UP_MS = 10L * 60L * 1000L;
+    private static final int MIN_BUY = 10;
+    /** Giá bình HP lv30 ở shop 7 (người dùng đo 2026-11-15); shop có lv1/lv10 (100 yên)/lv30/lv50. */
+    static final int PRICE_LV30 = 500;
+    /** Mỗi lần mua tối đa 50 bình (yêu cầu người dùng). */
+    static final int MAX_BUY = 50;
+    static final int RESERVE_YEN = Integer.getInteger("nso.uplevel35.m35.reserveYen", 5000).intValue();
 
     /** id template bình đã mua (học từ shop); -1 = nhận theo type 16 + level 30. */
     private int potionId = -1;
     private int buyFails;
+    /** Trần số lượng mỗi lần mua; 0 = mua đủ STOCK. Mua lỗi (thường do thiếu yên) thì giảm một nửa. */
+    private int buyCap;
     private long retryAt;
     private long lastDrinkAt;
     private int drinks;
 
     void reset() {
         this.buyFails = 0;
+        this.buyCap = 0;
         this.retryAt = 0L;
         this.lastDrinkAt = 0L;
         this.drinks = 0;
@@ -83,6 +94,13 @@ final class M35HpPotions {
             // Hết thời gian chờ sau 3 lần lỗi: thử lại từ đầu.
             this.buyFails = 0;
         }
+        if (affordable(me, PRICE_LV30, MIN_BUY) < MIN_BUY) {
+            this.buyFails = MAX_BUY_FAILS;
+            this.retryAt = now + GIVE_UP_MS;
+            Uplevel35.log("HPPOT không đủ yên mua " + MIN_BUY + " bình lv30 (yên=" + me.yen + " dự trữ=" + RESERVE_YEN
+                    + " giá=" + PRICE_LV30 + "), kho=" + have + " -> đánh luôn, " + GIVE_UP_MS / 1000L + "s sau xem lại");
+            return true;
+        }
         Uplevel35.logEvery("hppot-stock", 10000L, "HPPOT kho=" + have + "/" + MIN + " -> mua đủ " + STOCK
                 + " ở map " + SHOP_MAP + " npc " + SHOP_NPC);
         if (TileMap.mapID != SHOP_MAP) {
@@ -120,8 +138,18 @@ final class M35HpPotions {
         this.potionId = offer.template.id;
         int before = this.count(me);
         int need = STOCK - before;
+        if (this.buyCap > 0 && need > this.buyCap) {
+            need = this.buyCap;
+        }
+        int price = offer.template.level >= 50 ? 1000 : (offer.template.level >= 30 ? PRICE_LV30 : 100);
+        need = affordable(me, price, need);
+        if (need < 1) {
+            this.fail(now, "không đủ yên (yên=" + me.yen + " giá=" + price + ")");
+            return false;
+        }
         Uplevel35.log("HPPOT mua " + offer.template.name + " id=" + offer.template.id + " lv" + offer.template.level
-                + " sl=" + need + " giá=" + offer.buyCoin + " yên=" + me.yen + " shopIndex=" + offer.indexUI);
+                + " sl=" + need + " giá(xu/yên/lượng)=" + offer.buyCoin + "/" + offer.buyCoinLock + "/" + offer.buyGold
+                + " yên=" + me.yen + " shopIndex=" + offer.indexUI);
         Service.gI().buyItem(offer.typeUI, offer.indexUI, need);
         deadline = System.currentTimeMillis() + 5000L;
         while (this.count(me) <= before && System.currentTimeMillis() < deadline) {
@@ -129,7 +157,9 @@ final class M35HpPotions {
         }
         int after = this.count(me);
         if (after <= before) {
-            this.fail(now, "mua xong nhưng túi chưa tăng (" + before + ") yên=" + me.yen);
+            this.buyCap = Math.max(MIN_BUY, need / 2);
+            this.fail(now, "mua " + need + " nhưng túi chưa tăng (" + before + ") yên=" + me.yen
+                    + " -> lần sau mua " + this.buyCap);
             return false;
         }
         this.buyFails = 0;
@@ -137,11 +167,21 @@ final class M35HpPotions {
         return after >= MIN;
     }
 
+    /** min(want, (yên - dự trữ) / giá). */
+    private static int affordable(Char me, int price, int want) {
+        long budget = (long) me.yen - RESERVE_YEN;
+        if (budget <= 0L || price <= 0) {
+            return 0;
+        }
+        return (int) Math.min((long) Math.min(want, MAX_BUY), budget / price);
+    }
+
     private void fail(long now, String reason) {
         ++this.buyFails;
-        this.retryAt = now + BUY_RETRY_MS;
+        boolean giveUp = this.buyFails >= MAX_BUY_FAILS;
+        this.retryAt = now + (giveUp ? GIVE_UP_MS : BUY_RETRY_MS);
         Uplevel35.log("HPPOT mua lỗi lần " + this.buyFails + "/" + MAX_BUY_FAILS + ": " + reason
-                + (this.buyFails >= MAX_BUY_FAILS ? " -> đi đánh luôn, thử lại sau" : " -> thử lại sau 30s"));
+                + (giveUp ? " -> đi đánh luôn, " + GIVE_UP_MS / 1000L + "s sau mới thử lại" : " -> thử lại sau 30s"));
     }
 
     /** Bình HP (type 16) level cao nhất không vượt level nhân vật, ưu tiên đúng lv30. */

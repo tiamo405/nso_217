@@ -13,8 +13,16 @@ public class As20 extends As10 {
    private static final int UplevelNoelHatMaleId = 351;
    private static final int UplevelNoelHatFemaleId = 352;
    private static final int UplevelTeacherHpId = 14;
-   // Mua thử số lượng giảm dần: server im lặng (không đủ yên...) thì hạ bậc; hết bậc thì đánh thầy không bình.
-   private static final int[] UplevelTeacherHpQuantities = {10000, 1000, 200, 50, 10};
+   // Giá bình HP shop 7 (NPC 3), người dùng đo 2026-11-15: lv10 = 100 yên, lv30 = 500 yên. Shop chỉ có bình
+   // lv1/lv10/lv30/lv50 (không có lv20: nhân vật lv2x dùng bình lv10). lv1 tính như lv10, lv50 chưa đo (ước lượng dư).
+   // Số lượng = min(cần, UplevelPotionMaxBuy, (yên - dự trữ) / giá).
+   private static final int UplevelPotionMaxBuy = 50;
+   private static final int UplevelPotionReserveYen = Integer.getInteger("uplevel.potionReserveYen", 5000).intValue();
+   // Bình id 14 (shop 7 ô 1 = bình lv10, đã xác nhận) cho NV13 đánh thầy. Trước là 10000 bình = 1.000.000 yên.
+   private static final int UplevelTeacherHpTarget = Integer.getInteger("uplevel.teacherHpTarget", 50).intValue();
+   private static final int UplevelTeacherHpPrice = 100;
+   private static final int UplevelPotionMinBuy = 10;
+   // Server im lặng (thiếu yên/túi đầy...) thì lần sau mua một nửa; dưới UplevelPotionMinBuy thì đánh thầy không bình.
    private static final long UplevelTeacherHpSkipMs = 10L * 60L * 1000L;
    private static final int UplevelFoodType = 18;
    private static final int UplevelFoodNpc = 4;
@@ -32,6 +40,8 @@ public class As20 extends As10 {
    private static final int UplevelTask17PotionNpc = 3;
    private static final int UplevelTask17PotionShop = 7;
    private static final int UplevelTask17PotionStock = 20;
+   // Không đủ yên mua 20 thì hạ dần số lượng thay vì bỏ hẳn.
+   private static final int[] UplevelTask17PotionQuantities = {20, 10, 5, 2};
    private static final int UplevelTask17FollowDistance = 90;
    private static final int UplevelTask17FightRadius = 100;
    private int fieldAV;
@@ -154,7 +164,7 @@ public class As20 extends As10 {
    private boolean uplevelTeacherHpBuyPending;
    private long uplevelTeacherHpBuySentAt;
    private long uplevelTeacherHpUseSentAt;
-   private int uplevelTeacherHpStep;
+   private int uplevelTeacherHpCap;
    private long uplevelTeacherHpSkipUntil;
    private int uplevelFoodLevel = -1;
    private boolean uplevelFoodBoxRequested;
@@ -187,6 +197,10 @@ public class As20 extends As10 {
    private boolean uplevelTask17ShopRequested;
    private long uplevelTask17ShopActionAt;
    private int uplevelTask17BuyType = -1;
+   private int uplevelTask17BuyStep;
+   private int uplevelTask13PotionBefore = -1;
+   private long uplevelTask13PotionSentAt;
+   private long uplevelTask13PotionSkipUntil;
    private int uplevelTask17BuyBefore;
    private boolean uplevelTask17ReindeerDone;
    private int uplevelTask17ReindeerAttempts;
@@ -515,9 +529,15 @@ public class As20 extends As10 {
          } else if (now - this.uplevelTask17ShopActionAt < 8000L) {
             return false;
          } else {
-            System.out.println("UPLEVEL TASK17 potion buy timeout type=" + this.uplevelTask17BuyType
-                  + " count=" + current + " yen=" + me.yen + "; bỏ qua mua thêm");
             this.uplevelTask17BuyType = -1;
+            if (this.uplevelTask17BuyStep + 1 < UplevelTask17PotionQuantities.length) {
+               this.uplevelTask17BuyStep++;
+               System.out.println("UPLEVEL TASK17 potion buy timeout count=" + current + " yen=" + me.yen
+                     + "; thử lại quantity=" + UplevelTask17PotionQuantities[this.uplevelTask17BuyStep]);
+               return false;
+            }
+            System.out.println("UPLEVEL TASK17 potion buy timeout count=" + current + " yen=" + me.yen
+                  + "; bỏ qua mua thêm");
             this.uplevelTask17PotionReady = true;
             return true;
          }
@@ -587,14 +607,23 @@ public class As20 extends As10 {
          return true;
       }
       int current = hp;
-      int quantity = UplevelTask17PotionStock - current;
+      int price = uplevelPotionPrice(offer.template.level);
+      int quantity = uplevelAffordable(me, price,
+            Math.min(UplevelTask17PotionStock - current, UplevelTask17PotionQuantities[this.uplevelTask17BuyStep]));
+      if (quantity <= 0) {
+         System.out.println("UPLEVEL TASK17 potion không đủ yên: yen=" + me.yen + " dự trữ=" + UplevelPotionReserveYen
+               + " giá=" + price + " lv" + offer.template.level + " hp=" + current + "; đi hộ tống luôn");
+         this.uplevelTask17PotionReady = true;
+         return true;
+      }
       this.uplevelTask17BuyType = type;
       this.uplevelTask17BuyBefore = current;
       this.uplevelTask17ShopActionAt = now;
       Service.gI().buyItem(offer.typeUI, offer.indexUI, quantity);
       System.out.println("UPLEVEL TASK17 potion buy type=" + type + " item=" + offer.template.id
             + ":" + offer.template.name + " lv=" + offer.template.level
-            + " quantity=" + quantity + " shopIndex=" + offer.indexUI + " yen=" + me.yen);
+            + " quantity=" + quantity + " shopIndex=" + offer.indexUI + " yen=" + me.yen
+            + " giá(xu/yên/lượng)=" + offer.buyCoin + "/" + offer.buyCoinLock + "/" + offer.buyGold);
       return false;
    }
 
@@ -2277,6 +2306,20 @@ public class As20 extends As10 {
       return false;
    }
 
+   /** Giá 1 bình HP (yên) theo level bình: lv10 = 100, lv30 = 500 (đo thật); lv1 tính 100, lv50 ước lượng 1000. */
+   private static int uplevelPotionPrice(int potionLevel) {
+      if (potionLevel >= 50) return 1000;
+      if (potionLevel >= 30) return 500;
+      return 100;
+   }
+
+   /** Số bình mua được: min(want, UplevelPotionMaxBuy, (yên - dự trữ) / giá), không âm. */
+   private static int uplevelAffordable(Char me, int price, int want) {
+      long budget = (long)me.yen - UplevelPotionReserveYen;
+      if (budget <= 0L || price <= 0) return 0;
+      return (int)Math.min((long)Math.min(want, UplevelPotionMaxBuy), budget / price);
+   }
+
    private boolean ensureUplevelTeacherHp(Char me) {
       int count = this.countUplevelItem(me, UplevelTeacherHpId);
       if (count > 0) {
@@ -2284,7 +2327,7 @@ public class As20 extends As10 {
             System.out.println("UPLEVEL TEACHER HP ready id=" + UplevelTeacherHpId + " count=" + count + " yen=" + me.yen);
             this.uplevelTeacherHpBuyPending = false;
          }
-         this.uplevelTeacherHpStep = 0;
+         this.uplevelTeacherHpCap = 0;
          return true;
       }
 
@@ -2294,26 +2337,33 @@ public class As20 extends As10 {
             return false;
          }
          this.uplevelTeacherHpBuyPending = false;
-         int failedQty = UplevelTeacherHpQuantities[this.uplevelTeacherHpStep];
-         this.uplevelTeacherHpStep++;
-         if (this.uplevelTeacherHpStep >= UplevelTeacherHpQuantities.length) {
-            this.uplevelTeacherHpStep = 0;
-            this.uplevelTeacherHpSkipUntil = now + UplevelTeacherHpSkipMs;
-            System.out.println("UPLEVEL TEACHER HP buy failed quantity=" + failedQty + " yen=" + me.yen
-                  + "; skip potions " + UplevelTeacherHpSkipMs / 1000L + "s, fight teacher without id=" + UplevelTeacherHpId);
-            return true;
+         // Không có hàng về: lần sau mua một nửa (giá thật có thể cao hơn bảng, hoặc túi đầy...).
+         this.uplevelTeacherHpCap = this.uplevelTeacherHpCap / 2;
+         System.out.println("UPLEVEL TEACHER HP buy timeout id=" + UplevelTeacherHpId + " yen=" + me.yen
+               + "; lần sau mua tối đa " + this.uplevelTeacherHpCap);
+         if (this.uplevelTeacherHpCap >= UplevelPotionMinBuy) {
+            return false;
          }
-         System.out.println("UPLEVEL TEACHER HP buy timeout id=" + UplevelTeacherHpId + " quantity=" + failedQty
-               + " yen=" + me.yen + "; retry quantity=" + UplevelTeacherHpQuantities[this.uplevelTeacherHpStep]);
-         return false;
       }
       if (now < this.uplevelTeacherHpSkipUntil) {
          return true;
       }
 
-      int quantity = UplevelTeacherHpQuantities[this.uplevelTeacherHpStep];
-      System.out.println("UPLEVEL TEACHER HP buy id=" + UplevelTeacherHpId
-            + " quantity=" + quantity + " yen=" + me.yen + " npc=3 shop=7 index=1");
+      int quantity = uplevelAffordable(me, UplevelTeacherHpPrice, UplevelTeacherHpTarget);
+      if (this.uplevelTeacherHpCap > 0 && quantity > this.uplevelTeacherHpCap) {
+         quantity = this.uplevelTeacherHpCap;
+      }
+      if (quantity < UplevelPotionMinBuy) {
+         this.uplevelTeacherHpCap = 0;
+         this.uplevelTeacherHpSkipUntil = now + UplevelTeacherHpSkipMs;
+         System.out.println("UPLEVEL TEACHER HP không mua (mua được " + quantity + " bình, yen=" + me.yen
+               + " dự trữ=" + UplevelPotionReserveYen + " giá=" + UplevelTeacherHpPrice + "); đánh thầy bằng bình HP thường, "
+               + UplevelTeacherHpSkipMs / 1000L + "s sau thử lại");
+         return true;
+      }
+      System.out.println("UPLEVEL TEACHER HP buy id=" + UplevelTeacherHpId + " quantity=" + quantity
+            + " (~" + quantity * UplevelTeacherHpPrice + " yên) yen=" + me.yen + " npc=3 shop=7 index=1");
+      this.uplevelTeacherHpCap = quantity;
       this.uplevelTeacherHpBuyPending = true;
       this.uplevelTeacherHpBuySentAt = now;
       GameScr.fieldAB(3, 0, 0);
@@ -2960,8 +3010,27 @@ public class As20 extends As10 {
                   return;
                }
 
+               if (var1.taskMaint.index != 1 && this.uplevelTask13PotionBefore >= 0) {
+                  long potionNow = System.currentTimeMillis();
+                  if (GameScr.hpPotion > this.uplevelTask13PotionBefore) {
+                     this.uplevelTask13PotionBefore = -1;
+                  } else if (potionNow - this.uplevelTask13PotionSentAt < 8000L) {
+                     return;
+                  } else {
+                     // Mua không được (thiếu yên/túi đầy...): đi làm nhiệm vụ luôn, 10 phút sau mới thử lại.
+                     System.out.println("UPLEVEL TASK13 HP buy timeout hpPotion=" + GameScr.hpPotion
+                           + " yen=" + var1.yen + "; bỏ qua 600s");
+                     this.uplevelTask13PotionBefore = -1;
+                     this.uplevelTask13PotionSkipUntil = potionNow + 10L * 60L * 1000L;
+                  }
+               }
                if (var1.taskMaint.index != 1 && GameScr.hpPotion < 10
-                     && var1.yen >= 300 * (10 - GameScr.hpPotion)) {
+                     && var1.yen >= UplevelPotionReserveYen + UplevelTeacherHpPrice * (10 - GameScr.hpPotion)
+                     && System.currentTimeMillis() >= this.uplevelTask13PotionSkipUntil) {
+                  System.out.println("UPLEVEL TASK13 HP buy quantity=" + (10 - GameScr.hpPotion)
+                        + " hpPotion=" + GameScr.hpPotion + " yen=" + var1.yen);
+                  this.uplevelTask13PotionBefore = GameScr.hpPotion;
+                  this.uplevelTask13PotionSentAt = System.currentTimeMillis();
                   GameScr.fieldAB(3, 0, 0);
                   Service.gI().buyItem(7, 1, 10 - GameScr.hpPotion);
                   LockGame.fieldAG();
