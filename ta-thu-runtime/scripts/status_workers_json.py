@@ -134,7 +134,9 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
         "rss_mb": rss_mb,
         "elapsed": elapsed,
         "accounts": count_accounts(worker_dir / "account.csv"),
-        "proxy": read_text(worker_dir / ".proxy") or None,
+        # "direct" = worker được chia cho mạng của máy, không phải proxy.
+        "proxy": (lambda v: None if not v or v.lower() == "direct" else v)(
+            read_text(worker_dir / ".proxy")),
         "last_auto_log": last_matching_line(stdout_log, "AUTO TA THU"),
         "last_log_at": last_log_at,
         "last_log_age_seconds": last_log_age_seconds,

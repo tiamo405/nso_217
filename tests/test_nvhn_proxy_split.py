@@ -14,7 +14,8 @@ spec.loader.exec_module(proxy_support)
 
 
 class NvhnProxySplitTest(unittest.TestCase):
-    def run_split(self, workers: int, proxies: int, group_size: int = 1) -> dict[str, str]:
+    def run_split(self, workers: int, proxies: int, group_size: int = 1,
+                  use_local: str = "1") -> dict[str, str]:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             workers_dir = root / "workers"
@@ -29,20 +30,32 @@ class NvhnProxySplitTest(unittest.TestCase):
                 workers_dir=str(workers_dir), proxy_file=str(proxy_file),
                 group_size=group_size, target_host="x", target_port=1,
             )
-            with patch.object(proxy_support, "probe"), patch("sys.stdout"):
+            with patch.object(proxy_support, "probe"), patch("sys.stdout"), \
+                    patch.dict("os.environ", {"NSO_PROXY_USE_LOCAL": use_local}):
                 proxy_support.assign(args)
             return {
-                path.parent.name: path.read_text(encoding="utf-8").split(":")[0]
+                path.parent.name: path.read_text(encoding="utf-8").strip().split(":")[0]
                 for path in sorted(workers_dir.glob("worker-*/.proxy"))
             }
 
     def test_even_contiguous_split_like_uplevel(self) -> None:
-        plan = self.run_split(10, 4)
+        plan = self.run_split(10, 4, use_local="0")
         counts = [list(plan.values()).count(f"10.0.0.{n}") for n in range(1, 5)]
         self.assertEqual(counts, [3, 3, 2, 2])
         self.assertEqual(plan["worker-01"], "10.0.0.1")
         self.assertEqual(plan["worker-04"], "10.0.0.2")
         self.assertEqual(plan["worker-10"], "10.0.0.4")
+
+    def test_machine_network_takes_one_extra_share(self) -> None:
+        # 50 worker / 2 proxy + mạng máy = 17 + 17 + 16, mạng máy là khối cuối.
+        plan = self.run_split(50, 2)
+        values = list(plan.values())
+        self.assertEqual([values.count("10.0.0.1"), values.count("10.0.0.2"),
+                          values.count("direct")], [17, 17, 16])
+        self.assertEqual(plan["worker-17"], "10.0.0.1")
+        self.assertEqual(plan["worker-18"], "10.0.0.2")
+        self.assertEqual(plan["worker-35"], "direct")
+        self.assertEqual(plan["worker-50"], "direct")
 
     def test_group_size_value_no_longer_matters(self) -> None:
         self.assertEqual(self.run_split(5, 2, group_size=1), self.run_split(5, 2, group_size=6))
@@ -59,6 +72,8 @@ class NvhnProxySplitTest(unittest.TestCase):
             with self.assertRaises(proxy_support.ProxyError):
                 proxy_support.launch_env(worker, enabled=True)
             (workers_dir / ".proxy-group-size").write_text("even:0\n", encoding="utf-8")
+            self.assertEqual(proxy_support.launch_env(worker, enabled=True), {})
+            (worker / ".proxy").write_text("direct\n", encoding="utf-8")
             self.assertEqual(proxy_support.launch_env(worker, enabled=True), {})
             (worker / ".proxy").write_text("1.2.3.4:1080:u:p\n", encoding="utf-8")
             self.assertEqual(

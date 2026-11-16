@@ -48,9 +48,10 @@ hiện tại sẽ bị khoá (rê chuột để xem lý do); thao tác dừng/bu
 1. Upload `account.csv` (header `username,password`) ở thẻ **Hệ thống**.
 2. Mở **Cấu hình**, đặt số worker, giãn cách, tick **Dùng proxy** và lịch rồi bấm
    **Lưu cấu hình** (một nút lưu tất cả).
-   - **Dùng proxy**: chia đều worker cho các proxy trong `proxy-tk.txt` giống uplevel
-     (W worker / P proxy, khối liên tiếp: mỗi proxy W//P worker, W%P proxy đầu thêm 1;
-     VD 10 worker / 4 proxy = 3+3+2+2). Proxy không kết nối được bị bỏ qua khi chia.
+   - **Dùng proxy**: chia đều worker cho các proxy trong `proxy-tk.txt` + mạng của máy
+     (mạng máy là thêm 1 phần, khối cuối): W worker / (P proxy + 1), mỗi phần W//(P+1) worker,
+     phần đầu nhận dư; VD 10 worker / 4 proxy = 2+2+2+2 + 2 mạng máy. Proxy không kết nối
+     được bị bỏ qua khi chia. `NSO_PROXY_USE_LOCAL=0` → chỉ chia cho proxy như cũ.
 3. Thẻ **NVHN**:
    - **Build & Run**: dừng NVHN, build lại, chia worker từ account.csv rồi chạy.
    - **Chỉ Build**: build và chia worker, chưa chạy.

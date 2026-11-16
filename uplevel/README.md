@@ -81,9 +81,12 @@ Server chỉ cho khoảng 100 tài khoản online cùng lúc trên một IP. Pro
 `proxy-tk.txt` (mỗi dòng `host:port:user:password`, dòng trống / `#` bị bỏ qua):
 
 - **File trống hoặc không có** → mọi worker chạy mạng của máy như cũ.
-- **Có P proxy** → worker được chia đều theo khối liên tiếp, mỗi proxy `W/P` worker
-  (phần dư cho các proxy đầu). VD `build-workers.sh 50` + 2 proxy: worker-01..25 = proxy 1,
-  worker-26..50 = proxy 2; 51 worker → 26 + 25.
+- **Có P proxy** → mạng của máy được tính thêm 1 phần (phần cuối), worker chia đều theo khối
+  liên tiếp cho P+1 phần, mỗi phần `W/(P+1)` worker (phần dư cho các phần đầu). VD `build-workers.sh 50`
+  + 2 proxy: worker-01..17 = proxy 1, worker-18..34 = proxy 2, worker-35..50 = mạng máy.
+  Worker chạy mạng máy không có file `.proxy`.
+- `NSO_PROXY_USE_LOCAL=0` (hoặc `proxy_assign.py --no-local`): không dùng mạng máy, chỉ chia cho P proxy
+  (50 worker / 2 proxy → 25 + 25).
 
 ```bash
 python3 test_proxy_login.py          # test TẤT CẢ proxy (login thử acc đầu account-as20.csv), in dòng lỗi cần xoá
@@ -98,7 +101,8 @@ python3 test_proxy_login.py          # test TẤT CẢ proxy (login thử acc đ
 - JVM nhận env `NSO_SOCKS5_PROXY` + `NSO_PROXY_REQUIRED=1` (`optimized-runtime/src/javax/microedition/io/Connector.java`
   mở SOCKS5); proxy chết thì worker lỗi kết nối chứ không lén chạy bằng IP máy. Env giữ nguyên qua các lần đổi JVM
   giữa các nhân vật. Dòng `network: ...` trong `stdout.log` cho biết worker đi đường nào.
-- Biến môi trường: `UPLEVEL_PROXY_FILE` (đổi file proxy), `UPLEVEL_PROXY=0` (= `--no-proxy`).
+- Biến môi trường: `UPLEVEL_PROXY_FILE` (đổi file proxy), `UPLEVEL_PROXY=0` (= `--no-proxy`),
+  `NSO_PROXY_USE_LOCAL=0` (không chia worker cho mạng máy).
 - Sửa file proxy khi worker đang chạy: stop rồi start lại (worker đang chạy giữ proxy cũ).
 - Windows: cùng cách dùng, `uplevel\scripts\build-workers.cmd 50` rồi `uplevel\scripts\start-workers.cmd --mode 1`.
 

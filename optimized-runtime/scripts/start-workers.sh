@@ -30,6 +30,26 @@ if ! [[ "$PROXY_GROUP_SIZE" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
+# Có proxy thì chia thêm worker cho mạng của máy (1 phần như 1 proxy); NSO_PROXY_USE_LOCAL=0 để tắt.
+case "${NSO_PROXY_USE_LOCAL:-1}" in
+    0|false|False|FALSE|no|No|NO) PROXY_USE_LOCAL=0 ;;
+    *) PROXY_USE_LOCAL=1 ;;
+esac
+
+# Marker workers/.proxy-group-size do proxy_support.py ghi: even:<số proxy>[+local].
+proxy_marker_stale() {
+    local marker_file=$1 marker
+    [[ -f "$marker_file" ]] || return 0
+    marker=$(<"$marker_file")
+    [[ "$marker" == even:* ]] || return 0
+    [[ "$marker" == even:0 ]] && return 1
+    if [[ "$PROXY_USE_LOCAL" == 1 ]]; then
+        [[ "$marker" != *+local ]]
+    else
+        [[ "$marker" == *+local ]]
+    fi
+}
+
 is_optimized_worker_pid() {
     local pid=$1
     local worker_dir=$2
@@ -124,9 +144,8 @@ proxy_prepare_needed=false
 if (( PROXY_GROUP_SIZE == 0 )) && [[ -f "$WORKERS_DIR/.proxy-group-size" ]]; then
     proxy_prepare_needed=true
 elif (( PROXY_GROUP_SIZE > 0 )); then
-    proxy_marker="$WORKERS_DIR/.proxy-group-size"
-    # Marker "even:<số proxy>" do proxy_support.py ghi (chia đều kiểu uplevel).
-    if [[ ! -f "$proxy_marker" ]] || [[ "$(<"$proxy_marker")" != even:* ]]; then
+    # Marker cũ / khác cấu hình mạng máy → chia lại (chia đều kiểu uplevel).
+    if proxy_marker_stale "$WORKERS_DIR/.proxy-group-size"; then
         proxy_prepare_needed=true
     fi
     for worker_dir in "${worker_dirs[@]}"; do
@@ -203,7 +222,10 @@ for worker_dir in "${worker_dirs[@]}"; do
     proxy_env=(env -u NSO_SOCKS5_PROXY NSO_PROXY_REQUIRED=0)
     if (( PROXY_GROUP_SIZE > 0 )) && [[ -s "$worker_dir/.proxy" ]]; then
         proxy_value=$(<"$worker_dir/.proxy")
-        proxy_env=(env NSO_PROXY_REQUIRED=1 "NSO_SOCKS5_PROXY=$proxy_value")
+        # "direct" = worker được chia cho mạng của máy.
+        if [[ "$proxy_value" != direct ]]; then
+            proxy_env=(env NSO_PROXY_REQUIRED=1 "NSO_SOCKS5_PROXY=$proxy_value")
+        fi
     elif (( PROXY_GROUP_SIZE > 0 )) && [[ "$(cat "$WORKERS_DIR/.proxy-group-size" 2>/dev/null)" != "even:0" ]]; then
         echo "$worker_name thiếu proxy assignment; không khởi động." >&2
         exit 1

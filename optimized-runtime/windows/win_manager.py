@@ -1016,9 +1016,11 @@ def _cmd_stop_inner(args: Any) -> int:
 
 def _read_proxy(worker_dir: Path) -> Optional[str]:
     try:
-        return (worker_dir / ".proxy").read_text(encoding="utf-8").strip() or None
+        value = (worker_dir / ".proxy").read_text(encoding="utf-8").strip()
     except OSError:
         return None
+    # "direct" = worker được chia cho mạng của máy, không phải proxy.
+    return None if not value or value.lower() == "direct" else value
 
 
 def get_workers_status_dict() -> Dict[str, Any]:

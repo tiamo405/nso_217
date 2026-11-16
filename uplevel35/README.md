@@ -129,7 +129,8 @@ Windows: dùng các file `.cmd` cùng tên trong `scripts/` (vd. `uplevel35\scri
 Logic y hệt uplevel (dùng chung `uplevel/scripts/proxy_assign.py`, xem `uplevel/README.md`):
 
 - `proxy-tk.txt` trống / không có → mọi worker chạy mạng của máy.
-- Có P proxy → worker chia đều theo khối liên tiếp (VD 50 worker / 2 proxy: worker-01..25 = proxy 1, 26..50 = proxy 2).
+- Có P proxy → worker chia đều theo khối liên tiếp cho P proxy + mạng máy (VD 50 worker / 2 proxy:
+  worker-01..17 = proxy 1, 18..34 = proxy 2, 35..50 = mạng máy). `NSO_PROXY_USE_LOCAL=0` → chỉ chia cho proxy.
 - Trước khi build: `python3 test_proxy_login.py` để test tất cả proxy và xoá dòng lỗi.
 - `build-workers.sh N` in bảng chia proxy; `start-workers.sh` probe proxy rồi chạy, proxy lỗi → không start.
 - `--no-proxy` / `UPLEVEL35_PROXY=0`: ép chạy mạng máy; `UPLEVEL35_PROXY_FILE`: đổi file proxy.

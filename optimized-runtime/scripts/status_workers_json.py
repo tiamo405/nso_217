@@ -80,7 +80,8 @@ def count_accounts(csv_file: Path) -> int | None:
 
 def worker_proxy(worker_dir: Path) -> str | None:
     value = read_text(worker_dir / ".proxy")
-    return value or None
+    # "direct" = worker được chia cho mạng của máy, không phải proxy.
+    return None if not value or value.lower() == "direct" else value
 
 
 def get_log_lines_tail(log_file: Path) -> list[str]:

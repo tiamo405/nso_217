@@ -2,10 +2,12 @@
 """Gán proxy SOCKS5 cho từng worker uplevel (chia đều theo khối liên tiếp).
 
 - proxy file rỗng / không tồn tại → mọi worker chạy mạng của máy.
-- có P proxy, W worker → mỗi proxy W//P worker liên tiếp, W%P proxy đầu nhận thêm 1.
-  VD 50 worker / 2 proxy: worker-01..25 = proxy 1, worker-26..50 = proxy 2.
-  51 / 2: 26 + 25.  10 / 4: 3 + 3 + 2 + 2.  3 / 5: proxy 1..3 mỗi cái 1, proxy 4..5 không dùng.
-Kết quả ghi vào <worker>/.proxy (host:port:user:pass); không proxy thì file bị xoá.
+- có P proxy, W worker → mạng của máy được tính như thêm 1 "proxy" (phần cuối), tức W chia
+  đều cho P+1 phần: mỗi phần W//(P+1) worker liên tiếp, W%(P+1) phần đầu nhận thêm 1.
+  VD 50 worker / 2 proxy: worker-01..17 = proxy 1, worker-18..34 = proxy 2, worker-35..50 = máy.
+  10 / 4: 2+2+2+2 + 2 máy.  3 / 5: proxy 1..3 mỗi cái 1, proxy 4..5 và máy không dùng.
+  NSO_PROXY_USE_LOCAL=0 (hoặc --no-local) → không dùng mạng máy, chỉ chia cho P proxy như cũ.
+Kết quả ghi vào <worker>/.proxy (host:port:user:pass); worker chạy mạng máy thì file bị xoá.
 start-workers đọc file này và truyền env NSO_SOCKS5_PROXY cho JVM (Connector.java mở SOCKS5).
 
 Khi start (mặc định có probe): proxy được dùng bị lỗi → thoát mã 1, không chạy bằng IP máy.
@@ -14,12 +16,19 @@ Khi start (mặc định có probe): proxy được dùng bị lỗi → thoát 
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 from pathlib import Path
 
 DEFAULT_TARGET = "180.93.114.122:14444"
 TIMEOUT = 8.0
+LOCAL = None  # phần chia cho mạng của máy (không ghi .proxy)
+
+
+def use_local_default() -> bool:
+    """Mặc định có chia worker cho mạng máy khi đã có proxy; NSO_PROXY_USE_LOCAL=0 để tắt."""
+    return os.environ.get("NSO_PROXY_USE_LOCAL", "1").strip().lower() not in ("0", "false", "no")
 
 
 class ProxyError(RuntimeError):
@@ -93,7 +102,8 @@ def clear(workers_dir: Path) -> None:
 
 
 def assign(workers_dir: Path, proxy_file: Path, target: str = DEFAULT_TARGET,
-           check: bool = True, out=sys.stdout) -> dict[str, str | None]:
+           check: bool = True, out=sys.stdout,
+           use_local: bool | None = None) -> dict[str, str | None]:
     """Gán proxy cho mọi worker trong workers_dir. Trả về {worker_name: proxy|None}."""
     target_host, _, target_port = target.rpartition(":")
     if not target_host or not target_port.isdigit():
@@ -107,11 +117,15 @@ def assign(workers_dir: Path, proxy_file: Path, target: str = DEFAULT_TARGET,
         print(f"Proxy: {proxy_file.name} trống → {len(workers)} worker chạy mạng của máy", file=out)
         return {w.name: None for w in workers}
 
+    if use_local is None:
+        use_local = use_local_default()
     count = len(workers)
-    # Khối liên tiếp: W//P worker mỗi proxy, W%P proxy đầu nhận thêm 1 worker dư.
-    base, extra = divmod(count, len(proxies))
-    order: list[str] = []
-    for index, value in enumerate(proxies):
+    # Khối liên tiếp: các proxy rồi tới mạng máy (nếu bật); W//S worker mỗi phần,
+    # W%S phần đầu nhận thêm 1 worker dư (S = số phần).
+    slots: list[str | None] = list(proxies) + ([LOCAL] if use_local else [])
+    base, extra = divmod(count, len(slots))
+    order: list[str | None] = []
+    for index, value in enumerate(slots):
         order += [value] * (base + (1 if index < extra else 0))
     plan = {w.name: order[i] for i, w in enumerate(workers)}
     used = [p for p in proxies if p in plan.values()]
@@ -128,20 +142,27 @@ def assign(workers_dir: Path, proxy_file: Path, target: str = DEFAULT_TARGET,
 
     for worker in workers:
         path = worker / ".proxy"
-        path.write_text(plan[worker.name] + "\n", encoding="utf-8")
+        value = plan[worker.name]
+        if value is LOCAL:
+            path.unlink(missing_ok=True)
+            continue
+        path.write_text(value + "\n", encoding="utf-8")
         try:
             path.chmod(0o600)
         except OSError:
             pass
 
-    print(f"Proxy: {count} worker chia đều cho {len(used)}/{len(proxies)} proxy", file=out)
-    for number, value in enumerate(proxies, 1):
+    local_note = " + mạng máy" if use_local else ""
+    print(f"Proxy: {count} worker chia đều cho {len(used)}/{len(proxies)} proxy{local_note}",
+          file=out)
+    for number, value in enumerate(slots, 1):
+        label = "mạng máy" if value is LOCAL else f"proxy {number} {masked(value)}"
         names = [n for n, v in plan.items() if v == value]
         if not names:
-            print(f"  proxy {number} {masked(value)}: không dùng (ít worker hơn proxy)", file=out)
+            print(f"  {label}: không dùng (ít worker hơn số phần chia)", file=out)
             continue
         span = names[0] if len(names) == 1 else f"{names[0]}..{names[-1]}"
-        print(f"  proxy {number} {masked(value)}: {span} ({len(names)} worker)", file=out)
+        print(f"  {label}: {span} ({len(names)} worker)", file=out)
     return plan
 
 
@@ -153,6 +174,8 @@ def main() -> int:
                         help="chỉ gán, không probe proxy (dùng lúc build-workers)")
     parser.add_argument("--server", default=DEFAULT_TARGET)
     parser.add_argument("--clear", action="store_true", help="xoá mọi .proxy (tắt proxy)")
+    parser.add_argument("--no-local", action="store_true",
+                        help="không chia worker cho mạng máy (giống NSO_PROXY_USE_LOCAL=0)")
     args = parser.parse_args()
     workers_dir = Path(args.workers_dir)
     try:
@@ -160,7 +183,8 @@ def main() -> int:
             clear(workers_dir)
             print("Proxy: tắt (mọi worker chạy IP máy)")
             return 0
-        assign(workers_dir, Path(args.proxy_file), args.server, check=not args.no_check)
+        assign(workers_dir, Path(args.proxy_file), args.server, check=not args.no_check,
+               use_local=False if args.no_local else None)
         return 0
     except ProxyError as exc:
         print(f"Proxy lỗi: {exc}", file=sys.stderr)

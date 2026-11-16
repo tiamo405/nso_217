@@ -22,5 +22,6 @@ làm Tà Thú chạy trùng lần trong cùng ngày.
 Worker Tà Thú chạy trên nền optimized (`OptimizedMain`, cùng bộ `-Dnso.*` với NVHN,
 log có giờ). Proxy dùng chung `optimized-runtime/scripts/proxy_support.py`: khi
 `NSO_PROXY_WORKERS_PER_PROXY` > 0 (Web Dashboard tick **Dùng proxy**) worker được chia
-đều cho `proxy-tk.txt` và JVM nhận `NSO_SOCKS5_PROXY`; status JSON có trường `proxy`.
+đều cho `proxy-tk.txt` + mạng của máy (`.proxy` = `direct`, `NSO_PROXY_USE_LOCAL=0` để tắt) và JVM
+nhận `NSO_SOCKS5_PROXY`; status JSON có trường `proxy` (rỗng khi chạy mạng máy).
 `start` / `restart` nhận `--delay 0 <số worker>` để web Start/Restart từng worker.

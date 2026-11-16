@@ -86,9 +86,10 @@ boss Tà Thú, thao tác hàng loạt) và khung log có giờ, lọc mức đ�
   **Lần đầu lúc / Lặp lại mỗi N giờ** đảm nhiệm: dừng Tà Thú, build lại, chạy NVHN.
   Chạy tay vẫn có thể đặt `PERIODIC_RESTART_SECONDS` nếu cần.
 - **Dùng proxy** (một ô tick cho cả NVHN và Tà Thú): chia đều worker cho các proxy
-  trong `proxy-tk.txt` theo khối liên tiếp giống uplevel (VD 10 worker / 4 proxy =
-  3+3+2+2). Proxy lỗi bị bỏ qua; file rỗng thì chạy mạng của máy. Chạy tay:
-  `set NSO_PROXY_WORKERS_PER_PROXY=0` để tắt, giá trị > 0 để bật.
+  trong `proxy-tk.txt` + mạng của máy (thêm 1 phần, khối cuối) theo khối liên tiếp giống
+  uplevel (VD 10 worker / 4 proxy = 2+2+2+2 + 2 mạng máy). Proxy lỗi bị bỏ qua; file rỗng
+  thì chạy mạng của máy. Chạy tay: `set NSO_PROXY_WORKERS_PER_PROXY=0` để tắt, giá trị > 0
+  để bật; `set NSO_PROXY_USE_LOCAL=0` để không chia worker cho mạng máy.
 - Mỗi dòng log có giờ `HH:mm:ss` (`-Dnso.log.timestamp=true`, tắt bằng
   `set NSO_LOG_TIMESTAMP=false`); watchdog lặp trạng thái bỏ qua prefix giờ.
 

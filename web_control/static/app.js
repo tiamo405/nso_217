@@ -294,9 +294,11 @@ function renderProxyInfo() {
   } else if (!count) {
     info.textContent = "proxy-tk.txt chưa có proxy nào: Start sẽ báo lỗi.";
   } else {
-    const per = Math.ceil(workers / count);
-    info.textContent = `${workers} worker chia đều cho ${Math.min(count, workers)} proxy ` +
-      `(${count} proxy trong file) → tối đa ${per} worker/proxy, theo khối liên tiếp worker-01…`;
+    // Mạng của máy được tính thêm 1 phần (phần cuối) cùng các proxy.
+    const per = Math.ceil(workers / (count + 1));
+    info.textContent = `${workers} worker chia đều cho ${count} proxy + mạng máy ` +
+      `(${count + 1} phần) → tối đa ${per} worker/phần, theo khối liên tiếp worker-01…, ` +
+      `phần cuối chạy mạng máy.`;
   }
 }
 

@@ -4,8 +4,11 @@
 - --group-size 0: tắt proxy, xoá toàn bộ gán proxy.
 - --group-size > 0: bật proxy. Giá trị cụ thể không còn ý nghĩa (giữ để tương
   thích env NSO_PROXY_WORKERS_PER_PROXY cũ). Có P proxy hoạt động và W worker →
-  mỗi proxy nhận W//P worker liên tiếp, W%P proxy đầu nhận thêm 1.
-  VD 50 worker / 2 proxy: worker-01..25 = proxy 1, worker-26..50 = proxy 2.
+  mạng của máy được tính như thêm 1 phần (phần cuối): W chia đều cho P+1 phần,
+  mỗi phần W//(P+1) worker liên tiếp, W%(P+1) phần đầu nhận thêm 1.
+  VD 50 worker / 2 proxy: worker-01..17 = proxy 1, worker-18..34 = proxy 2,
+  worker-35..50 = mạng máy (.proxy ghi "direct").
+  NSO_PROXY_USE_LOCAL=0 → không dùng mạng máy, chỉ chia cho P proxy như cũ.
 """
 
 from __future__ import annotations
@@ -21,6 +24,30 @@ SOCKS_VERSION = 5
 DEFAULT_TARGET_HOST = "180.93.114.122"
 DEFAULT_TARGET_PORT = 14444
 DEFAULT_TIMEOUT = 8.0
+# Giá trị trong <worker>/.proxy: worker này chạy bằng mạng của máy (không SOCKS5).
+DIRECT = "direct"
+LOCAL_SLOT: dict[str, object] = {"value": DIRECT}
+
+
+def use_local_default() -> bool:
+    """Mặc định chia thêm worker cho mạng máy khi có proxy; NSO_PROXY_USE_LOCAL=0 để tắt."""
+    return os.environ.get("NSO_PROXY_USE_LOCAL", "1").strip().lower() not in ("0", "false", "no")
+
+
+def is_direct(value: str | None) -> bool:
+    return (value or "").strip().lower() == DIRECT
+
+
+def read_assignment(worker_dir: Path) -> str:
+    try:
+        return (worker_dir / ".proxy").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def has_real_proxy(worker_dir: Path) -> bool:
+    value = read_assignment(worker_dir)
+    return bool(value) and not is_direct(value)
 
 
 class ProxyError(RuntimeError):
@@ -206,7 +233,7 @@ def assign(args: argparse.Namespace) -> int:
     running = {worker.name for worker in workers if worker_is_running(worker)}
 
     if args.group_size == 0:
-        if any((workers_dir / name / ".proxy").is_file() for name in running):
+        if any(has_real_proxy(workers_dir / name) for name in running):
             raise ProxyError("hãy Stop toàn bộ worker trước khi tắt proxy")
         clear_assignments(workers_dir)
         print("Proxy: tắt, worker chạy mạng của máy")
@@ -219,7 +246,7 @@ def assign(args: argparse.Namespace) -> int:
     configured = load_proxies(proxy_file) if proxy_file.is_file() else []
     if not configured:
         # Giống uplevel: file proxy rỗng / không có → chạy mạng của máy.
-        if any((workers_dir / name / ".proxy").is_file() for name in running):
+        if any(has_real_proxy(workers_dir / name) for name in running):
             raise ProxyError("hãy Stop toàn bộ worker trước khi bỏ proxy")
         clear_assignments(workers_dir)
         marker = workers_dir / ".proxy-group-size"
@@ -237,7 +264,11 @@ def assign(args: argparse.Namespace) -> int:
     if not valid:
         raise ProxyError(f"không có proxy nào hoạt động trong {proxy_file.name}")
 
-    plan = even_plan(workers, valid)
+    use_local = getattr(args, "use_local", None)
+    if use_local is None:
+        use_local = use_local_default()
+    slots = valid + ([LOCAL_SLOT] if use_local else [])
+    plan = even_plan(workers, slots)
     for worker in workers:
         path = worker / ".proxy"
         wanted = str(plan[worker.name]["value"])
@@ -251,20 +282,27 @@ def assign(args: argparse.Namespace) -> int:
         path.write_text(wanted + "\n", encoding="utf-8")
         path.chmod(0o600)
     marker = workers_dir / ".proxy-group-size"
-    marker.write_text(f"even:{len(valid)}\n", encoding="utf-8")
+    marker.write_text(marker_value(len(valid), use_local) + "\n", encoding="utf-8")
     marker.chmod(0o600)
 
     used = [proxy for proxy in valid if proxy in plan.values()]
-    print(f"Proxy: {len(workers)} worker chia đều cho {len(used)} proxy "
+    local_note = " + mạng máy" if use_local else ""
+    print(f"Proxy: {len(workers)} worker chia đều cho {len(used)} proxy{local_note} "
           f"({len(valid)}/{len(configured)} proxy hoạt động)")
-    for number, proxy in enumerate(valid, 1):
+    for number, proxy in enumerate(slots, 1):
+        label = "mạng máy" if proxy is LOCAL_SLOT else f"proxy {number} {masked(proxy)}"
         names = [name for name, value in plan.items() if value is proxy]
         if not names:
-            print(f"  proxy {number} {masked(proxy)}: không dùng (ít worker hơn proxy)")
+            print(f"  {label}: không dùng (ít worker hơn số phần chia)")
             continue
         span = names[0] if len(names) == 1 else f"{names[0]}..{names[-1]}"
-        print(f"  proxy {number} {masked(proxy)}: {span} ({len(names)} worker)")
+        print(f"  {label}: {span} ({len(names)} worker)")
     return 0
+
+
+def marker_value(proxy_count: int, use_local: bool) -> str:
+    """Nội dung workers/.proxy-group-size; start-workers so sánh để biết cần chia lại."""
+    return f"even:{proxy_count}+local" if use_local and proxy_count > 0 else f"even:{proxy_count}"
 
 
 def prepare(
@@ -284,16 +322,16 @@ def prepare(
 def launch_env(worker_dir: Path, enabled: bool) -> dict[str, str]:
     """Env proxy cho JVM của một worker (Connector.java đọc NSO_SOCKS5_PROXY).
 
-    Trả về {} khi tắt proxy hoặc file proxy rỗng (marker even:0) → mạng của máy.
+    Trả về {} khi tắt proxy, file proxy rỗng (marker even:0) hoặc worker được chia
+    cho mạng máy (.proxy = "direct") → mạng của máy.
     """
-    proxy_path = worker_dir / ".proxy"
     if not enabled:
         return {}
-    if proxy_path.is_file() and proxy_path.read_text(encoding="utf-8").strip():
-        return {
-            "NSO_PROXY_REQUIRED": "1",
-            "NSO_SOCKS5_PROXY": proxy_path.read_text(encoding="utf-8").strip(),
-        }
+    value = read_assignment(worker_dir)
+    if is_direct(value):
+        return {}
+    if value:
+        return {"NSO_PROXY_REQUIRED": "1", "NSO_SOCKS5_PROXY": value}
     marker = worker_dir.parent / ".proxy-group-size"
     if marker.is_file() and marker.read_text(encoding="utf-8").strip() == "even:0":
         return {}
@@ -309,6 +347,8 @@ def main() -> int:
     parser.add_argument("--group-size", type=int, required=True)
     parser.add_argument("--target-host", default=DEFAULT_TARGET_HOST)
     parser.add_argument("--target-port", type=int, default=DEFAULT_TARGET_PORT)
+    parser.add_argument("--no-local", dest="use_local", action="store_false", default=None,
+                        help="không chia worker cho mạng máy (giống NSO_PROXY_USE_LOCAL=0)")
     args = parser.parse_args()
     if args.group_size < 0:
         parser.error("--group-size phải >= 0")

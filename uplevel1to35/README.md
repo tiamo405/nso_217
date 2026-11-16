@@ -39,8 +39,9 @@ Windows: cùng tên file `.cmd`, cùng tham số (vd. `uplevel1to35\scripts\buil
   (build-workers chỉ chia lại account), `UPLEVEL1TO35_KEEP_STAGING=1` (giữ `build/src` đã ghép để soi),
   `JAVA_XMX`=36m, `JAVA_OPTS`. Biến nhiệm vụ 12 của uplevel (`UPLEVEL_CRYSTAL_ID`, `UPLEVEL_UPGRADE_SAFE`...)
   và `-Dnso.uplevel35.*` của uplevel35 dùng y như ở folder gốc.
-- Proxy: giống uplevel (`proxy-tk.txt`, chia đều theo khối worker, probe trước khi start, proxy lỗi →
-  không start; `--no-proxy` để chạy IP máy).
+- Proxy: giống uplevel (`proxy-tk.txt`, chia đều theo khối worker cho P proxy + mạng máy, probe trước
+  khi start, proxy lỗi → không start; `--no-proxy` để chạy IP máy; `NSO_PROXY_USE_LOCAL=0` để không
+  chia worker cho mạng máy).
 - Web monitor: `./uplevel_monitor/run.sh` có thêm nút lọc `uplevel1to35`.
 
 ## Luồng mỗi nhân vật

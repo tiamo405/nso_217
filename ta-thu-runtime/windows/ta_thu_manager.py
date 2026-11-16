@@ -70,6 +70,15 @@ def _load_proxy_support():
     return module
 
 
+def _read_proxy(worker: Path) -> str | None:
+    try:
+        value = (worker / ".proxy").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    # "direct" = worker được chia cho mạng của máy, không phải proxy.
+    return None if not value or value.lower() == "direct" else value
+
+
 def _norm(value: str | Path) -> str:
     return str(value).replace("\\", "/").casefold()
 
@@ -464,8 +473,7 @@ def status_dict() -> dict[str, Any]:
             "rss_mb": rss,
             "elapsed": elapsed,
             "accounts": accounts,
-            "proxy": ((worker / ".proxy").read_text(encoding="utf-8").strip() or None)
-            if (worker / ".proxy").is_file() else None,
+            "proxy": _read_proxy(worker),
             "last_auto_log": _last_log(worker / "stdout.log", "AUTO TA THU"),
             "last_log_at": log_at,
             "last_log_age_seconds": log_age,

@@ -39,29 +39,48 @@ class ProxySupportTest(unittest.TestCase):
             target_port=14444,
         )
 
+    def read_plan(self, workers: Path, count: int) -> list[str]:
+        return [
+            (workers / f"worker-{index:02d}" / ".proxy").read_text().strip()
+            for index in range(1, count + 1)
+        ]
+
     @patch.object(proxy_support, "probe")
-    def test_assigns_one_proxy_per_six_workers(self, probe) -> None:
+    def test_splits_evenly_across_proxies_and_machine_network(self, probe) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             workers = self.make_workers(root, 13)
             args = self.make_args(root, workers, 6)
 
-            self.assertEqual(proxy_support.assign(args), 0)
+            with patch.dict("os.environ", {"NSO_PROXY_USE_LOCAL": "1"}), patch("sys.stdout"):
+                self.assertEqual(proxy_support.assign(args), 0)
             self.assertEqual(probe.call_count, 3)
-            for index in range(1, 14):
-                value = (workers / f"worker-{index:02d}" / ".proxy").read_text().strip()
-                self.assertEqual(value, PROXIES[(index - 1) // 6])
+            # 13 worker / (3 proxy + mạng máy) = 4 + 3 + 3 + 3.
+            expected = [PROXIES[0]] * 4 + [PROXIES[1]] * 3 + [PROXIES[2]] * 3 + ["direct"] * 3
+            self.assertEqual(self.read_plan(workers, 13), expected)
+            self.assertEqual((workers / ".proxy-group-size").read_text().strip(), "even:3+local")
 
     @patch.object(proxy_support, "probe")
-    def test_blocks_when_active_proxy_count_is_insufficient(self, probe) -> None:
+    def test_no_local_splits_only_across_proxies(self, probe) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             workers = self.make_workers(root, 13)
             args = self.make_args(root, workers, 6)
-            args.proxy_file = str(root / "proxy-tk.txt")
-            Path(args.proxy_file).write_text("\n".join(PROXIES[:2]) + "\n", encoding="utf-8")
 
-            with self.assertRaises(proxy_support.ProxyError):
+            with patch.dict("os.environ", {"NSO_PROXY_USE_LOCAL": "0"}), patch("sys.stdout"):
+                self.assertEqual(proxy_support.assign(args), 0)
+            expected = [PROXIES[0]] * 5 + [PROXIES[1]] * 4 + [PROXIES[2]] * 4
+            self.assertEqual(self.read_plan(workers, 13), expected)
+            self.assertEqual((workers / ".proxy-group-size").read_text().strip(), "even:3")
+
+    @patch.object(proxy_support, "probe", side_effect=OSError("down"))
+    def test_blocks_when_no_proxy_is_working(self, probe) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workers = self.make_workers(root, 13)
+            args = self.make_args(root, workers, 6)
+
+            with self.assertRaises(proxy_support.ProxyError), patch("sys.stderr"):
                 proxy_support.assign(args)
 
     def test_zero_group_size_removes_assignments(self) -> None:
