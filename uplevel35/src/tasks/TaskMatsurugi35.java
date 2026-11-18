@@ -109,13 +109,14 @@ final class TaskMatsurugi35 extends Uplevel35Task {
             return;
         }
         Uplevel35Support.suppressNativeHp = false;
+        Uplevel35Support.suppressNativeMp = false;
 
         Item key = findKey(me);
         if (key == null) {
             this.askNewKey(bot, me, now);
             return;
         }
-        // Đủ bình HP lv30 trước khi vào map ẩn (thiếu thì ghé Làng chài mua, nằm trên đường tới map 35).
+        // Đủ bình HP + MP lv30 trước khi vào map ẩn (thiếu thì ghé Làng chài mua, nằm trên đường tới map 35).
         if (!this.potions.ensureStock(bot, me)) {
             return;
         }
@@ -133,7 +134,7 @@ final class TaskMatsurugi35 extends Uplevel35Task {
         }
         this.keyUsedAt = now;
         ++this.keyUses;
-        Uplevel35.log("M35 KEY HPPOT kho=" + this.potions.count(me) + " dùng " + key.template.name + " id=" + key.template.id + " bagIndex="
+        Uplevel35.log("M35 KEY HPPOT kho=" + this.potions.count(me) + " MPPOT kho=" + this.potions.countMp(me) + " dùng " + key.template.name + " id=" + key.template.id + " bagIndex="
                 + key.indexUI + " lần=" + this.keyUses + " pos=" + me.cx + "," + me.cy);
         Service.gI().useItem(key.indexUI);
     }

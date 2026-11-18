@@ -25,6 +25,8 @@ final class Uplevel35Support {
     private final As35 bot;
     /** Task đang tự uống bình HP (M35HpPotions trong map ẩn): tắt tự uống gốc của game. */
     static volatile boolean suppressNativeHp;
+    /** Tương tự cho bình MP (M35HpPotions cũng tự uống MP lv30 trong map ẩn). */
+    static volatile boolean suppressNativeMp;
 
     private long mushroomUseSentAt;
     private int mushroomUseAttempts;
@@ -401,7 +403,7 @@ final class Uplevel35Support {
         Char.aMpValue = level;
         Char.aFoodValue = level;
         Char.isAHP = !suppressNativeHp;
-        Char.isAMP = true;
+        Char.isAMP = !suppressNativeMp;
         Char.isAFood = true;
         if (this.foodLevel != level) {
             this.foodLevel = level;

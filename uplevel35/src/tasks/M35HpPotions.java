@@ -1,10 +1,11 @@
 /**
- * Bình HP lv30 cho riêng nhiệm vụ 23 (TaskMatsurugi35, bước "Nhặt tấm địa đồ").
+ * Bình HP + MP lv30 cho riêng nhiệm vụ 23 (TaskMatsurugi35, bước "Nhặt tấm địa đồ").
  *
- *  - ensureStock(): trước khi dùng chìa, túi phải có >= MIN bình; thiếu thì ghé Làng chài
- *    (map 32, NPC 3, shop 7 — nằm sẵn trên đường Oshin -> 32 -> 35) mua bù đủ STOCK.
- *  - drink(): trong map ẩn, HP <= 90% thì uống bình (đợi hiệu ứng hồi máu id 21 hết).
- *    Trong lúc đó tắt tự uống gốc của game (Uplevel35Support.suppressNativeHp) để không uống trùng
+ *  - ensureStock(): trước khi dùng chìa, túi phải có >= MIN bình HP và >= MP_MIN bình MP; thiếu loại
+ *    nào thì ghé Làng chài (map 32, NPC 3, shop 7 — nằm sẵn trên đường Oshin -> 32 -> 35) mua bù loại đó.
+ *  - drink(): trong map ẩn, HP <= 90% thì uống bình HP (đợi hiệu ứng hồi máu id 21 hết),
+ *    MP <= MP_DRINK_PERCENT thì uống bình MP.
+ *    Trong lúc đó tắt tự uống gốc của game (Uplevel35Support.suppressNativeHp/Mp) để không uống trùng
  *    hoặc uống nhầm bình cấp thấp.
  */
 final class M35HpPotions {
@@ -13,6 +14,12 @@ final class M35HpPotions {
     static final int DRINK_PERCENT = Integer.getInteger("nso.uplevel35.m35.hpPercent", 90).intValue();
     static final int POTION_LEVEL = 30;
     static final int HP_TYPE = 16;
+    static final int MP_TYPE = 17;
+    /** Bình MP lv30: id 20, 500 yên, bán cùng shop 7 với bình HP (người dùng cho, 2026-11-18). */
+    static final int MP_ID = Integer.getInteger("nso.uplevel35.m35.mpId", 20).intValue();
+    static final int MP_STOCK = Integer.getInteger("nso.uplevel35.m35.mpStock", 50).intValue();
+    static final int MP_MIN = Integer.getInteger("nso.uplevel35.m35.mpMin", 25).intValue();
+    static final int MP_DRINK_PERCENT = Integer.getInteger("nso.uplevel35.m35.mpPercent", 50).intValue();
     static final int SHOP_MAP = 32;
     static final int SHOP_NPC = 3;
     static final int SHOP_ID = 7;
@@ -28,14 +35,18 @@ final class M35HpPotions {
     static final int MAX_BUY = 50;
     static final int RESERVE_YEN = Integer.getInteger("nso.uplevel35.m35.reserveYen", 5000).intValue();
 
-    /** id template bình đã mua (học từ shop); -1 = nhận theo type 16 + level 30. */
+    /** id template bình HP đã mua (học từ shop); -1 = nhận theo type 16 + level 30. */
     private int potionId = -1;
+    /** id template bình MP: mặc định MP_ID, shop trả id khác thì học lại theo shop. */
+    private int mpPotionId = MP_ID;
     private int buyFails;
     /** Trần số lượng mỗi lần mua; 0 = mua đủ STOCK. Mua lỗi (thường do thiếu yên) thì giảm một nửa. */
     private int buyCap;
     private long retryAt;
     private long lastDrinkAt;
     private int drinks;
+    private long lastMpDrinkAt;
+    private int mpDrinks;
 
     void reset() {
         this.buyFails = 0;
@@ -43,7 +54,10 @@ final class M35HpPotions {
         this.retryAt = 0L;
         this.lastDrinkAt = 0L;
         this.drinks = 0;
+        this.lastMpDrinkAt = 0L;
+        this.mpDrinks = 0;
         Uplevel35Support.suppressNativeHp = false;
+        Uplevel35Support.suppressNativeMp = false;
     }
 
     private boolean isPotion(Item item) {
@@ -56,20 +70,40 @@ final class M35HpPotions {
         return item.template.type == HP_TYPE && item.template.level == POTION_LEVEL;
     }
 
+    private boolean isMpPotion(Item item) {
+        if (item == null || item.template == null || item.quantity <= 0) {
+            return false;
+        }
+        if (this.mpPotionId >= 0) {
+            return item.template.id == this.mpPotionId;
+        }
+        return item.template.type == MP_TYPE && item.template.level == POTION_LEVEL;
+    }
+
     int count(Char me) {
+        return this.count(me, false);
+    }
+
+    int countMp(Char me) {
+        return this.count(me, true);
+    }
+
+    private int count(Char me, boolean mp) {
         int total = 0;
         for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
-            if (this.isPotion(me.arrItemBag[i])) {
-                total += me.arrItemBag[i].quantity;
+            Item item = me.arrItemBag[i];
+            if (mp ? this.isMpPotion(item) : this.isPotion(item)) {
+                total += item.quantity;
             }
         }
         return total;
     }
 
-    private Item find(Char me) {
+    private Item find(Char me, boolean mp) {
         for (int i = 0; me.arrItemBag != null && i < me.arrItemBag.length; i++) {
-            if (this.isPotion(me.arrItemBag[i])) {
-                return me.arrItemBag[i];
+            Item item = me.arrItemBag[i];
+            if (mp ? this.isMpPotion(item) : this.isPotion(item)) {
+                return item;
             }
         }
         return null;
@@ -77,10 +111,13 @@ final class M35HpPotions {
 
     // ------------------------------------------------------------------ mua
 
-    /** true = đủ bình (hoặc mua lỗi quá nhiều lần, cho đi đánh luôn); false = đang đi mua. */
+    /** true = đủ bình HP + MP (hoặc mua lỗi quá nhiều lần, cho đi đánh luôn); false = đang đi mua. */
     boolean ensureStock(As35 bot, Char me) {
         int have = this.count(me);
-        if (have >= MIN) {
+        int haveMp = this.countMp(me);
+        boolean needHp = have < MIN;
+        boolean needMp = haveMp < MP_MIN;
+        if (!needHp && !needMp) {
             return true;
         }
         long now = System.currentTimeMillis();
@@ -94,15 +131,17 @@ final class M35HpPotions {
             // Hết thời gian chờ sau 3 lần lỗi: thử lại từ đầu.
             this.buyFails = 0;
         }
+        // HP và MP lv30 cùng giá 500 yên.
         if (affordable(me, PRICE_LV30, MIN_BUY) < MIN_BUY) {
             this.buyFails = MAX_BUY_FAILS;
             this.retryAt = now + GIVE_UP_MS;
             Uplevel35.log("HPPOT không đủ yên mua " + MIN_BUY + " bình lv30 (yên=" + me.yen + " dự trữ=" + RESERVE_YEN
-                    + " giá=" + PRICE_LV30 + "), kho=" + have + " -> đánh luôn, " + GIVE_UP_MS / 1000L + "s sau xem lại");
+                    + " giá=" + PRICE_LV30 + "), kho HP=" + have + " MP=" + haveMp + " -> đánh luôn, "
+                    + GIVE_UP_MS / 1000L + "s sau xem lại");
             return true;
         }
-        Uplevel35.logEvery("hppot-stock", 10000L, "HPPOT kho=" + have + "/" + MIN + " -> mua đủ " + STOCK
-                + " ở map " + SHOP_MAP + " npc " + SHOP_NPC);
+        Uplevel35.logEvery("hppot-stock", 10000L, "HPPOT kho HP=" + have + "/" + MIN + " MP=" + haveMp + "/" + MP_MIN
+                + " -> mua bù ở map " + SHOP_MAP + " npc " + SHOP_NPC);
         if (TileMap.mapID != SHOP_MAP) {
             bot.goMap(SHOP_MAP);
             return false;
@@ -126,45 +165,78 @@ final class M35HpPotions {
             this.fail(now, "shop " + SHOP_ID + " không phản hồi");
             return false;
         }
+        String error = null;
+        if (needHp) {
+            error = this.buyHp(shop, me);
+        }
+        if (needMp) {
+            String mpError = this.buyMp(shop, me);
+            if (mpError != null) {
+                error = error == null ? mpError : error + "; " + mpError;
+            }
+        }
+        if (error != null) {
+            this.fail(now, error);
+            return false;
+        }
+        this.buyFails = 0;
+        return this.count(me) >= MIN && this.countMp(me) >= MP_MIN;
+    }
+
+    /** null = mua được; ngược lại là lý do lỗi. */
+    private String buyHp(Item[] shop, Char me) {
         Item offer = bestOffer(shop, me.clevel);
         if (offer == null) {
-            this.fail(now, "shop không có bình HP: " + describe(shop));
-            return false;
+            return "shop không có bình HP: " + describe(shop);
         }
         if (offer.template.level != POTION_LEVEL) {
             Uplevel35.logEvery("hppot-level", 60000L, "HPPOT shop không có bình lv" + POTION_LEVEL
                     + ", dùng " + offer.template.name + " lv" + offer.template.level + " shop=" + describe(shop));
         }
         this.potionId = offer.template.id;
-        int before = this.count(me);
-        int need = STOCK - before;
+        int price = offer.template.level >= 50 ? 1000 : (offer.template.level >= 30 ? PRICE_LV30 : 100);
+        return this.buy("HPPOT", offer, me, STOCK, price, false);
+    }
+
+    private String buyMp(Item[] shop, Char me) {
+        Item offer = mpOffer(shop);
+        if (offer == null) {
+            return "shop không có bình MP id=" + MP_ID + "/lv" + POTION_LEVEL + ": " + describe(shop);
+        }
+        if (offer.template.id != MP_ID) {
+            Uplevel35.logEvery("mppot-id", 60000L, "MPPOT shop không có id " + MP_ID + ", dùng " + offer.template.name
+                    + " id=" + offer.template.id + " lv" + offer.template.level + " shop=" + describe(shop));
+        }
+        this.mpPotionId = offer.template.id;
+        return this.buy("MPPOT", offer, me, MP_STOCK, PRICE_LV30, true);
+    }
+
+    private String buy(String tag, Item offer, Char me, int stock, int price, boolean mp) {
+        int before = this.count(me, mp);
+        int need = stock - before;
         if (this.buyCap > 0 && need > this.buyCap) {
             need = this.buyCap;
         }
-        int price = offer.template.level >= 50 ? 1000 : (offer.template.level >= 30 ? PRICE_LV30 : 100);
         need = affordable(me, price, need);
         if (need < 1) {
-            this.fail(now, "không đủ yên (yên=" + me.yen + " giá=" + price + ")");
-            return false;
+            return tag + " không đủ yên (yên=" + me.yen + " giá=" + price + ")";
         }
-        Uplevel35.log("HPPOT mua " + offer.template.name + " id=" + offer.template.id + " lv" + offer.template.level
-                + " sl=" + need + " giá(xu/yên/lượng)=" + offer.buyCoin + "/" + offer.buyCoinLock + "/" + offer.buyGold
-                + " yên=" + me.yen + " shopIndex=" + offer.indexUI);
+        Uplevel35.log(tag + " mua " + offer.template.name + " id=" + offer.template.id + " type=" + offer.template.type
+                + " lv" + offer.template.level + " sl=" + need + " giá(xu/yên/lượng)=" + offer.buyCoin + "/"
+                + offer.buyCoinLock + "/" + offer.buyGold + " yên=" + me.yen + " shopIndex=" + offer.indexUI);
         Service.gI().buyItem(offer.typeUI, offer.indexUI, need);
-        deadline = System.currentTimeMillis() + 5000L;
-        while (this.count(me) <= before && System.currentTimeMillis() < deadline) {
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (this.count(me, mp) <= before && System.currentTimeMillis() < deadline) {
             Auto.fieldAA(100L);
         }
-        int after = this.count(me);
+        int after = this.count(me, mp);
         if (after <= before) {
             this.buyCap = Math.max(MIN_BUY, need / 2);
-            this.fail(now, "mua " + need + " nhưng túi chưa tăng (" + before + ") yên=" + me.yen
-                    + " -> lần sau mua " + this.buyCap);
-            return false;
+            return tag + " mua " + need + " nhưng túi chưa tăng (" + before + ") yên=" + me.yen
+                    + " -> lần sau mua " + this.buyCap;
         }
-        this.buyFails = 0;
-        Uplevel35.log("HPPOT đã mua: kho " + before + " -> " + after + " yên=" + me.yen);
-        return after >= MIN;
+        Uplevel35.log(tag + " đã mua: kho " + before + " -> " + after + " yên=" + me.yen);
+        return null;
     }
 
     /** min(want, (yên - dự trữ) / giá). */
@@ -203,6 +275,24 @@ final class M35HpPotions {
         return best;
     }
 
+    /** Bình MP id MP_ID; shop không có id đó thì lấy bình MP (type 17) lv30. */
+    private static Item mpOffer(Item[] shop) {
+        Item fallback = null;
+        for (int i = 0; i < shop.length; i++) {
+            Item item = shop[i];
+            if (item == null || item.template == null) {
+                continue;
+            }
+            if (item.template.id == MP_ID) {
+                return item;
+            }
+            if (fallback == null && item.template.type == MP_TYPE && item.template.level == POTION_LEVEL) {
+                fallback = item;
+            }
+        }
+        return fallback;
+    }
+
     private static String describe(Item[] shop) {
         StringBuffer out = new StringBuffer("[");
         for (int i = 0; i < shop.length; i++) {
@@ -220,14 +310,16 @@ final class M35HpPotions {
     /** Gọi mỗi tick khi đang ở map ẩn. */
     void drink(Char me) {
         Uplevel35Support.suppressNativeHp = true;
+        Uplevel35Support.suppressNativeMp = true;
+        long now = System.currentTimeMillis();
+        this.drinkMp(me, now);
         if (me.cHP <= 0 || me.cMaxHP <= 0 || (long) me.cHP * 100L > (long) me.cMaxHP * DRINK_PERCENT) {
             return;
         }
-        long now = System.currentTimeMillis();
         if (now - this.lastDrinkAt < 1000L || regenActive(me)) {
             return;
         }
-        Item potion = this.find(me);
+        Item potion = this.find(me, false);
         if (potion == null) {
             Uplevel35.logEvery("hppot-empty", 30000L, "HPPOT hết bình trong map ẩn hp=" + me.cHP + "/" + me.cMaxHP
                     + ", đánh tiếp (không rời map)");
@@ -240,14 +332,38 @@ final class M35HpPotions {
         Service.gI().useItem(potion.indexUI);
     }
 
+    /** MP <= MP_DRINK_PERCENT thì uống bình MP lv30 (cách nhau >= 1,5 giây). */
+    private void drinkMp(Char me, long now) {
+        if (me.cHP <= 0 || me.cMaxMP <= 0 || (long) me.cMP * 100L > (long) me.cMaxMP * MP_DRINK_PERCENT) {
+            return;
+        }
+        if (now - this.lastMpDrinkAt < 1500L) {
+            return;
+        }
+        Item potion = this.find(me, true);
+        if (potion == null) {
+            Uplevel35.logEvery("mppot-empty", 30000L, "MPPOT hết bình trong map ẩn mp=" + me.cMP + "/" + me.cMaxMP
+                    + ", đánh tiếp (không rời map)");
+            return;
+        }
+        this.lastMpDrinkAt = now;
+        ++this.mpDrinks;
+        Uplevel35.logEvery("mppot-drink", 5000L, "MPPOT uống " + potion.template.name + " id=" + potion.template.id
+                + " mp=" + me.cMP + "/" + me.cMaxMP + " còn=" + (this.countMp(me) - 1)
+                + " đã uống lượt này=" + this.mpDrinks);
+        Service.gI().useItem(potion.indexUI);
+    }
+
     /** Rời map ẩn (chết hoặc xong): bật lại tự uống gốc, in tổng số bình đã uống. */
     void leaveHidden(Char me, String why) {
         Uplevel35Support.suppressNativeHp = false;
-        if (this.drinks > 0) {
-            Uplevel35.log("HPPOT lượt map ẩn kết thúc (" + why + "): đã uống " + this.drinks + " bình, còn "
-                    + this.count(me));
+        Uplevel35Support.suppressNativeMp = false;
+        if (this.drinks > 0 || this.mpDrinks > 0) {
+            Uplevel35.log("HPPOT lượt map ẩn kết thúc (" + why + "): đã uống HP " + this.drinks + " bình (còn "
+                    + this.count(me) + "), MP " + this.mpDrinks + " bình (còn " + this.countMp(me) + ")");
         }
         this.drinks = 0;
+        this.mpDrinks = 0;
     }
 
     private static boolean regenActive(Char me) {

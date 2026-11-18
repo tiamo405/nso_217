@@ -114,8 +114,9 @@ public class As35 extends Auto {
             Uplevel35.log("TASK " + handler.label() + " " + describeTask(me));
         }
         if (me.ctaskId != TaskMatsurugi35.TASK_ID || task == null || task.index != 1) {
-            // Tự uống bình HP riêng (M35HpPotions) chỉ dùng ở task 23 bước 1; còn lại dùng tự uống gốc.
+            // Tự uống bình HP/MP riêng (M35HpPotions) chỉ dùng ở task 23 bước 1; còn lại dùng tự uống gốc.
             Uplevel35Support.suppressNativeHp = false;
+            Uplevel35Support.suppressNativeMp = false;
         }
         if (task == null) {
             this.talkToTaskNpc("nhận " + handler.label());
