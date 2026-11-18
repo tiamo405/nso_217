@@ -1023,9 +1023,15 @@ def _read_proxy(worker_dir: Path) -> Optional[str]:
     return None if not value or value.lower() == "direct" else value
 
 
+def worker_sort_key(path: Path) -> tuple[int, str]:
+    """worker-2 < worker-10 < worker-100 (sort theo số, không theo chuỗi)."""
+    suffix = path.name.rsplit("-", 1)[-1]
+    return (int(suffix) if suffix.isdigit() else 1 << 30, path.name)
+
+
 def get_workers_status_dict() -> Dict[str, Any]:
     """Trả về trạng thái toàn bộ workers dạng dict (JSON compatible) cho Web Dashboard."""
-    worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
+    worker_dirs = sorted(WORKERS_DIR.glob("worker-*"), key=worker_sort_key)
     workers = []
 
     for worker_dir in worker_dirs:
@@ -1151,7 +1157,7 @@ def _cmd_status_inner(args: Any) -> int:
         print(json.dumps(get_workers_status_dict(), ensure_ascii=False, indent=2))
         return 0
 
-    worker_dirs = sorted(WORKERS_DIR.glob("worker-*"))
+    worker_dirs = sorted(WORKERS_DIR.glob("worker-*"), key=worker_sort_key)
     if not worker_dirs:
         _safe_print("[!] Khong co worker nao trong thu muc.")
         return 0

@@ -173,7 +173,7 @@ def parse_nvhn_status(msg: str) -> dict[str, Any]:
         value = value.strip()
         if key == "nv":
             data["char"] = value
-        elif key in ("nvhn", "progress", "hp"):
+        elif key in ("nvhn", "progress", "hp", "bag"):
             cur, maximum = _ratio(value)
             data[key] = cur
             data[f"{key}_max"] = maximum

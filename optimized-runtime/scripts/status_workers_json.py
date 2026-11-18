@@ -174,13 +174,19 @@ def worker_status(worker_dir: Path) -> dict[str, object]:
     }
 
 
+def worker_sort_key(path: Path) -> tuple[int, str]:
+    """worker-2 < worker-10 < worker-100 (sort theo số, không theo chuỗi)."""
+    suffix = path.name.rsplit("-", 1)[-1]
+    return (int(suffix) if suffix.isdigit() else 1 << 30, path.name)
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("Usage: status_workers_json.py WORKERS_DIR", file=sys.stderr)
         return 2
 
     workers_dir = Path(sys.argv[1]).resolve()
-    workers = [worker_status(path) for path in sorted(workers_dir.glob("worker-*")) if path.is_dir()]
+    workers = [worker_status(path) for path in sorted(workers_dir.glob("worker-*"), key=worker_sort_key) if path.is_dir()]
     totals = {
         "running": sum(worker["state"] == "RUNNING" for worker in workers),
         "stopped": sum(worker["state"] in {"STOPPED", "STALE_PID"} for worker in workers),

@@ -235,6 +235,8 @@ function ageCell(ts, now, live, staleSec) {
 
 const STATE_LABEL = {running: "Đang chạy", switching: "Đổi JVM", done: "Xong", stopped: "Dừng"};
 
+const naturalCmp = new Intl.Collator("en", { numeric: true }).compare;
+
 function render() {
   if (!lastData) return;
   const now = lastData.now;
@@ -248,8 +250,10 @@ function render() {
     w.log_bad = live && (!w.log_mtime || now - w.log_mtime > staleSec);
   });
   rows.sort((a, b) => {
-    const x = sortKey === "worker" ? a.runtime + a.worker : a[sortKey];
-    const y = sortKey === "worker" ? b.runtime + b.worker : b[sortKey];
+    // Cột worker: so sánh số (worker-2 < worker-10 < worker-100), không theo chuỗi.
+    if (sortKey === "worker") return naturalCmp(a.runtime + " " + a.worker, b.runtime + " " + b.worker) * sortDir;
+    const x = a[sortKey];
+    const y = b[sortKey];
     if (x === y) return 0;
     if (x === null || x === undefined) return 1;
     if (y === null || y === undefined) return -1;

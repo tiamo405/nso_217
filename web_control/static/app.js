@@ -360,7 +360,7 @@ async function saveSettings(event) {
 // Workers table (cập nhật theo dòng, không vẽ lại cả bảng mỗi 5s)
 // ====================================================================
 const COLUMNS = {
-  nvhn: ["", "Worker", "Trạng thái", "Nhân vật", "Tiến độ", "Yên · Xu · Lượng", "Tài nguyên", "Sự kiện cuối", ""],
+  nvhn: ["", "Worker", "Trạng thái", "Nhân vật", "Tiến độ", "Yên · Xu · Lượng · Hành trang", "Tài nguyên", "Sự kiện cuối", ""],
   ta_thu: ["", "Worker", "Trạng thái", "Nhân vật", "Boss", "HP / MP", "Kết quả", "Yên · Xu · Lượng", "Tài nguyên", "Sự kiện cuối", ""],
 };
 const STATE_LABEL = {
@@ -377,6 +377,12 @@ function currentWorkers() {
 function isProblem(worker) {
   const stale = (worker.last_log_age_seconds ?? 0) > 300 && worker.state === "RUNNING";
   return ["ERROR", "STALE_PID"].includes(worker.state) || stale || worker.last_event?.level === "error";
+}
+
+// "worker-2" < "worker-10" < "worker-100" (so sánh số, không theo chuỗi).
+const workerCollator = new Intl.Collator("en", { numeric: true });
+function compareWorkerName(a, b) {
+  return workerCollator.compare(a.name || "", b.name || "");
 }
 
 function workerVisible(worker) {
@@ -424,11 +430,20 @@ function moneyCell(worker) {
   const src = state.tab === "ta_thu" ? worker.fight : worker.nvhn_status;
   const items = [["yen", "yên"], ["xu", "xu"], ["luong", "lượng"]]
     .map(([key, label]) => [label, money(src?.[key])]).filter(([, v]) => v);
-  if (!items.length) return `<span class="muted">—</span>`;
+  const bag = bagHtml(src?.bag, src?.bag_max);
+  if (!items.length && !bag) return `<span class="muted">—</span>`;
   return `<div class="money">${items.map(([label, v]) =>
     `<span title="${label} ${v.n.toLocaleString("vi-VN")}${v.delta ? ` (${v.delta} trong 30s)` : ""}">` +
     `<b>${compact(v.n)}</b> <span class="muted">${label}</span>` +
-    (v.delta ? ` <small class="${v.delta.startsWith("-") ? "bad" : "ok"}">${esc(v.delta)}</small>` : "") + `</span>`).join("")}</div>`;
+    (v.delta ? ` <small class="${v.delta.startsWith("-") ? "bad" : "ok"}">${esc(v.delta)}</small>` : "") + `</span>`).join("")}` +
+    (bag ? `<span title="Hành trang: ${src.bag} ô trống / ${src.bag_max} ô">${bag} <span class="muted">ô trống</span></span>` : "") + `</div>`;
+}
+
+// Ô trống hành trang, tô cảnh báo khi sắp đầy (giống uplevel_monitor).
+function bagHtml(free, total) {
+  if (!(total > 0) || free == null) return "";
+  const cls = free <= 2 ? "bad" : free <= 5 ? "warn" : "";
+  return `<b class="${cls}">${free}</b><span class="muted">/${total}</span>`;
 }
 
 function resourceCell(worker) {
@@ -530,7 +545,7 @@ function renderWorkers() {
   renderHead();
   const body = $("#workers-body");
   const workers = currentWorkers();
-  const visible = workers.filter(workerVisible);
+  const visible = workers.filter(workerVisible).sort(compareWorkerName);
   const names = new Set(workers.map((w) => w.name));
   for (const name of [...state.selected]) if (!names.has(name)) state.selected.delete(name);
 
@@ -1064,6 +1079,7 @@ function charLine(c, runtime) {
   if (c.map) parts.push(`map ${esc(c.map)}`);
   if (c.hp_max) parts.push(`HP ${c.hp}/${c.hp_max}`);
   if (c.yen != null) parts.push(`yên ${num(c.yen)} · xu ${num(c.xu)} · lượng ${num(c.luong)}`);
+  if (c.bag_max) parts.push(`hành trang ${bagHtml(c.bag, c.bag_max)}`);
   return parts.join(" · ");
 }
 
@@ -1130,7 +1146,8 @@ function renderInfo() {
   }
   stats.push(
     infoStat("Map · HP", playing?.map ? esc(playing.map) : "—", playing?.hp_max ? `HP ${playing.hp}/${playing.hp_max}` : ""),
-    infoStat("Yên · Xu · Lượng", playing?.yen != null ? `${num(playing.yen)} · ${num(playing.xu)} · ${num(playing.luong)}` : "—"),
+    infoStat("Yên · Xu · Lượng", playing?.yen != null ? `${num(playing.yen)} · ${num(playing.xu)} · ${num(playing.luong)}` : "—",
+      playing?.bag_max ? `hành trang trống ${bagHtml(playing.bag, playing.bag_max)}` : ""),
     infoStat("CPU · RAM", w.pid ? `${w.cpu_percent ?? "—"}% · ${w.rss_mb ?? "—"} MB` : "—"),
     infoStat("Log cuối", esc(formatAge(w.last_log_age_seconds)), esc(formatTimestamp(w.last_log_at))),
   );

@@ -273,7 +273,23 @@ public final class AutoNvhn extends Auto {
               + " hp=" + me.cHP + "/" + me.cMaxHP
               + " yen=" + me.yen + formatDelta(yenDelta)
               + " xu=" + me.xu + formatDelta(xuDelta)
-              + " luong=" + me.luong + formatDelta(luongDelta));
+              + " luong=" + me.luong + formatDelta(luongDelta)
+              + " bag=" + bagStatus(me));
+   }
+
+   // "ô trống/tổng ô" của hành trang, "-" nếu chưa có dữ liệu.
+   private static String bagStatus(Char me) {
+      Item[] bag = me.arrItemBag;
+      if (bag == null) {
+         return "-";
+      }
+      int free = 0;
+      for (int i = 0; i < bag.length; i++) {
+         if (bag[i] == null) {
+            free++;
+         }
+      }
+      return free + "/" + bag.length;
    }
 
    private static String formatDelta(int value) {

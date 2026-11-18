@@ -250,13 +250,19 @@ def worker_snapshot(runtime: str, worker_dir: Path) -> dict[str, object]:
     }
 
 
+def worker_sort_key(path: Path) -> tuple[int, str]:
+    """worker-2 < worker-10 < worker-100 (sort theo số, không theo chuỗi)."""
+    suffix = path.name.rsplit("-", 1)[-1]
+    return (int(suffix) if suffix.isdigit() else 1 << 30, path.name)
+
+
 def collect() -> dict[str, object]:
     now = time.time()
     workers = []
     for runtime, workers_dir in RUNTIMES.items():
         if not workers_dir.is_dir():
             continue
-        for worker_dir in sorted(workers_dir.iterdir()):
+        for worker_dir in sorted(workers_dir.iterdir(), key=worker_sort_key):
             if worker_dir.is_dir() and WORKER_RE.match(worker_dir.name):
                 workers.append(worker_snapshot(runtime, worker_dir))
     # Dọn mẫu CPU của PID đã chết.

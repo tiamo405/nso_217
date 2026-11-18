@@ -97,7 +97,8 @@ class Runtime:
             return dirs
         if not self.workers.is_dir():
             return []
-        return sorted(d for d in self.workers.iterdir() if d.is_dir() and WORKER_RE.match(d.name))
+        return sorted((d for d in self.workers.iterdir() if d.is_dir() and WORKER_RE.match(d.name)),
+                      key=lambda d: int(d.name.rsplit("-", 1)[-1]))
 
     def needles(self, worker_dir: Path) -> list[str]:
         """Chuỗi phải có trong cmdline của java/loop thuộc worker này (giống is_worker_pid trong .sh)."""

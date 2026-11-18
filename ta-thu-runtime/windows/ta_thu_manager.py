@@ -180,8 +180,14 @@ def read_pid(path: Path) -> int | None:
         return None
 
 
+def worker_sort_key(path: Path) -> tuple[int, str]:
+    """worker-2 < worker-10 < worker-100 (sort theo số, không theo chuỗi)."""
+    suffix = path.name.rsplit("-", 1)[-1]
+    return (int(suffix) if suffix.isdigit() else 1 << 30, path.name)
+
+
 def worker_dirs() -> list[Path]:
-    return sorted(path for path in WORKERS_DIR.glob("worker-*") if path.is_dir())
+    return sorted((path for path in WORKERS_DIR.glob("worker-*") if path.is_dir()), key=worker_sort_key)
 
 
 def parse_workers(values: list[str]) -> set[int]:

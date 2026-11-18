@@ -30,7 +30,7 @@ NVHN_FINISHED = "nhân vật đã hết nhiệm vụ"
 TA_THU_RESULT = {"TA THU KILL": "kills", "TA THU LOST": "lost", "TA THU DEATH": "deaths", "TA THU PK": "deaths"}
 
 STATUS_FIELDS = ("level", "map", "state", "yen", "xu", "luong", "hp", "hp_max",
-                 "nvhn", "nvhn_max", "progress", "progress_max")
+                 "nvhn", "nvhn_max", "progress", "progress_max", "bag", "bag_max")
 
 
 def account_names(csv_path: Path) -> list[str]:
@@ -54,7 +54,7 @@ def _new_char(name: str) -> dict[str, Any]:
     return {
         "name": name, "level": None, "phai": "", "state": "pending", "note": "",
         "map": None, "nvhn": None, "nvhn_max": None, "progress": None, "progress_max": None,
-        "hp": None, "hp_max": None, "yen": None, "xu": None, "luong": None, "activity": None,
+        "hp": None, "hp_max": None, "bag": None, "bag_max": None, "yen": None, "xu": None, "luong": None, "activity": None,
         "task_done": None, "task_total": None, "kills": 0, "lost": 0, "deaths": 0,
         "at": None, "from_roster": False,
     }
