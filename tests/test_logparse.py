@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from web_control.logparse import parse_line, parse_lines, read_new_lines, summarize
+from web_control.logparse import parse_line, parse_lines, parse_nvhn_status, read_new_lines, summarize
 
 FIGHT = (
     "11:02:03 AUTO TA THU FIGHT: nv=khongkhongkhong map=52 z=10[L] kill=35 pos=(534,168) "
@@ -76,6 +76,34 @@ class LogParseTest(unittest.TestCase):
             lines, _, reset = read_new_lines(path, position)
             self.assertTrue(reset)
             self.assertEqual(lines, ["x"])
+
+
+class NvhnStatusTest(unittest.TestCase):
+    LINE = ("AUTO NVHN STATUS: username=acc1 nv=alpha level=36 map=1(Trường Hirosaki) "
+            "state=đang nhận nhiệm vụ nvhn=0/20 progress=- hp=788/788 "
+            "yen=15325105(+466) xu=197000(-500) luong=1120 bag={bag}")
+
+    def test_money_and_bag_each_field(self) -> None:
+        data = parse_nvhn_status(self.LINE.format(bag="7/30"))
+        self.assertEqual(data["yen"], "15325105(+466)")
+        self.assertEqual(data["xu"], "197000(-500)")
+        self.assertEqual(data["luong"], "1120")
+        self.assertEqual((data["bag"], data["bag_max"]), (7, 30))
+
+    def test_bag_full_and_unknown(self) -> None:
+        self.assertEqual(parse_nvhn_status(self.LINE.format(bag="0/42"))["bag"], 0)
+        unknown = parse_nvhn_status(self.LINE.format(bag="-"))
+        self.assertIsNone(unknown["bag"])
+        self.assertEqual(unknown["luong"], "1120")
+
+    def test_old_line_without_bag(self) -> None:
+        data = parse_nvhn_status(self.LINE.replace(" bag={bag}", ""))
+        self.assertNotIn("bag", data)
+        self.assertEqual(data["luong"], "1120")
+
+    def test_summary_status_keeps_bag(self) -> None:
+        lines = parse_lines(["10:00:00 " + self.LINE.format(bag="3/30")])
+        self.assertEqual(summarize(lines)["status"]["bag"], 3)
 
 
 if __name__ == "__main__":

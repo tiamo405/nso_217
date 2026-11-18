@@ -360,8 +360,8 @@ async function saveSettings(event) {
 // Workers table (cập nhật theo dòng, không vẽ lại cả bảng mỗi 5s)
 // ====================================================================
 const COLUMNS = {
-  nvhn: ["", "Worker", "Trạng thái", "Nhân vật", "Tiến độ", "Yên · Xu · Lượng · Hành trang", "Tài nguyên", "Sự kiện cuối", ""],
-  ta_thu: ["", "Worker", "Trạng thái", "Nhân vật", "Boss", "HP / MP", "Kết quả", "Yên · Xu · Lượng", "Tài nguyên", "Sự kiện cuối", ""],
+  nvhn: ["", "Worker", "Trạng thái", "Nhân vật", "Tiến độ", "Yên", "Xu", "Lượng", "Hành trang", "Tài nguyên", "Sự kiện cuối", ""],
+  ta_thu: ["", "Worker", "Trạng thái", "Nhân vật", "Boss", "HP / MP", "Kết quả", "Yên", "Xu", "Lượng", "Tài nguyên", "Sự kiện cuối", ""],
 };
 const STATE_LABEL = {
   RUNNING: "Đang chạy", STOPPED: "Dừng", PAUSED: "Tạm dừng", DONE: "Xong", STALE_PID: "PID cũ", ERROR: "Lỗi",
@@ -426,17 +426,29 @@ function money(value) {
   return m ? { n: Number(m[1]), delta: m[2] || "" } : null;
 }
 
-function moneyCell(worker) {
-  const src = state.tab === "ta_thu" ? worker.fight : worker.nvhn_status;
-  const items = [["yen", "yên"], ["xu", "xu"], ["luong", "lượng"]]
-    .map(([key, label]) => [label, money(src?.[key])]).filter(([, v]) => v);
+function moneySource(worker) {
+  return state.tab === "ta_thu" ? worker.fight : worker.nvhn_status;
+}
+
+// Một ô tiền (yên / xu / lượng): số rút gọn + biến động 30s.
+function moneyCell(worker, key, label) {
+  const v = money(moneySource(worker)?.[key]);
+  if (!v) return `<span class="muted">—</span>`;
+  return `<div class="money" title="${label} ${v.n.toLocaleString("vi-VN")}${v.delta ? ` (${v.delta} trong 30s)` : ""}">` +
+    `<b>${compact(v.n)}</b>` +
+    (v.delta ? `<small class="${v.delta.startsWith("-") ? "bad" : "ok"}">${esc(v.delta)}</small>` : "") + `</div>`;
+}
+
+function moneyCells(worker) {
+  return [moneyCell(worker, "yen", "Yên"), moneyCell(worker, "xu", "Xu"), moneyCell(worker, "luong", "Lượng")];
+}
+
+function bagCell(worker) {
+  const src = moneySource(worker);
   const bag = bagHtml(src?.bag, src?.bag_max);
-  if (!items.length && !bag) return `<span class="muted">—</span>`;
-  return `<div class="money">${items.map(([label, v]) =>
-    `<span title="${label} ${v.n.toLocaleString("vi-VN")}${v.delta ? ` (${v.delta} trong 30s)` : ""}">` +
-    `<b>${compact(v.n)}</b> <span class="muted">${label}</span>` +
-    (v.delta ? ` <small class="${v.delta.startsWith("-") ? "bad" : "ok"}">${esc(v.delta)}</small>` : "") + `</span>`).join("")}` +
-    (bag ? `<span title="Hành trang: ${src.bag} ô trống / ${src.bag_max} ô">${bag} <span class="muted">ô trống</span></span>` : "") + `</div>`;
+  if (!bag) return `<span class="muted">—</span>`;
+  return `<div class="money" title="Hành trang: ${src.bag} ô trống / ${src.bag_max} ô">` +
+    `<span>${bag}</span><small class="muted">ô trống</small></div>`;
 }
 
 // Ô trống hành trang, tô cảnh báo khi sắp đầy (giống uplevel_monitor).
@@ -536,9 +548,9 @@ function rowCells(worker) {
   const sel = `<input type="checkbox" data-select ${state.selected.has(worker.name) ? "checked" : ""} aria-label="Chọn ${esc(worker.name)}">`;
   const charHtml = esc(worker.char_name || "—");
   if (state.tab === "ta_thu") {
-    return [sel, nameHtml, stateHtml, charHtml, bossCell(worker), hpCell(worker), resultCell(worker), moneyCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
+    return [sel, nameHtml, stateHtml, charHtml, bossCell(worker), hpCell(worker), resultCell(worker), ...moneyCells(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
   }
-  return [sel, nameHtml, stateHtml, charHtml, progressCell(worker), moneyCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
+  return [sel, nameHtml, stateHtml, charHtml, progressCell(worker), ...moneyCells(worker), bagCell(worker), resourceCell(worker), eventCell(worker), actionsCell(worker)];
 }
 
 function renderWorkers() {

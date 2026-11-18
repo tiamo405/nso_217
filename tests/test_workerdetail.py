@@ -20,7 +20,7 @@ NVHN_LOG = """
 15:00:05 AUTO NVHN: đăng nhập tài khoản acc2 (2/3)
 15:00:06 AUTO ROSTER: chars=delta:40:
 15:00:07 AUTO NVHN: chọn nhân vật delta
-15:00:30 AUTO NVHN STATUS: username=acc2 nv=delta level=40 map=2 state=đi nvhn=1/20 progress=3/10 hp=1/2 yen=1 xu=2 luong=3
+15:00:30 AUTO NVHN STATUS: username=acc2 nv=delta level=40 map=2 state=đi nvhn=1/20 progress=3/10 hp=1/2 yen=1 xu=2 luong=3 bag=4/30
 """
 
 TA_THU_LOG = """
@@ -53,6 +53,11 @@ class ParseWorkerLogTest(unittest.TestCase):
         # Restart giữa nhân vật gamma -> dừng dở, level lấy từ STATUS (roster báo 0 = không rõ).
         self.assertEqual(acc1["gamma"]["state"], "stopped")
         self.assertEqual(acc1["gamma"]["level"], 31)
+        # Log cũ không có bag= -> để trống; log mới -> ô trống/tổng ô.
+        self.assertIsNone(acc1["alpha"]["bag"])
+        delta = parsed["accounts"]["acc2"]["chars"]["delta"]
+        self.assertEqual((delta["bag"], delta["bag_max"]), (4, 30))
+        self.assertEqual((delta["yen"], delta["xu"], delta["luong"]), ("1", "2", "3"))
         self.assertEqual(parsed["accounts"]["acc2"]["chars"]["delta"]["state"], "playing")
         self.assertEqual(parsed["accounts"]["acc2"]["chars"]["delta"]["at"], "2026-11-12 15:00:30")
 
