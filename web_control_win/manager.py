@@ -453,7 +453,7 @@ class WindowsHeadlessManager(ManagerCommon):
                 raise ControlError("Supervisor không dừng sau thời gian chờ")
 
         # Gọi win_manager stop để dừng toàn bộ worker con
-        code, output = await self._run_win_manager("stop", timeout=30)
+        code, output = await self._run_win_manager("stop", timeout=self.settings.stop_timeout)
         if code != 0:
             raise ControlError(output.strip() or "Dừng workers thất bại")
 
@@ -583,7 +583,7 @@ class WindowsHeadlessManager(ManagerCommon):
                     await asyncio.sleep(0.1)
             self._ta_thu_supervisor_process = None
             try:
-                code, output = await self._run_ta_thu_manager("stop", timeout=30)
+                code, output = await self._run_ta_thu_manager("stop", timeout=self.settings.stop_timeout)
             except ControlError:
                 code, output = 0, ""
             if output:

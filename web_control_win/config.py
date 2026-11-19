@@ -23,6 +23,9 @@ class Settings:
     max_upload_bytes: int = 2 * 1024 * 1024
     command_timeout: int = 30
     build_timeout: int = 15 * 60
+    # Dừng toàn bộ worker trên Windows (taskkill + quét tiến trình) có thể lâu
+    # khi có nhiều worker; 30s cũ hay gây "Lệnh win_manager.py stop quá thời gian".
+    stop_timeout: int = int(os.environ.get("NSO_WEB_STOP_TIMEOUT", "180"))
 
     @classmethod
     def from_env(cls) -> "Settings":

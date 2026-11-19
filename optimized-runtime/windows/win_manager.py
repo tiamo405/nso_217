@@ -314,6 +314,72 @@ def is_expected_supervisor_process(pid: int) -> bool:
     return manager_path in command and " supervise" in f" {command}"
 
 
+def _normalize_cmdline(args: List[str]) -> str:
+    return " ".join(args).replace("\\", "/").casefold()
+
+
+def scan_process_cmdlines() -> Dict[int, str]:
+    """Đọc cmdline của các tiến trình java/python MỘT lần (pid -> cmdline chuẩn hóa).
+
+    Trên Windows psutil.cmdline() chậm (đọc PEB của tiến trình khác); quét
+    số_tiến_trình x số_worker lần như trước làm `stop` vượt timeout của web.
+    Lọc theo tên trước (rẻ) rồi mới đọc cmdline.
+    """
+    result: Dict[int, str] = {}
+    try:
+        import psutil  # type: ignore
+    except ImportError:
+        if os.name != "nt":
+            for pid in process_ids():
+                args = process_cmdline(pid)
+                if args:
+                    result[pid] = _normalize_cmdline(args)
+        return result
+
+    for proc in psutil.process_iter(["name"]):
+        try:
+            name = (proc.info.get("name") or "").casefold()
+            if "java" not in name and "python" not in name and "py.exe" not in name:
+                continue
+            args = proc.cmdline()
+        except Exception:
+            continue
+        if args:
+            result[proc.pid] = _normalize_cmdline(args)
+    return result
+
+
+def _is_worker_cmdline(command: str, worker_dir: Path) -> bool:
+    expected_dir = str(worker_dir).replace("\\", "/").casefold()
+    return "optimizedmain" in command and expected_dir in command
+
+
+def _is_supervisor_cmdline(command: str) -> bool:
+    manager_path = str(Path(__file__).resolve()).replace("\\", "/").casefold()
+    return manager_path in command and " supervise" in f" {command}"
+
+
+def kill_pids(pids: List[int]) -> Set[int]:
+    """Dừng nhiều PID; trên Windows gộp thành ít lệnh taskkill thay vì 1 lệnh/worker."""
+    alive = [pid for pid in dict.fromkeys(pids) if pid > 0 and is_pid_running(pid)]
+    if not alive:
+        return set()
+    if os.name != "nt":
+        return {pid for pid in alive if kill_pid(pid)}
+
+    for start in range(0, len(alive), 50):
+        chunk = alive[start:start + 50]
+        cmd = ["taskkill", "/F", "/T"]
+        for pid in chunk:
+            cmd += ["/PID", str(pid)]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       **_hidden_kwargs())
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and any(is_pid_running(pid) for pid in alive):
+        time.sleep(0.1)
+    return {pid for pid in alive if not is_pid_running(pid)}
+
+
 def kill_pid(pid: int) -> bool:
     """Dừng tiến trình bằng PID."""
     if not is_pid_running(pid):
@@ -1026,13 +1092,16 @@ def _cmd_stop_inner(args: Any) -> int:
             pass
         supervisor_pid_file.unlink(missing_ok=True)
 
+    # Quét cmdline MỘT lần cho cả supervisor mồ côi lẫn worker mồ côi.
+    cmdlines = scan_process_cmdlines()
+
     if not target_numbers:
         # A previous supervisor version could lose supervisor.pid while its
         # process kept running. Find and terminate such orphans as well.
-        for candidate in process_ids():
-            if is_expected_supervisor_process(candidate):
-                _safe_print(f"Dang dung Supervisor mo coi (PID {candidate})...")
-                kill_pid(candidate)
+        orphan_supervisors = [pid for pid, cmd in cmdlines.items() if _is_supervisor_cmdline(cmd)]
+        for candidate in orphan_supervisors:
+            _safe_print(f"Dang dung Supervisor mo coi (PID {candidate})...")
+        kill_pids(orphan_supervisors)
 
     selected_worker_dirs = []
     for worker_dir in sorted(WORKERS_DIR.glob("worker-*")):
@@ -1040,8 +1109,7 @@ def _cmd_stop_inner(args: Any) -> int:
         if not target_numbers or num in target_numbers:
             selected_worker_dirs.append(worker_dir)
 
-    stopped = 0
-    stopped_pids: Set[int] = set()
+    to_kill: List[int] = []
     for worker_dir in selected_worker_dirs:
         worker_name = worker_dir.name
 
@@ -1053,9 +1121,7 @@ def _cmd_stop_inner(args: Any) -> int:
             pid = int(pid_file.read_text(encoding="utf-8").strip())
             if is_expected_worker_process(pid, worker_dir):
                 _safe_print(f"Dang dung {worker_name} (PID {pid})...")
-                if kill_pid(pid):
-                    stopped += 1
-                    stopped_pids.add(pid)
+                to_kill.append(pid)
         except (ValueError, OSError):
             pass
 
@@ -1064,16 +1130,16 @@ def _cmd_stop_inner(args: Any) -> int:
     # A Supervisor can be killed while it is between Popen() and writing
     # bot.pid. Scan command lines as a fallback so an untracked Java worker
     # cannot survive Stop all and be mistaken for a later restart.
-    for candidate in process_ids():
-        if candidate in stopped_pids:
+    known = set(to_kill)
+    for candidate, command in cmdlines.items():
+        if candidate in known or "optimizedmain" not in command:
             continue
-        for worker_dir in selected_worker_dirs:
-            if is_expected_worker_process(candidate, worker_dir):
-                _safe_print(f"Dang dung worker mo coi (PID {candidate})...")
-                if kill_pid(candidate):
-                    stopped += 1
-                    stopped_pids.add(candidate)
-                break
+        if any(_is_worker_cmdline(command, wd) for wd in selected_worker_dirs):
+            _safe_print(f"Dang dung worker mo coi (PID {candidate})...")
+            to_kill.append(candidate)
+            known.add(candidate)
+
+    stopped = len(kill_pids(to_kill))
 
     _safe_print(f"Da dung {stopped} worker.")
     return 0
