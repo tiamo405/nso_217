@@ -49,7 +49,12 @@ public final class AutoPrepareNvhn extends Auto {
             }
 
             this.preparedAtOkaza = true;
-            this.buyAndUseFood();
+            if (Boolean.getBoolean("nso.foodTest.skipPrep")) {
+                // Chỉ dùng khi test: bỏ mua/ăn lúc chuẩn bị để kiểm tra tự ăn + tự mua lại của Code/Char.
+                System.out.println("AUTO NVHN FOOD: [test] bỏ qua mua/dùng thức ăn lúc chuẩn bị");
+            } else {
+                this.buyAndUseFood();
+            }
             this.ensureNoelHatEquipped();
             return;
         }
@@ -156,7 +161,9 @@ public final class AutoPrepareNvhn extends Auto {
         }
         Char.aFoodValue = foodLevel;
         Char.isAFood = true;
-        System.out.println("AUTO NVHN FOOD: bật tự dùng thức ăn level=" + foodLevel);
+        // Bật cờ "tự mua thức ăn" gốc (Code.run): hết thức ăn trong túi + đang ở làng/trường thì mua lại.
+        Char.fieldEY = true;
+        System.out.println("AUTO NVHN FOOD: bật tự dùng + tự mua lại thức ăn level=" + foodLevel);
     }
 
     private void buyAndUseFood() {

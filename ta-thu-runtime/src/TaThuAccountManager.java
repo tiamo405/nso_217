@@ -274,6 +274,9 @@ public final class TaThuAccountManager implements Runnable {
                     + (task == null ? " theo state đã lưu" : " TaskOrder map=" + task.mapId
                     + " killId=" + task.killId + " count=" + task.count + "/" + task.maxCount));
         }
+        // AutoPrepareNvhn (src) bật cờ tự mua lại thức ăn gốc cho NVHN. Tà Thú có tiếp tế riêng
+        // (AutoTaThuFoodSupply) và giữ khóa map/khu, nên tắt để Code.run không tự kéo nhân vật đi.
+        Char.fieldEY = false;
         AutoTaThuDaily daily = new AutoTaThuDaily();
         daily.fieldAD();
         Code.fieldAA((Auto) daily);

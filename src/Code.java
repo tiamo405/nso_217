@@ -672,6 +672,8 @@ public final class Code implements Runnable {
                                 }
 
                                 GameScr.fieldAB(4, 0, 0);
+                                System.out.println("AUTO FOOD: hết thức ăn trong túi, tự mua " + var5 + " thức ăn level=" + var10
+                                        + " map=" + TileMap.mapID);
                                 if (var10 == 50) {
                                     Service.gI().buyItem1(9, 7, var5);
                                 } else {

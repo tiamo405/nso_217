@@ -1300,6 +1300,7 @@ public class Char extends MainObject {
                 for (var1 = 0; var1 < this.arrItemBag.length; ++var1) {
                     if ((var14 = this.arrItemBag[var1]) != null && var14.template.type == 18 && var14.template.level == aFoodValue) {
                         Service.gI().useItem(var1);
+                        logAutoFood(var1);
                         break;
                     }
                 }
@@ -1310,6 +1311,7 @@ public class Char extends MainObject {
                             Item var4;
                             if ((var4 = this.arrItemBag[var3]) != null && var4.template.type == 18 && var4.template.level == aFoodValue) {
                                 Service.gI().useItem(var3);
+                                logAutoFood(var3);
                                 break;
                             }
                         }
@@ -9942,6 +9944,18 @@ public class Char extends MainObject {
         }
 
         return -1;
+    }
+
+    private static long lastAutoFoodLogAt;
+
+    // Log lần tự ăn (giới hạn 1 dòng/10s vì vòng tự ăn gọi lại mỗi 10 tick tới khi server trả hiệu ứng).
+    private static void logAutoFood(int bagIndex) {
+        long now = System.currentTimeMillis();
+        if (now - lastAutoFoodLogAt >= 10000L) {
+            lastAutoFoodLogAt = now;
+            System.out.println("AUTO FOOD: hết hiệu ứng, tự dùng thức ăn level=" + aFoodValue + " bagIndex=" + bagIndex
+                    + " map=" + TileMap.mapID);
+        }
     }
 
     public static boolean fieldAJ(int var0) {

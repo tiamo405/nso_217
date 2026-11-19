@@ -162,7 +162,9 @@ public final class AutoPrepareNvhn extends Auto {
         }
         Char.aFoodValue = foodLevel;
         Char.isAFood = true;
-        System.out.println("AUTO NVHN FOOD: bật tự dùng thức ăn level=" + foodLevel);
+        // Bật cờ "tự mua thức ăn" gốc (Code.run): hết thức ăn trong túi + đang ở làng/trường thì mua lại.
+        Char.fieldEY = true;
+        System.out.println("AUTO NVHN FOOD: bật tự dùng + tự mua lại thức ăn level=" + foodLevel);
     }
 
     private void buyAndUseFood() {

@@ -274,7 +274,32 @@ public final class AutoNvhn extends Auto {
               + " yen=" + me.yen + formatDelta(yenDelta)
               + " xu=" + me.xu + formatDelta(xuDelta)
               + " luong=" + me.luong + formatDelta(luongDelta)
-              + " bag=" + bagStatus(me));
+              + " bag=" + bagStatus(me)
+              + " food=" + foodStatus(me));
+   }
+
+   // "số thức ăn level aFoodValue trong hành trang/giây còn lại của hiệu ứng thức ăn (type 0)".
+   private static String foodStatus(Char me) {
+      int count = 0;
+      Item[] bag = me.arrItemBag;
+      if (bag != null) {
+         for (int i = 0; i < bag.length; ++i) {
+            Item item = bag[i];
+            if (item != null && item.template != null && item.template.type == 18 && item.template.level == Char.aFoodValue) {
+               count += item.quantity;
+            }
+         }
+      }
+      String eff = "none";
+      int now = (int) (System.currentTimeMillis() / 1000L);
+      for (int i = 0; i < me.vEff.size(); ++i) {
+         Effect e = (Effect) me.vEff.elementAt(i);
+         if (e != null && e.template != null && e.template.type == 0) {
+            eff = (e.timeLenght - (now - e.timeStart)) + "s";
+            break;
+         }
+      }
+      return count + "/eff=" + eff + "/autoBuy=" + Char.fieldEY;
    }
 
    // "ô trống/tổng ô" của hành trang, "-" nếu chưa có dữ liệu.
