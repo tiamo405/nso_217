@@ -296,9 +296,49 @@ def build() -> Path:
             shutil.rmtree(backup, ignore_errors=True)
 
 
+def _load_gitbash():
+    import importlib.util
+
+    path = REPO_DIR / "windows" / "gitbash.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("nso_gitbash", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_with_git_bash() -> bool:
+    """Build bằng CHÍNH build-ta-thu.sh qua Git Bash (giống uplevel / Ubuntu).
+
+    Trả về False nếu máy không có Git Bash (khi đó dùng bản Python build()).
+    NSO_WIN_BUILD=python để ép dùng bản Python.
+    """
+    if os.environ.get("NSO_WIN_BUILD", "").lower() == "python":
+        return False
+    script = TA_THU_DIR / "build-ta-thu.sh"
+    gitbash = _load_gitbash()
+    if gitbash is None or not script.is_file():
+        return False
+    if not gitbash.find_bash(required=False):
+        print("CẢNH BÁO: không tìm thấy Git Bash -> dùng bản build Python (có thể lệch bản Ubuntu). "
+              "Cài Git for Windows hoặc đặt NSO_BASH=...\\Git\\bin\\bash.exe", file=sys.stderr, flush=True)
+        return False
+    print(f"Build bằng Git Bash: {script}", flush=True)
+    extra_env = {"TA_THU_BUILD_DIR": gitbash.to_bash_path(BUILD_ROOT)}
+    if os.environ.get("TA_THU_ACCOUNT_CSV"):
+        extra_env["TA_THU_ACCOUNT_CSV"] = gitbash.to_bash_path(os.environ["TA_THU_ACCOUNT_CSV"])
+    rc = gitbash.run_bash_script(script, [], extra_env)
+    if rc != 0:
+        raise RuntimeError(f"build-ta-thu.sh thất bại với exit code {rc}")
+    return True
+
+
 if __name__ == "__main__":
     try:
-        build()
+        if not build_with_git_bash():
+            build()
     except Exception as exc:
         print(f"Build Tà Thú lỗi: {exc}", file=sys.stderr)
         raise SystemExit(1)

@@ -28,6 +28,8 @@ sys.path.insert(0, str(REPO_DIR))
 from uplevel_monitor import winproc  # noqa: E402
 sys.path.insert(0, str(REPO_DIR / "uplevel" / "scripts"))
 import proxy_assign  # noqa: E402  (uplevel/scripts/proxy_assign.py, dùng chung uplevel + uplevel35)
+sys.path.insert(0, str(WIN_DIR))
+import gitbash  # noqa: E402  (windows/gitbash.py, dùng chung với optimized-runtime + Tà Thú)
 
 IS_WINDOWS = os.name == "nt"
 HANDOFF_EXIT_CODE = 3
@@ -113,68 +115,12 @@ class Runtime:
 
 # ---------------------------------------------------------------- build (Git Bash + build.sh cũ)
 
-def find_bash() -> str:
-    custom = os.environ.get("NSO_BASH") or os.environ.get("GIT_BASH")
-    if custom:
-        return custom
-    if not IS_WINDOWS:
-        found = shutil.which("bash")
-        if found:
-            return found
-        die("Không tìm thấy bash.")
-    candidates: list[Path] = []
-    git = shutil.which("git")
-    if git:
-        g = Path(git).resolve()
-        # <Git>\cmd\git.exe, <Git>\bin\git.exe hoặc <Git>\mingw64\bin\git.exe
-        for root in (g.parent.parent, g.parent.parent.parent):
-            candidates.append(root / "bin" / "bash.exe")
-    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"),
-                 os.environ.get("ProgramFiles(x86)"), os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs")):
-        if base:
-            candidates.append(Path(base) / "Git" / "bin" / "bash.exe")
-    for c in candidates:
-        # Không dùng C:\Windows\System32\bash.exe (WSL): đường dẫn và java khác hẳn.
-        if c.is_file() and "system32" not in str(c).lower():
-            return str(c)
-    die("Không tìm thấy Git Bash. Cài Git for Windows (https://git-scm.com/download/win) "
-        "hoặc đặt biến NSO_BASH=C:\\...\\Git\\bin\\bash.exe")
-    return ""
-
-
-def find_javac() -> str:
-    exe = "javac.exe" if IS_WINDOWS else "javac"
-    java_home = os.environ.get("JAVA_HOME")
-    if java_home and (Path(java_home) / "bin" / exe).is_file():
-        return str(Path(java_home) / "bin" / exe)
-    found = shutil.which("javac")
-    if not found:
-        die("Không tìm thấy javac. Cài JDK (8+) và thêm vào PATH hoặc đặt JAVA_HOME.")
-    return found
-
-
-def check_lf(script: Path) -> None:
-    if b"\r\n" in script.read_bytes():
-        die(f"{script} có xuống dòng CRLF (git autocrlf) nên bash không chạy được.\n"
-            "Sửa: git config core.autocrlf false && git rm -r --cached -q . && git reset --hard\n"
-            "(repo đã có .gitattributes giữ nguyên LF cho *.sh, *.java, *.patch)")
-
-
 def run_bash_script(script: Path, args: list[str], extra_env: dict[str, str] | None = None) -> int:
-    check_lf(script)
-    bash = find_bash()
-    run_env = os.environ.copy()
-    run_env.update(extra_env or {})
-    run_env["PYTHONUTF8"] = "1"
-    run_env["NSO_REAL_PYTHON"] = sys.executable
-    run_env["NSO_REAL_JAVAC"] = find_javac()
-    run_env["NSO_SHIM_DIR"] = str(WIN_DIR / "shims")
-    run_env.pop("MSYS_NO_PATHCONV", None)  # cần MSYS tự đổi /c/... -> C:/... khi gọi python/javac
-    boot = ('p() { if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf %s "$1"; fi; }; '
-            'export NSO_SHIM_DIR="$(p "$NSO_SHIM_DIR")"; export PATH="$NSO_SHIM_DIR:$PATH"; '
-            'command -v patch >/dev/null 2>&1 || echo "CẢNH BÁO: Git Bash thiếu lệnh patch" >&2; '
-            's="$(p "$0")"; exec bash "$s" "$@"')
-    return subprocess.call([bash, "-c", boot, str(script), *args], env=run_env, cwd=str(REPO_DIR))
+    try:
+        return gitbash.run_bash_script(script, args, extra_env)
+    except gitbash.GitBashError as exc:
+        die(str(exc))
+        return 1
 
 
 def cmd_build(rt: Runtime, args: list[str]) -> int:

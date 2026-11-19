@@ -83,10 +83,24 @@ def _norm(value: str | Path) -> str:
     return str(value).replace("\\", "/").casefold()
 
 
-def _creationflags() -> int:
-    if os.name == "nt":
-        return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-    return 0
+def _hidden_kwargs() -> dict:
+    """Windows: chạy tiến trình con trong console ẨN, không bật cửa sổ.
+
+    KHÔNG dùng DETACHED_PROCESS: tiến trình detached không có console, nên mọi
+    tiến trình console mà nó gọi tiếp (java, taskkill, javac, python của venv...)
+    sẽ tự tạo cửa sổ console MỚI hiện lên màn hình. Nhiều worker => hàng trăm
+    cửa sổ conhost, cạn desktop heap và Windows bắt đầu tự đóng cửa sổ/tiến trình.
+    CREATE_NO_WINDOW tạo một console ẩn và các tiến trình con kế thừa console đó.
+    """
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        "startupinfo": startupinfo,
+    }
 
 
 def _process_cmdline(pid: int) -> list[str]:
@@ -142,6 +156,7 @@ def kill_pid(pid: int) -> bool:
             ["taskkill", "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            **_hidden_kwargs(),
         ).returncode == 0
     try:
         os.kill(pid, signal.SIGTERM)
@@ -217,7 +232,7 @@ def nvhn_worker_done(worker: Path) -> bool:
 def run_build() -> None:
     builder = SCRIPT_DIR / "build_ta_thu.py"
     command = [sys.executable, str(builder)]
-    result = subprocess.run(command, cwd=REPO_DIR, env=os.environ.copy())
+    result = subprocess.run(command, cwd=REPO_DIR, env=os.environ.copy(), **_hidden_kwargs())
     if result.returncode != 0:
         raise RuntimeError(f"Build Tà Thú thất bại với exit code {result.returncode}")
 
@@ -368,7 +383,7 @@ def start_workers(values: list[str], delay: int) -> int:
                     env=worker_env,
                     stdout=output,
                     stderr=errors,
-                    creationflags=_creationflags(),
+                    **_hidden_kwargs(),
                 )
             pid_file.write_text(str(process.pid), encoding="utf-8")
             time.sleep(0.3)
@@ -556,6 +571,69 @@ def supervise(values: list[str], delay: int, interval: int) -> int:
     return 0
 
 
+def follow_logs(workers: list[str]) -> int:
+    """Bản Windows của logs-workers.sh: 20 dòng cuối + theo dõi, lọc LOG_FILTER (mặc định 'AUTO TA THU')."""
+    pattern = os.environ.get("LOG_FILTER") or "AUTO TA THU"
+    if workers:
+        number = workers[0][len("worker-"):] if workers[0].startswith("worker-") else workers[0]
+        if not number.isdigit():
+            raise RuntimeError(f"Worker không hợp lệ: {workers[0]}")
+        logs = [WORKERS_DIR / f"worker-{int(number):02d}" / "stdout.log"]
+    else:
+        logs = sorted(WORKERS_DIR.glob("worker-*/stdout.log"))
+    logs = [log for log in logs if log.is_file()]
+    if not logs:
+        raise RuntimeError("Chưa có log Tà Thú worker.")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    print(f"Đang theo dõi {len(logs)} log; Ctrl+C để thoát. Bộ lọc: {pattern}", flush=True)
+    positions: dict[Path, int] = {}
+    pending: dict[Path, bytes] = {}
+    current: list[Path | None] = [None]
+
+    def emit(log: Path, lines: list[str]) -> None:
+        lines = [line for line in lines if pattern in line]
+        if not lines:
+            return
+        if len(logs) > 1 and current[0] != log:
+            print(f"\n==> {log} <==")
+            current[0] = log
+        for line in lines:
+            print(line)
+        sys.stdout.flush()
+
+    for log in logs:
+        with log.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 256 * 1024))
+            tail = stream.read().decode("utf-8", errors="replace").splitlines()[-20:]
+        emit(log, tail)
+        positions[log], pending[log] = size, b""
+    try:
+        while True:
+            for log in logs:
+                try:
+                    size = log.stat().st_size
+                except OSError:
+                    continue
+                if size < positions[log]:
+                    positions[log], pending[log] = 0, b""
+                if size == positions[log]:
+                    continue
+                with log.open("rb") as stream:
+                    stream.seek(positions[log])
+                    chunk = stream.read()
+                positions[log] += len(chunk)
+                *complete, pending[log] = (pending[log] + chunk).split(b"\n")
+                emit(log, [c.decode("utf-8", errors="replace").rstrip("\r") for c in complete])
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -572,11 +650,14 @@ def main() -> int:
     supervise_parser.add_argument("--delay", type=int, default=START_DELAY)
     supervise_parser.add_argument("--interval", type=int, default=CHECK_INTERVAL)
     sub.add_parser("build")
+    sub.add_parser("logs").add_argument("workers", nargs="*")
     args = parser.parse_args()
     try:
         if args.command == "build":
             run_build()
             return 0
+        if args.command == "logs":
+            return follow_logs(args.workers)
         if args.command == "build-workers":
             build_workers(args.count)
             return 0

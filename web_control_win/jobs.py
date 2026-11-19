@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Set
 
 from server_config import DEFAULT_SERVER, normalize_server
 
-from .manager import ControlError, WindowsHeadlessManager
+from .manager import ControlError, WindowsHeadlessManager, _hidden_kwargs
 
 
 def utc_now() -> str:
@@ -146,6 +146,7 @@ class WindowsBuildJobManager:
                     env=self.manager.settings.command_env(job.server),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
+                    **_hidden_kwargs(),
                 )
                 assert process.stdout is not None
 
@@ -216,6 +217,7 @@ class WindowsBuildJobManager:
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                **_hidden_kwargs(),
             )
         else:
             try:

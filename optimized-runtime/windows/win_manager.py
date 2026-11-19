@@ -151,6 +151,26 @@ def _load_proxy_support():
     return module
 
 
+def _hidden_kwargs() -> dict:
+    """Windows: chạy tiến trình con trong console ẨN, không bật cửa sổ.
+
+    KHÔNG dùng DETACHED_PROCESS: tiến trình detached không có console, nên mọi
+    tiến trình console mà nó gọi tiếp (java, taskkill, javac, python của venv...)
+    sẽ tự tạo cửa sổ console MỚI hiện lên màn hình. Nhiều worker => hàng trăm
+    cửa sổ conhost, cạn desktop heap và Windows bắt đầu tự đóng cửa sổ/tiến trình.
+    CREATE_NO_WINDOW tạo một console ẩn và các tiến trình con kế thừa console đó.
+    """
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        "startupinfo": startupinfo,
+    }
+
+
 NPC25_BLOCK_MESSAGE = (
     "AUTO NVHN NPC25: [Hãy nhận nhiệm vụ mỗi ngày từ ta rồi mới sử dụng tính năng này.]"
 )
@@ -304,6 +324,7 @@ def kill_pid(pid: int) -> bool:
             ["taskkill", "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            **_hidden_kwargs(),
         )
         return res.returncode == 0
     else:
@@ -497,7 +518,54 @@ def cmd_build(args: Any = None) -> int:
         return 1
 
 
+def _load_gitbash():
+    """windows/gitbash.py: chạy chính build *.sh của Ubuntu bằng Git Bash (giống uplevel)."""
+    import importlib.util
+
+    path = REPO_DIR / "windows" / "gitbash.py"
+    if not path.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("nso_gitbash", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def _cmd_build_inner(args: Any = None) -> int:
+    """Build bằng build-optimized.sh qua Git Bash (giống hệt Ubuntu).
+
+    Không có Git Bash thì dùng bản build Python cũ (_cmd_build_python) và cảnh báo.
+    NSO_WIN_BUILD=python để ép dùng bản Python.
+    """
+    script = RUNTIME_DIR / "build-optimized.sh"
+    gitbash = _load_gitbash() if os.environ.get("NSO_WIN_BUILD", "").lower() != "python" else None
+    if gitbash is not None and script.is_file():
+        if gitbash.find_bash(required=False):
+            _safe_print(f"Build bang Git Bash: {script}")
+            extra_env = {
+                "OPTIMIZED_ACCOUNT_CSV": gitbash.to_bash_path(ACCOUNT_CSV),
+                "OPTIMIZED_BUILD_DIR": gitbash.to_bash_path(BUILD_DIR),
+            }
+            try:
+                rc = gitbash.run_bash_script(script, [], extra_env)
+            except gitbash.GitBashError as exc:
+                sys.stderr.write(f"[!] {exc}\n")
+                return 1
+            if rc != 0:
+                sys.stderr.write(f"[!] build-optimized.sh that bai (exit code {rc})\n")
+                return rc
+            if not (CLASSES_DIR / "OptimizedMain.class").is_file():
+                sys.stderr.write(f"[!] Khong tim thay {CLASSES_DIR / 'OptimizedMain.class'} sau khi build!\n")
+                return 1
+            return 0
+        sys.stderr.write(
+            "[!] CANH BAO: khong tim thay Git Bash -> dung ban build Python cu (co the lech ban Ubuntu).\n"
+            "    Cai Git for Windows (https://git-scm.com/download/win) hoac dat NSO_BASH=...\\Git\\bin\\bash.exe\n")
+    return _cmd_build_python(args)
+
+
+def _cmd_build_python(args: Any = None) -> int:
     _safe_print("==========================================================")
     _safe_print("[1/4] Chuan bi ma nguon va ap dung Overrides...")
     _safe_print("==========================================================")
@@ -569,7 +637,8 @@ def _cmd_build_inner(args: Any = None) -> int:
         f"@{sources_file.as_posix()}",
     ]
 
-    res = subprocess.run(compile_cmd, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    res = subprocess.run(compile_cmd, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                         **_hidden_kwargs())
     if res.returncode != 0:
         sys.stderr.write("\n[!] LOI BIEN DICH JAVAC!\n")
         if res.stderr:
@@ -835,10 +904,6 @@ def _cmd_start_inner(args: Any) -> int:
             "OptimizedMain",
         ]
 
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-
         try:
             worker_env = os.environ.copy()
             worker_env.pop("NSO_SOCKS5_PROXY", None)
@@ -857,7 +922,7 @@ def _cmd_start_inner(args: Any) -> int:
                     env=worker_env,
                     stdout=f_out,
                     stderr=f_err,
-                    creationflags=creationflags,
+                    **_hidden_kwargs(),
                 )
 
             pid_file.write_text(str(p.pid), encoding="utf-8")

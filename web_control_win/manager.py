@@ -34,10 +34,24 @@ WORKER_RE = re.compile(r"^worker-([0-9]+)$")
 LOG_KINDS = {"stdout": "stdout.log", "error": "java-errors.log"}
 
 
-def _creationflags_for_windows() -> int:
-    if os.name == "nt":
-        return subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-    return 0
+def _hidden_kwargs() -> dict:
+    """Windows: chạy tiến trình con trong console ẨN, không bật cửa sổ.
+
+    KHÔNG dùng DETACHED_PROCESS: tiến trình detached không có console, nên mọi
+    tiến trình console mà nó gọi tiếp (java, taskkill, javac, python của venv...)
+    sẽ tự tạo cửa sổ console MỚI hiện lên màn hình. Nhiều worker => hàng trăm
+    cửa sổ conhost, cạn desktop heap và Windows bắt đầu tự đóng cửa sổ/tiến trình.
+    CREATE_NO_WINDOW tạo một console ẩn và các tiến trình con kế thừa console đó.
+    """
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = 0  # SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
+        "startupinfo": startupinfo,
+    }
 
 
 def is_pid_running(pid: int) -> bool:
@@ -84,6 +98,7 @@ def kill_pid(pid: int) -> bool:
             ["taskkill", "/F", "/T", "/PID", str(pid)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            **_hidden_kwargs(),
         )
         return res.returncode == 0
     else:
@@ -163,6 +178,7 @@ class WindowsHeadlessManager(ManagerCommon):
                     stdin=asyncio.subprocess.DEVNULL,
                     stdout=output,
                     stderr=asyncio.subprocess.STDOUT,
+                    **_hidden_kwargs(),
                 )
             except OSError as exc:
                 raise ControlError(f"Không thực thi được {label}: {exc}") from exc
@@ -171,7 +187,8 @@ class WindowsHeadlessManager(ManagerCommon):
             except asyncio.TimeoutError:
                 if os.name == "nt":
                     subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   **_hidden_kwargs())
                 else:
                     try:
                         process.kill()
@@ -365,10 +382,6 @@ class WindowsHeadlessManager(ManagerCommon):
         self.settings.web_runtime_dir.mkdir(parents=True, exist_ok=True)
         log_stream = self.supervisor_log.open("ab", buffering=0)
 
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-
         cmd = [
             sys.executable,
             str(self.settings.win_manager_py),
@@ -390,7 +403,7 @@ class WindowsHeadlessManager(ManagerCommon):
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,
-                    creationflags=creationflags,
+                    **_hidden_kwargs(),
                 )
             except OSError as exc:
                 raise ControlError(f"Không khởi động được Supervisor: {exc}") from exc
@@ -537,7 +550,7 @@ class WindowsHeadlessManager(ManagerCommon):
                     stdin=subprocess.DEVNULL,
                     stdout=log_stream,
                     stderr=subprocess.STDOUT,
-                    creationflags=_creationflags_for_windows(),
+                    **_hidden_kwargs(),
                 )
             except OSError:
                 log_stream.close()

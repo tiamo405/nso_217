@@ -63,6 +63,36 @@ rem ===== web monitor =====
 uplevel_monitor\run.cmd            &rem http://127.0.0.1:8190
 ```
 
+```bat
+rem ===== optimized-runtime (NVHN) =====
+optimized-runtime\build-optimized.cmd
+optimized-runtime\scripts\build-workers.cmd 10
+optimized-runtime\scripts\start-workers.cmd
+optimized-runtime\scripts\supervise-workers.cmd --delay 30 --interval 20
+optimized-runtime\scripts\status-workers.cmd
+optimized-runtime\scripts\logs-workers.cmd 1
+optimized-runtime\scripts\restart-workers.cmd 3
+optimized-runtime\scripts\stop-workers.cmd
+optimized-runtime\scripts\reset-completed-workers.cmd
+optimized-runtime\scripts\run-web-control.cmd   &rem Web Dashboard Windows, port 8080
+
+rem ===== ta-thu-runtime =====
+ta-thu-runtime\build-ta-thu.cmd
+ta-thu-runtime\scripts\build-workers.cmd 10
+ta-thu-runtime\scripts\start-workers.cmd
+ta-thu-runtime\scripts\supervise-workers.cmd --delay 30 --interval 20
+ta-thu-runtime\scripts\status-workers.cmd
+ta-thu-runtime\scripts\logs-workers.cmd 1
+ta-thu-runtime\scripts\stop-workers.cmd
+```
+
+optimized-runtime và Tà Thú: **build** (kể cả Build trên Web Dashboard Windows) chạy CHÍNH
+`optimized-runtime/build-optimized.sh` / `ta-thu-runtime/build-ta-thu.sh` bằng Git Bash qua
+`windows/gitbash.py` (dùng chung với uplevel), nên classes giống hệt bản Ubuntu. Không có Git Bash thì
+tự dùng bản build Python cũ và in CẢNH BÁO; ép bản Python bằng `set NSO_WIN_BUILD=python`.
+start/stop/status/supervise vẫn do `win_manager.py` / `ta_thu_manager.py` (Python) làm vì bản `.sh`
+dùng `/proc`, `nohup`, `kill`. Worker chạy trong console ẩn (`CREATE_NO_WINDOW`), không bật cửa sổ.
+
 Biến môi trường đặt bằng `set` trước lệnh (cmd) hoặc `$env:X="..."` (PowerShell):
 
 ```bat
